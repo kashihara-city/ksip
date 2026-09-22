@@ -1,0 +1,6 @@
+[build]
+target-dir = "temp/cargo-target"
+
+# scripts/build/app.ps1 replaces these through RUSTFLAGS for the shipped build.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

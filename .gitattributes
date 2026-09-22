@@ -1,0 +1,11 @@
+# src-web/ goes into the exe byte for byte, so the line endings of a checkout
+# decide the binary. Every text file is CRLF on every machine, whatever
+# core.autocrlf says; the blobs stay LF as usual.
+* text=auto eol=crlf
+
+# Archives and images are never converted.
+*.tar.gz binary
+*.ico binary
+*.png binary
+*.wav binary
+*.exe binary

@@ -1,0 +1,7 @@
+add_library(ksip_entry STATIC src/main.c)
+target_compile_definitions(ksip_entry PRIVATE main=ksip_engine_main)
+target_link_libraries(ksip_entry PRIVATE baresip)
+add_library(ksip_stdio STATIC "${KSIP_ROOT}/src-native/stdio.cpp")
+target_compile_features(ksip_stdio PRIVATE cxx_std_17)
+target_compile_options(ksip_stdio PRIVATE /utf-8)
+install(TARGETS ksip_entry ksip_stdio ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})

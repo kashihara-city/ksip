@@ -1,0 +1,14 @@
+# Build outputs and caches
+/temp/
+# ビルド中だけ temp/build/tauri-gen へのジャンクションとして現れる
+/src-tauri/gen/
+/release/
+**/__pycache__/
+
+# Local Asterisk host details and credentials
+/local-asterisk/
+
+# メモ類（手元だけ）
+/AGENTS.md
+/HANDOVER.md
+/PROJECT.md

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The window listens for the commands that arrive through ksip: links.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

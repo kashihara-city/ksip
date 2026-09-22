@@ -1,0 +1,62 @@
+{
+  "re": {
+    "repository": "baresip/re",
+    "version": "v4.11.0",
+    "commit": "ceefe9ff499aa1bcfb6255aff1737434dd385322",
+    "source_date": "2026-08-24T11:03:29Z",
+    "published_at": "2026-08-25T07:27:53Z",
+    "url": "https://codeload.github.com/baresip/re/tar.gz/ceefe9ff499aa1bcfb6255aff1737434dd385322",
+    "sha256": "a74a96cddb0284261dcdb6ca7728dd1609549e576075fa192f289e1abf523faa"
+  },
+  "baresip": {
+    "repository": "baresip/baresip",
+    "version": "v4.11.0",
+    "commit": "3d30821f099925d24167f8a99e93ba4d1be98599",
+    "source_date": "2026-08-24T11:09:33Z",
+    "published_at": "2026-08-25T07:28:36Z",
+    "url": "https://codeload.github.com/baresip/baresip/tar.gz/3d30821f099925d24167f8a99e93ba4d1be98599",
+    "sha256": "148d0c743a71af19a436dba17c5d33a881e1c5e250ab100cf6b4729f0c7aa82c"
+  },
+  "opus": {
+    "repository": "xiph/opus",
+    "version": "v1.5.2",
+    "commit": "ddbe48383984d56acd9e1ab6a090c54ca6b735a6",
+    "source_date": "2024-04-10T20:38:50Z",
+    "url": "https://codeload.github.com/xiph/opus/tar.gz/ddbe48383984d56acd9e1ab6a090c54ca6b735a6",
+    "sha256": "18e9d9e26565e279753aafb6823a482ef85ea9fddbfdcdbff8fd095b12dd96b6"
+  },
+  "libg722": {
+    "repository": "sippy/libg722",
+    "version": "v1.2.8",
+    "commit": "4c2e79c5cbcb5ee12a97a16002a073ac83396480",
+    "source_date": "2026-06-29T20:39:12Z",
+    "url": "https://codeload.github.com/sippy/libg722/tar.gz/4c2e79c5cbcb5ee12a97a16002a073ac83396480",
+    "sha256": "2e2801208606601b6b5c91ccc90e158196d7fda4ca0ff0e26c7d93266c1993c2"
+  },
+  "libressl": {
+    "repository": "openbsd/libressl",
+    "version": "4.3.2",
+    "source_date": "2026-05-26T00:00:00Z",
+    "url": "https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.2.tar.gz",
+    "sha256": "edf01aee24c65d69e6a9efcb9d44bcda682ff9d4f3bbbd95e794e1dfa90847b5"
+  },
+  "depot-tools": {
+    "repository": "chromium/tools/depot_tools",
+    "version": "2026-09-11",
+    "commit": "36a8df4ad006eaa0572fb446edb8145fe5403592",
+    "source_date": "2026-09-11T14:38:15-07:00",
+    "url": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+    "source_type": "git"
+  },
+  "google-webrtc": {
+    "repository": "webrtc/src",
+    "version": "2026-09-12",
+    "commit": "790155fa32c371bd19d9339b8200d447cef44be9",
+    "source_date": "2026-09-12T13:50:48-07:00",
+    "url": "https://webrtc.googlesource.com/src.git",
+    "source_type": "git",
+    "deps_sha256": "241b96de98883d82180b0db89bea3465e13a7c98778f99d6fea682ba66db7eb6",
+    "build_commit": "e6aa79b579ec7536ac9cbb92b47c1d3c2ecec984",
+    "build_source_date": "2026-09-11T23:56:39-07:00"
+  }
+}

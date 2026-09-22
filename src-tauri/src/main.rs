@@ -1,0 +1,406 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use crate::message::message_with;
+mod audio;
+mod engine;
+mod licenses;
+mod message;
+mod native;
+mod protocol;
+mod shortcuts;
+mod storage;
+mod wav;
+use engine::{AppState, Settings};
+use storage::Account;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, State};
+
+#[tauri::command]
+fn snapshot(state: State<AppState>) -> engine::Snapshot {
+    state.snapshot()
+}
+#[tauri::command]
+async fn reconnect(state: State<'_, AppState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.connect())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn save_configuration(
+    settings: Settings,
+    account: Account,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    let previous = state.snapshot().settings;
+    if let Err(e) = shortcuts::apply(&app, &settings) {
+        // Nothing was stored, so the keys go back to the ones that worked.
+        let _ = shortcuts::apply(&app, &previous);
+        return Err(e);
+    }
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        state.save_configuration(settings, account)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if saved.is_err() {
+        let _ = shortcuts::apply(&app, &previous);
+    }
+    saved
+}
+#[tauri::command]
+async fn action(
+    name: String,
+    id: String,
+    value: String,
+    line: u8,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.action(&name, &id, &value, line))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn open_recordings(state: State<AppState>) -> Result<(), String> {
+    state.open_recordings()
+}
+#[tauri::command]
+async fn choose_sound_file(kind: Option<String>) -> Result<String, String> {
+    let kind = kind.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || native::choose_file(&kind).unwrap_or_default())
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn clear_call_history(state: State<AppState>) -> Result<(), String> {
+    state.clear_call_history()
+}
+#[tauri::command]
+fn clear_logs(state: State<AppState>) {
+    state.clear_logs();
+}
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    native::copy_text(&text)
+}
+#[tauri::command]
+fn read_logs(after: u64, state: State<AppState>) -> engine::LogPage {
+    state.read_logs(after)
+}
+#[tauri::command]
+async fn list_adapters() -> Result<Vec<native::Adapter>, String> {
+    tauri::async_runtime::spawn_blocking(native::adapters)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn log_ui(text: String, state: State<AppState>) {
+    state.log_ui(text);
+}
+#[tauri::command]
+fn read_call_history(state: State<AppState>) -> Vec<engine::CallHistory> {
+    state.read_call_history()
+}
+#[tauri::command]
+async fn refresh_devices(state: State<'_, AppState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.refresh_devices())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn audio_volume(
+    kind: String,
+    device: String,
+    level: Option<u16>,
+    state: State<'_, AppState>,
+) -> Result<engine::Volume, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.volume(&kind, &device, level))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn audio_peak(
+    kind: String,
+    device: String,
+    state: State<'_, AppState>,
+) -> Result<engine::Peak, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.peak(&kind, &device))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn calibrate_aec(
+    microphone: String,
+    speaker: String,
+    careful: bool,
+    state: State<'_, AppState>,
+) -> Result<engine::Calibration, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.calibrate_aec(&microphone, &speaker, careful)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn select_audio_device(
+    kind: String,
+    device: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.select_audio_device(&kind, device))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn open_sound_control(state: State<AppState>) -> Result<(), String> {
+    state.open_sound_control()
+}
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+pub fn show(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+fn is_visible(app: &tauri::AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(true)
+}
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s| s == "--engine") {
+        std::process::exit(native::run_engine(&args[1..]));
+    }
+    let mut link = String::new();
+    if let Some(first) = args.first() {
+        if first.starts_with("/ksip=") || first.starts_with("ksip:") {
+            link = protocol::command_from(first);
+        }
+        if link.is_empty() {
+            std::process::exit(2);
+        }
+    }
+    if !link.is_empty() {
+        // Hand the command over if the app is running. If it is not, start it
+        // and wait for the pipe, so that a link works from a cold start too.
+        match protocol::send(&link) {
+            Ok(true) => std::process::exit(0),
+            Err(_) => std::process::exit(3),
+            Ok(false) => {}
+        }
+        if link == "APP_QUIT" {
+            std::process::exit(0);
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            std::process::exit(3);
+        };
+        if std::process::Command::new(exe).spawn().is_err() {
+            std::process::exit(3);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if matches!(protocol::send(&link), Ok(true)) {
+                std::process::exit(0);
+            }
+        }
+        std::process::exit(3);
+    }
+
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+        System::Threading::CreateMutexW,
+    };
+    let name = format!("Local\\{}", storage::Store::new().target.replace('/', "_"));
+    let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    let singleton = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
+    if singleton.is_null() {
+        return;
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(singleton) };
+        return;
+    }
+    let state = AppState::new();
+    // Without this the process would die silently: the window subsystem has no
+    // console for the default panic message.
+    let panic_state = state.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        panic_state.log_panic(format!("panic {info}"));
+    }));
+    // A toast is delivered under the application identifier, and Windows
+    // looks that identifier up in the registry. This is for the current user,
+    // so it needs no administrator, and a failure must not stop the app.
+    if let Err(e) = shortcuts::ensure_notification_registration() {
+        state.log_app(message_with("NOTIFICATION_REGISTER_FAILED", [e]));
+    }
+    let exit_state = state.clone();
+    tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(state.clone())
+        .invoke_handler(tauri::generate_handler![
+            snapshot,
+            reconnect,
+            save_configuration,
+            action,
+            open_recordings,
+            choose_sound_file,
+            read_logs,
+            clear_call_history,
+            clear_logs,
+            copy_text,
+            log_ui,
+            list_adapters,
+            read_call_history,
+            refresh_devices,
+            audio_volume,
+            audio_peak,
+            calibrate_aec,
+            select_audio_device,
+            open_sound_control,
+            quit_app
+        ])
+        .setup(move |app| {
+            let text = message::windows_text;
+            let open = MenuItem::with_id(app, "open", text("TRAY_OPEN"), true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", text("TRAY_QUIT"), true, None::<&str>)?;
+            let licenses =
+                MenuItem::with_id(app, "licenses", text("TRAY_LICENSES"), true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &licenses, &quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("KSIP")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, e| match e.id.as_ref() {
+                    "open" => show(app),
+                    "quit" => app.exit(0),
+                    "licenses" => {
+                        let state = app.state::<AppState>();
+                        if let Err(e) = state.open_licenses() {
+                            state.report_error(e);
+                        }
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, e| {
+                    if matches!(
+                        e,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        show(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+            // Registering a hot key has to happen on this thread, and an
+            // empty setting simply leaves the key alone.
+            if let Err(e) = shortcuts::apply_now(app.handle(), &state.snapshot().settings) {
+                state.log_app(e);
+            }
+            let served = app.handle().clone();
+            protocol::serve(move |command| {
+                let state = served.state::<AppState>();
+                state.log_protocol(&command);
+                match command.as_str() {
+                    "SHOWWINDOW" => show(&served),
+                    "APP_QUIT" => served.exit(0),
+                    _ => {
+                        // Dialling asks first unless that was turned off, so the
+                        // window decides; the rest is done here. A question put
+                        // from the tray would go unseen, so the window comes out
+                        // before it is asked.
+                        if !matches!(command.as_str(), "ANSWER" | "HANGUP")
+                            && state.snapshot().settings.browser_dial_confirm
+                        {
+                            show(&served);
+                        }
+                        let _ = served.emit("ksip-link", command);
+                    }
+                }
+            });
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                state.initialize();
+                let mut previous_incoming = std::collections::HashSet::new();
+                // Calls the person was told about rather than shown; answering
+                // one of them brings the window back.
+                let mut announced = std::collections::HashSet::new();
+                while !state.is_closing() {
+                    match state.sync_phone() {
+                        Err(e) => state.report_error(e),
+                        Ok(()) => state.clear_polling_error(),
+                    }
+                    state.follow_network();
+                    let snapshot = state.snapshot();
+                    let incoming: std::collections::HashSet<String> = snapshot
+                        .calls
+                        .iter()
+                        .filter(|c| c.state == "INCOMING")
+                        .map(|c| c.id.clone())
+                        .collect();
+                    let fresh: Vec<&engine::CallInfo> = snapshot
+                        .calls
+                        .iter()
+                        .filter(|c| c.state == "INCOMING" && !previous_incoming.contains(&c.id))
+                        .collect();
+                    if !fresh.is_empty() {
+                        if snapshot.settings.incoming_action == "notify" && !is_visible(&handle) {
+                            for call in &fresh {
+                                shortcuts::notify_incoming(&handle, &call.peer);
+                                announced.insert(call.id.clone());
+                            }
+                        } else {
+                            show(&handle);
+                        }
+                    }
+                    if !announced.is_empty() {
+                        if snapshot
+                            .calls
+                            .iter()
+                            .any(|c| announced.contains(&c.id) && c.state != "INCOMING")
+                        {
+                            show(&handle);
+                        }
+                        announced.retain(|id| incoming.contains(id));
+                    }
+                    previous_incoming = incoming;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            });
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("Unable to start KSIP")
+        .run(move |_, event| {
+            if let tauri::RunEvent::Exit = event {
+                exit_state.shutdown();
+            }
+        });
+    unsafe {
+        CloseHandle(singleton);
+    }
+}
