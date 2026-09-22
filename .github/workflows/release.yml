@@ -266,13 +266,23 @@ jobs:
             --verify-tag --title "KSIP $tag" --notes-file $notesPath --repo $env:REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw "Could not create Release $tag." }
 
+      - name: Collect the reports, the executable and the installer log
+        if: always()
+        shell: pwsh
+        run: |
+          # upload-artifact wants everything under one root, so the pieces are
+          # gathered into the workspace first.
+          $out = Join-Path $env:GITHUB_WORKSPACE "artifact"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          foreach ($pattern in "$env:KSIP_ROOT\temp\reports\*.json", "$env:KSIP_ROOT\release\ksip-v*.exe", "$env:RUNNER_TEMP\sdk-install.log") {
+            Get-ChildItem $pattern -ErrorAction SilentlyContinue | Copy-Item -Destination $out -Force
+          }
+          Get-ChildItem $out | ForEach-Object { "{0}  {1:N0} bytes" -f $_.Name, $_.Length }
+
       - name: Keep the reports, the executable and the installer log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-${{ github.ref_name }}
-          path: |
-            D:\ksip\temp\reports\*.json
-            D:\ksip\release\ksip-v*.exe
-            ${{ runner.temp }}\sdk-install.log
+          path: artifact
           if-no-files-found: warn

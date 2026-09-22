@@ -1,0 +1,6 @@
+# The runner and every developer build with the same compiler. A newer
+# stable brings new Clippy lints and a different binary; a change here is a
+# deliberate upgrade, verified like any other dependency.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy"]
