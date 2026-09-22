@@ -26,7 +26,8 @@ tmr transfer_timer;
 tmr parking_timer;
 int subscribe_parking();
 struct ParkSlot { struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN"; };
-std::array<ParkSlot,3> parking;
+// The numbers the buttons watch: up to six dialog subscriptions.
+std::array<ParkSlot,6> parking;
 bool sip_message_log=false;
 uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
@@ -395,11 +396,13 @@ int action(re_printf *pf, void *arg) {
         if(to)ua_hangup(call_get_ua(to),to,0,nullptr);
         return from ? uag_hold_resume(from) : 0;
     }
-    if(op=="park") {
+    if(op=="blind_transfer") {
+        // The call in progress is sent to the number as it is; the buttons
+        // decide what the number means (a park slot, a colleague, a queue).
         if(!c || call_state(c)!=CALL_STATE_ESTABLISHED || call_is_onhold(c))return EINVAL;
-        bool configured=false;for(const auto &slot:parking)if(slot.number==value)configured=true;
-        if(!configured)return EINVAL;
-        std::string uri="sip:*"+value+"@"+authority+";transport="+sip_scheme;
+        if(!token(value.c_str(),"*#+"))return EINVAL;
+        std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
+        std::string uri="sip:"+user+"@"+authority+";transport="+sip_scheme;
         return call_transfer(c,uri.c_str());
     }
     // Unregistering is about the account, not about a call.
@@ -423,13 +426,16 @@ int action(re_printf *pf, void *arg) {
 }
 int configure_parking(re_printf *pf,void *arg) {
     auto a=static_cast<cmd_arg*>(arg);if(!a || !str_isset(a->prm))return EINVAL;
-    std::array<std::string,3> values;std::string text=a->prm;size_t start=0;
-    for(size_t i=0;i<values.size();++i) {
-        auto end=text.find(',',start);if((i<2 && end==std::string::npos)||(i==2 && end!=std::string::npos))return EINVAL;
-        values[i]=text.substr(start,end==std::string::npos ? end : end-start);
-        // An empty slot means the button is unused, so only a filled one is checked.
-        if(!values[i].empty() && (values[i].size()>20 || !token(values[i].c_str(),"*#")))return EINVAL;
-        start=end==std::string::npos ? text.size() : end+1;
+    // Up to six comma-separated numbers; an empty one is a slot nobody watches.
+    std::array<std::string,6> values;std::string text=a->prm;size_t start=0;size_t count=0;
+    for(;;) {
+        if(count==values.size())return EINVAL;
+        auto end=text.find(',',start);
+        values[count]=text.substr(start,end==std::string::npos ? end : end-start);
+        if(!values[count].empty() && (values[count].size()>30 || !token(values[count].c_str(),"*#+")))return EINVAL;
+        ++count;
+        if(end==std::string::npos)break;
+        start=end+1;
     }
     for(size_t i=0;i<values.size();++i)
         for(size_t j=i+1;j<values.size();++j)
@@ -445,7 +451,7 @@ const cmd commands[]={
     {"ksip_login",0,0,"Load Windows SIP credential and register",login},
     {"ksip_state",0,0,"Get account and per-call state",state},
     {"ksip_action",0,CMD_PRM,"Operate a specific call",action},
-    {"ksip_parking",0,CMD_PRM,"Configure three dialog-state subscriptions",configure_parking},
+    {"ksip_parking",0,CMD_PRM,"Watch up to six numbers through dialog-state subscriptions",configure_parking},
     {"ksip_shutdown",0,0,"Release KSIP subscriptions before quit",shutdown},
 };
 int init(){

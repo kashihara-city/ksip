@@ -12,7 +12,8 @@ def main():
 
         original, _ = connect(a, b, configured[1]["extension"])
 
-        a.action("park", original, "701")
+        # The lab parks on *701 and picks up on 701, so the button would carry both.
+        a.action("blind_transfer", original, "*701")
         a.wait(lambda s: not s["calls"], timeout=20)
         b.wait(lambda s: any(c["state"] == "ESTABLISHED" for c in s["calls"]))
 

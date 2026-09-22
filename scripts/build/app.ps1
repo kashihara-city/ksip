@@ -5,12 +5,18 @@ $root = Split-Path (Split-Path $PSScriptRoot)
 Set-Location $root
 $release = Join-Path $root 'release'
 # A copy running from the release folder would lock the files this build replaces.
-# On a development machine the build wins, so it is stopped before anything is built.
-foreach ($running in @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ksip%'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -like "$release\*" })) {
-    Write-Host "Stopping $($running.Name) ($($running.ProcessId)) before building"
-    Stop-Process -Id $running.ProcessId -Force -ErrorAction SilentlyContinue
+# On a development machine the build wins, so it is stopped before anything is
+# built, and once more just before the files are replaced: a build takes minutes,
+# and the app can be started meanwhile.
+function Stop-ReleaseCopies([string]$when) {
+    foreach ($running in @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ksip%'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -like "$release\*" })) {
+        Write-Host "Stopping $($running.Name) ($($running.ProcessId)) $when"
+        Stop-Process -Id $running.ProcessId -Force -ErrorAction SilentlyContinue
+        try { (Get-Process -Id $running.ProcessId -ErrorAction Stop).WaitForExit(5000) | Out-Null } catch {}
+    }
 }
+Stop-ReleaseCopies 'before building'
 python -X utf8 scripts/build/embed-notices.py
 if ($LASTEXITCODE -ne 0) { throw 'License preparation failed' }
 # Reproducible output: no timestamp, and no build machine paths in the binary.
@@ -38,6 +44,7 @@ if ($manifest -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') { throw
 # Only this build's executables are replaced. Call history, recordings and the
 # engine profile live in the same folder once the app has run, and must survive
 # a build. Copies of earlier versions stay too: they are kept for comparison.
+Stop-ReleaseCopies 'before replacing the executables'
 foreach ($name in 'ksip.exe', "ksip-v$($Matches[1]).exe") {
     $stale = Join-Path $release $name
     if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }

@@ -303,14 +303,14 @@ mod tests {
             assert_eq!(general, serde_json::json!({"aec":true}));
             let stored = store.read_account()?.unwrap();
             assert!(stored.password == account.password);
-            // The address and the park slots are single values a policy can set.
+            // The address and the buttons are single values a policy can set.
             assert_eq!(store.read_text("server"), "192.0.2.10");
             assert_eq!(store.read_text("port"), "5070");
             assert_eq!(store.read_text("extension"), "101");
             assert_eq!(stored.server, account.server);
             assert_eq!(stored.port, account.port);
-            store.write_text("park_slot_1", "701")?;
-            assert_eq!(store.read_text("park_slot_1"), "701");
+            store.write_text("button_1_number", "701")?;
+            assert_eq!(store.read_text("button_1_number"), "701");
             assert!(!serde_json::to_string(&account.public())
                 .unwrap()
                 .contains(&account.password));

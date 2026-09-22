@@ -29,9 +29,8 @@ pub struct Settings {
     pub microphone_gain: u16,
     pub speaker_gain: u16,
     pub auto_record: bool,
-    pub park_slot_1: String,
-    pub park_slot_2: String,
-    pub park_slot_3: String,
+    /// The six buttons under the call controls, in the order they are shown.
+    pub buttons: Vec<CustomButton>,
     pub transport: String,
     pub ca_file: String,
     pub media_encryption: String,
@@ -53,6 +52,44 @@ pub struct Settings {
     pub sound_notfound: String,
     pub sound_error: String,
 }
+/// One of the six buttons a site defines: what it says, what it does and to
+/// which number. The three kinds differ in whether the number is watched
+/// (BLF), whether a call in progress is transferred to it, and whether it is
+/// called from an idle line.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomButton {
+    pub title: String,
+    /// Empty (unused), `transfer`, `dial` or `park`.
+    pub kind: String,
+    pub number: String,
+    /// For `park` only: where the call is sent when that differs from the
+    /// number that is watched and picked up, as with Asterisk's `*701`.
+    pub transfer: String,
+}
+impl CustomButton {
+    pub const COUNT: usize = 6;
+    pub const KINDS: [&'static str; 3] = ["transfer", "dial", "park"];
+    pub fn empty_set() -> Vec<Self> {
+        vec![Self::default(); Self::COUNT]
+    }
+    pub fn configured(&self) -> bool {
+        !self.kind.is_empty()
+    }
+    /// Whether the engine subscribes to the number's dialog state.
+    pub fn watches(&self) -> bool {
+        matches!(self.kind.as_str(), "dial" | "park")
+    }
+    /// Where a call in progress goes when the button is pressed, if anywhere.
+    pub fn transfer_target(&self) -> Option<&str> {
+        match self.kind.as_str() {
+            "transfer" => Some(&self.number),
+            "park" if self.transfer.is_empty() => Some(&self.number),
+            "park" => Some(&self.transfer),
+            _ => None,
+        }
+    }
+}
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -64,9 +101,7 @@ impl Default for Settings {
             microphone_gain: 100,
             speaker_gain: 100,
             auto_record: false,
-            park_slot_1: String::new(),
-            park_slot_2: String::new(),
-            park_slot_3: String::new(),
+            buttons: CustomButton::empty_set(),
             auto_answer: false,
             aec: true,
             aec_delay_ms: 20,
@@ -92,43 +127,62 @@ impl Default for Settings {
 }
 impl Settings {
     /// Values a group policy can set one at a time. They live in their own
-    /// registry values rather than inside the settings document.
-    pub const POLICY_KEYS: [&'static str; 7] = [
-        "park_slot_1",
-        "park_slot_2",
-        "park_slot_3",
-        "transport",
-        "ca_file",
-        "media_encryption",
-        "browser_integration",
-    ];
-    pub fn policy_values(&self) -> [&str; 7] {
-        [
-            &self.park_slot_1,
-            &self.park_slot_2,
-            &self.park_slot_3,
-            &self.transport,
-            &self.ca_file,
-            &self.media_encryption,
-            if self.browser_integration { "true" } else { "false" },
-        ]
+    /// registry values rather than inside the settings document. The buttons
+    /// are among them, as `button_1_title`, `button_1_kind`, `button_1_number`
+    /// and `button_1_transfer` up to `button_6_…`.
+    const BUTTON_FIELDS: [&'static str; 4] = ["title", "kind", "number", "transfer"];
+    /// The document keys that are stored as policy values instead.
+    pub const POLICY_DOCUMENT_KEYS: [&'static str; 5] =
+        ["transport", "ca_file", "media_encryption", "browser_integration", "buttons"];
+    pub fn policy_values(&self) -> Vec<(String, String)> {
+        let mut values = vec![
+            ("transport".to_string(), self.transport.clone()),
+            ("ca_file".to_string(), self.ca_file.clone()),
+            ("media_encryption".to_string(), self.media_encryption.clone()),
+            (
+                "browser_integration".to_string(),
+                if self.browser_integration { "true" } else { "false" }.to_string(),
+            ),
+        ];
+        for (index, button) in self.buttons.iter().enumerate().take(CustomButton::COUNT) {
+            for (field, value) in Self::BUTTON_FIELDS.iter().zip([
+                &button.title,
+                &button.kind,
+                &button.number,
+                &button.transfer,
+            ]) {
+                values.push((format!("button_{}_{field}", index + 1), value.clone()));
+            }
+        }
+        values
     }
-    pub fn set_policy_values(&mut self, values: [String; 7]) {
-        let [first, second, third, transport, ca_file, media_encryption, browser] = values;
-        self.park_slot_1 = first;
-        self.park_slot_2 = second;
-        self.park_slot_3 = third;
-        self.transport = transport;
-        self.ca_file = ca_file;
-        self.media_encryption = media_encryption;
+    pub fn read_policy(&mut self, read: impl Fn(&str) -> String) {
+        self.transport = read("transport");
+        self.ca_file = read("ca_file");
+        self.media_encryption = read("media_encryption");
         // A policy writes text, and the ways of saying yes are worth accepting.
         self.browser_integration = matches!(
-            browser.trim().to_ascii_lowercase().as_str(),
+            read("browser_integration").trim().to_ascii_lowercase().as_str(),
             "true" | "1" | "yes" | "on"
         );
+        self.buttons = (1..=CustomButton::COUNT)
+            .map(|index| CustomButton {
+                title: read(&format!("button_{index}_title")),
+                kind: read(&format!("button_{index}_kind")).trim().to_ascii_lowercase(),
+                number: read(&format!("button_{index}_number")),
+                transfer: read(&format!("button_{index}_transfer")),
+            })
+            .collect();
     }
-    pub fn parking(&self) -> [&str; 3] {
-        [&self.park_slot_1, &self.park_slot_2, &self.park_slot_3]
+    /// The numbers the engine watches, each once, in button order.
+    pub fn watched_numbers(&self) -> Vec<&str> {
+        let mut numbers: Vec<&str> = Vec::new();
+        for button in self.buttons.iter().filter(|b| b.watches()) {
+            if !numbers.contains(&button.number.as_str()) {
+                numbers.push(&button.number);
+            }
+        }
+        numbers
     }
     /// The SIP transport baresip should use. Empty means the historic UDP.
     pub fn sip_transport(&self) -> &str {
@@ -433,8 +487,8 @@ impl AppState {
         let loaded = store.read_settings::<Settings>();
         let mut startup_error = loaded.as_ref().err().cloned().unwrap_or_default();
         let mut settings = loaded.unwrap_or_default();
-        // The park slots live in their own values, also on the first snapshot.
-        settings.set_policy_values(Settings::POLICY_KEYS.map(|key| store.read_text(key)));
+        // The policy values live outside the document, also on the first snapshot.
+        settings.read_policy(|key| store.read_text(key));
         let account = match store.read_account() {
             Ok(Some(a)) => a.public(),
             Ok(None) => Account::default().public(),
@@ -504,21 +558,21 @@ impl AppState {
     /// Settings come from the JSON document plus the values a policy can set.
     fn settings(&self) -> Result<Settings, String> {
         let mut settings = self.store.read_settings::<Settings>()?;
-        settings.set_policy_values(Settings::POLICY_KEYS.map(|key| self.store.read_text(key)));
+        settings.read_policy(|key| self.store.read_text(key));
         Ok(settings)
     }
-    /// The park slots own a registry value each, so they are removed from the
-    /// settings document instead of being stored twice.
+    /// The policy values own a registry value each, so they are removed from
+    /// the settings document instead of being stored twice.
     fn save_settings(&self, settings: &Settings) -> Result<(), String> {
         let mut document = serde_json::to_value(settings).map_err(|e| e.to_string())?;
         if let Some(fields) = document.as_object_mut() {
-            for key in Settings::POLICY_KEYS {
+            for key in Settings::POLICY_DOCUMENT_KEYS {
                 fields.remove(key);
             }
         }
         self.store.write_settings(&document)?;
-        for (key, value) in Settings::POLICY_KEYS.iter().zip(settings.policy_values()) {
-            self.store.write_text(key, value)?;
+        for (key, value) in settings.policy_values() {
+            self.store.write_text(&key, &value)?;
         }
         Ok(())
     }
@@ -871,22 +925,36 @@ impl AppState {
         if s.ca_file.len() > 400 || s.ca_file.chars().any(char::is_control) {
             return Err(message("SETTINGS_CA_FILE_INVALID"));
         }
-        // An empty parking slot leaves that button unconfigured instead of failing the save.
-        let configured: Vec<&String> = [&s.park_slot_1, &s.park_slot_2, &s.park_slot_3]
-            .into_iter()
-            .filter(|slot| !slot.is_empty())
-            .collect();
-        for slot in &configured {
-            if slot.len() > 20 || !slot.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(message("SETTINGS_PARK_NUMBER_INVALID"));
+        // A button whose kind is empty is simply not shown; the rest need a
+        // number the engine can put in a SIP URI.
+        if s.buttons.len() > CustomButton::COUNT {
+            return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
+        }
+        let number_ok = |number: &str| {
+            number.len() <= 30
+                && number
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"*#+".contains(&b))
+        };
+        for button in &s.buttons {
+            if !button.kind.is_empty() && !CustomButton::KINDS.contains(&button.kind.as_str()) {
+                return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
+            }
+            if button.title.chars().count() > 40 || button.title.chars().any(char::is_control) {
+                return Err(message("SETTINGS_BUTTON_TITLE_INVALID"));
+            }
+            if !number_ok(&button.number)
+                || !number_ok(&button.transfer)
+                || (button.configured() && button.number.is_empty())
+            {
+                return Err(message("SETTINGS_BUTTON_NUMBER_INVALID"));
             }
         }
-        if configured
-            .iter()
-            .enumerate()
-            .any(|(i, slot)| configured[i + 1..].contains(slot))
-        {
-            return Err(message("SETTINGS_PARK_NUMBER_DUPLICATE"));
+        // The engine subscribes to each watched number once, so two buttons
+        // cannot watch the same one.
+        let watched: Vec<&str> = s.buttons.iter().filter(|b| b.watches()).map(|b| b.number.as_str()).collect();
+        if watched.iter().enumerate().any(|(i, n)| watched[i + 1..].contains(n)) {
+            return Err(message("SETTINGS_BUTTON_NUMBER_DUPLICATE"));
         }
         Ok(())
     }
@@ -1336,7 +1404,10 @@ impl AppState {
             .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
         account.validate()?;
         let settings = self.settings()?;
-        let parking = settings.parking().join(",");
+        // The engine takes six comma-separated numbers to watch, empty ones included.
+        let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
+        watched.resize(CustomButton::COUNT, String::new());
+        let watched = watched.join(",");
         self.stop()?;
         // The window shows what the engine is actually running with, so a
         // reconnect brings the saved settings forward as well.
@@ -1346,7 +1417,7 @@ impl AppState {
             let _ = self.stop();
             return Err(e);
         }
-        if let Err(e) = self.request("ksip_parking", &parking) {
+        if let Err(e) = self.request("ksip_parking", &watched) {
             let _ = self.stop();
             return Err(e);
         }
@@ -1500,7 +1571,7 @@ impl AppState {
                 | "cancel_transfer"
                 | "unregister"
                 | "dtmf"
-                | "park"
+                | "blind_transfer"
                 | "auto_record"
         ) {
             return Err(message("ACTION_UNSUPPORTED"));
@@ -1541,20 +1612,17 @@ impl AppState {
                 return Err(message("TRANSFER_NEEDS_TWO_CALLS"));
             }
         }
-        if name == "park" {
+        if name == "blind_transfer" {
+            // Only a number one of the buttons was set up with, and only a
+            // call that is actually in progress.
             let v = self.snapshot();
-            let configured = [
-                &v.settings.park_slot_1,
-                &v.settings.park_slot_2,
-                &v.settings.park_slot_3,
-            ];
-            if !configured.iter().any(|slot| slot.as_str() == value)
+            if !v.settings.buttons.iter().any(|b| b.transfer_target() == Some(value))
                 || !v
                     .calls
                     .iter()
                     .any(|c| c.id == id && c.state == "ESTABLISHED" && !c.held)
             {
-                return Err(message("PARK_NEEDS_CALL_AND_SLOT"));
+                return Err(message("BUTTON_NEEDS_CALL_AND_TARGET"));
             }
         }
         if name == "dial"
@@ -1871,6 +1939,38 @@ mod tests {
         assert!(AppState::validate(&Settings::default()).is_ok());
     }
     #[test]
+    fn custom_buttons_are_checked_and_resolved() {
+        let button = |kind: &str, number: &str, transfer: &str| CustomButton {
+            title: "test".into(),
+            kind: kind.into(),
+            number: number.into(),
+            transfer: transfer.into(),
+        };
+        let with = |buttons: Vec<CustomButton>| Settings { buttons, ..Settings::default() };
+        let ok = with(vec![button("park", "701", "*701"), button("dial", "1002", ""), button("transfer", "9001", "")]);
+        assert!(AppState::validate(&ok).is_ok());
+        assert_eq!(ok.watched_numbers(), vec!["701", "1002"]);
+        assert_eq!(ok.buttons[0].transfer_target(), Some("*701"));
+        assert_eq!(ok.buttons[1].transfer_target(), None);
+        assert_eq!(ok.buttons[2].transfer_target(), Some("9001"));
+        assert_eq!(button("park", "701", "").transfer_target(), Some("701"));
+        // What is refused: a kind that is not one of the three, a title too
+        // long, a number outside the SIP user alphabet, and two watchers of
+        // one number. An unused button may leave its number empty.
+        assert!(AppState::validate(&with(vec![button("hold", "701", "")])).is_err());
+        assert!(AppState::validate(&with(vec![CustomButton { title: "x".repeat(41), ..button("dial", "1", "") }])).is_err());
+        assert!(AppState::validate(&with(vec![button("dial", "70 1", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("dial", "", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("dial", "701", ""), button("park", "701", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("", "", "")])).is_ok());
+        // The policy values round-trip through their registry names.
+        let mut read_back = Settings::default();
+        let stored: std::collections::HashMap<String, String> = ok.policy_values().into_iter().collect();
+        read_back.read_policy(|key| stored.get(key).cloned().unwrap_or_default());
+        assert_eq!(read_back.buttons[..3], ok.buttons[..3]);
+        assert!(read_back.buttons[3..].iter().all(|b| !b.configured()));
+    }
+    #[test]
     fn reject_invalid_volume_without_launching_helper() {
         let app = AppState::new();
         assert!(app.volume("other", "default", None).is_err());
@@ -1994,9 +2094,7 @@ mod tests {
         assert!(!settings.detail_log);
         assert!(!settings.auto_record);
         assert!(!settings.auto_answer);
-        assert!(settings.park_slot_1.is_empty());
-        assert!(settings.park_slot_2.is_empty());
-        assert!(settings.park_slot_3.is_empty());
+        assert!(settings.buttons.iter().all(|b| !b.configured()));
         let calls = vec![
             CallInfo {
                 id: "held".into(),

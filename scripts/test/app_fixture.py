@@ -16,6 +16,12 @@ if sys.argv[1]=='setup':
     if secure:
         policy+=[('transport','tls'),('media_encryption','sdes'),
                  ('ca_file',str(ROOT/'local-asterisk/LocalCA.crt'))]
+    # 'setup buttons' defines three custom buttons: a speed dial to the peer, a
+    # park slot the lab parks on *701 and picks up on 701, and a transfer to 9001.
+    if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':
+        policy+=[('button_1_title','Peer'),('button_1_kind','dial'),('button_1_number',configured[1]['extension']),
+                 ('button_2_title','Park'),('button_2_kind','park'),('button_2_number','701'),('button_2_transfer','*701'),
+                 ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number','9001')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)))
         for name,value in policy:

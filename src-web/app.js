@@ -115,8 +115,9 @@ function callSummary(call){
   else if(state.media_encryption!=='dtls_srtp'||call.duration>=2)parts.push(t('MEDIA_UNENCRYPTED'));
   return ' · '+parts.join(' · ');
 }
-const parkNumber=n=>state.settings['park_slot_'+n]||'';
-const parkState=n=>state.parking?.find(slot=>slot.number===parkNumber(n))?.state||'UNKNOWN';
+// The buttons a site defined, with their position, leaving out the unused ones.
+const configuredButtons=()=>(state.settings.buttons||[]).map((b,i)=>({...b,index:i+1})).filter(b=>b.kind);
+const watchState=number=>state.parking?.find(slot=>slot.number===number)?.state||'UNKNOWN';
 function ask(message){
   // The page's own confirm() is prefixed with the origin, which means nothing
   // to the person reading it, so the question is asked inside the window.
@@ -192,7 +193,7 @@ function render(){
   $('hangup').disabled=busy||!c;
   $('hold').disabled=busy||c?.state!=='ESTABLISHED'||!!state.transfer.pending;
   $('hold').textContent=t(c?.held?'HOLD_RESUME':'HOLD');
-  for(let n=1;n<=3;n++){const slotState=parkState(n),number=parkNumber(n),active=c?.state==='ESTABLISHED'&&!c.held,freeLine=[1,2].some(line=>!callAt(line));$('park-'+n+'-status').textContent=number?number+' · '+(texts.park[slotState]||texts.park.UNKNOWN):texts.parkUnset;$('park-'+n).classList.toggle('occupied',slotState==='INUSE');$('park-'+n).disabled=busy||!number||state.registration!=='REGISTER_OK'||slotState==='UNKNOWN'||(active?slotState!=='IDLE':slotState!=='INUSE'||!freeLine);}
+  renderButtons(c);
   $('transfer').disabled=busy||!!state.transfer.pending||![callAt(1),callAt(2)].every(c=>c?.state==='ESTABLISHED');
   const outcome=state.transfer.outcome||'';
   $('transfer-status').className='hint'+(outcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
@@ -250,7 +251,8 @@ function update(snapshot){
 }
 function openSettings(){
   for(const key of ['server','port','extension','auth_user'])$(key).value=state.account[key]??'';
-  for(const key of ['sip_port','rtp_port','park_slot_1','park_slot_2','park_slot_3'])$(key).value=state.settings[key];
+  for(const key of ['sip_port','rtp_port'])$(key).value=state.settings[key];
+  for(let n=1;n<=6;n++){const b=(state.settings.buttons||[])[n-1]||{};$('button_'+n+'_title').value=b.title||'';$('button_'+n+'_kind').value=b.kind||'';$('button_'+n+'_number').value=b.number||'';$('button_'+n+'_transfer').value=b.transfer||'';syncButtonRow(n);}
   fillAdapters(state.settings.network_adapter||'');
   for(const key of ['sound_ring', 'sound_ringback', 'sound_callwaiting', 'sound_busy', 'sound_notfound', 'sound_error'])$(key).value=state.settings[key]||'';
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
@@ -273,12 +275,44 @@ $('dial-form').addEventListener('submit',e=>{e.preventDefault();act('dial','',$(
 $('answer').addEventListener('click',()=>act('answer'));
 $('hangup').addEventListener('click',()=>act('hangup'));
 $('hold').addEventListener('click',()=>act(current()?.held?'resume':'hold'));
-async function usePark(n){
-  const number=parkNumber(n),c=current(),slotState=parkState(n);
-  if(c?.state==='ESTABLISHED'&&!c.held&&slotState==='IDLE'){await act('park',c.id,number);return;}
-  if(slotState==='INUSE'){const line=[1,2].find(value=>!callAt(value));if(!line)return;selected=line;$('target').value=number;render();await act('dial','',number,line);}
+// The buttons are drawn from the settings: only the configured ones, in
+// order, each keeping its own id so that a test can find it by position.
+function renderButtons(c){
+  const box=$('custom-actions'),configured=configuredButtons();
+  box.hidden=!configured.length;
+  const key=JSON.stringify(configured);
+  if(box.dataset.key!==key){
+    box.replaceChildren(...configured.map(b=>{const button=document.createElement('button');button.type='button';button.id='custom-'+b.index;button.className='custom-'+b.kind;const title=document.createElement('strong');const status=document.createElement('small');status.id='custom-'+b.index+'-status';button.append(title,status);button.addEventListener('click',()=>useButton(b.index));return button;}));
+    box.dataset.key=key;
+  }
+  const active=c?.state==='ESTABLISHED'&&!c.held,freeLine=[1,2].some(line=>!callAt(line)),registered=state.registration==='REGISTER_OK';
+  for(const b of configured){
+    const button=$('custom-'+b.index),watched=b.kind!=='transfer',s=watched?watchState(b.number):'';
+    let status,enabled;
+    if(b.kind==='transfer'){status=fill('BUTTON_TRANSFER_TO',b.number);enabled=active;}
+    else if(b.kind==='dial'){status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=freeLine;}
+    else{status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=s!=='UNKNOWN'&&(active?s==='IDLE':s==='INUSE'&&freeLine);}
+    button.firstChild.textContent=b.title||b.number;
+    // A button's children are presentational to assistive technology, so its
+    // name carries the status as well as the title.
+    button.setAttribute('aria-label',(b.title||b.number)+' '+status);
+    $('custom-'+b.index+'-status').textContent=status;
+    button.classList.toggle('occupied',watched&&s==='INUSE');
+    button.disabled=busy||!registered||!!state.transfer.pending||!enabled;
+  }
 }
-for(let n=1;n<=3;n++)$('park-'+n).addEventListener('click',()=>usePark(n));
+async function useButton(n){
+  const b=configuredButtons().find(button=>button.index===n);
+  if(!b)return;
+  const c=current(),active=c?.state==='ESTABLISHED'&&!c.held,s=b.kind==='transfer'?'':watchState(b.number);
+  if(b.kind==='transfer'){if(active)await act('blind_transfer',c.id,b.number);return;}
+  if(b.kind==='park'&&active&&s==='IDLE'){await act('blind_transfer',c.id,b.transfer||b.number);return;}
+  if(b.kind==='dial'||(b.kind==='park'&&s==='INUSE')){
+    const line=[1,2].find(value=>!callAt(value));
+    if(!line)return;
+    selected=line;$('target').value=b.number;render();await act('dial','',b.number,line);
+  }
+}
 $('transfer').addEventListener('click',()=>act('transfer',callAt(1)?.id||'',callAt(2)?.id||'',1));
 $('record').addEventListener('click',()=>act('auto_record','',state.settings.auto_record?'off':'on'));
 $('open-recordings').addEventListener('click',()=>invoke('open_recordings').catch(e=>{error=String(e);logUi('open recordings',e);render();}));
@@ -295,6 +329,9 @@ $('transport').addEventListener('change',()=>{
   const tls=$('transport').value==='tls',port=$('port');
   if(port.value.trim()===(tls?'5060':'5061'))port.value=tls?'5061':'5060';
 });
+// The transfer target only means something for a park button.
+function syncButtonRow(n){$('button_'+n+'_transfer').disabled=$('button_'+n+'_kind').value!=='park';}
+for(let n=1;n<=6;n++)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
 $('choose-ca').addEventListener('click',async()=>{
   try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen)$('ca_file').value=chosen;}
   catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi('choose ca file',e);}
@@ -305,7 +342,7 @@ for(const button of document.querySelectorAll('[data-sound]'))button.addEventLis
 });
 $('settings-form').addEventListener('submit',async e=>{
   e.preventDefault();$('settings-error').hidden=true;
-  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,park_slot_1:$('park_slot_1').value.trim(),park_slot_2:$('park_slot_2').value.trim(),park_slot_3:$('park_slot_3').value.trim(),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
+  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:[1,2,3,4,5,6].map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
   const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
   try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
   catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}
