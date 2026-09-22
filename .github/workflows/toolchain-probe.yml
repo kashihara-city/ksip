@@ -73,6 +73,49 @@ jobs:
           cmd /c "call `"$bat`" amd64_x86 10.0.28000.0 && echo exit=0 || echo exit=%ERRORLEVEL%"
           exit 0
 
+      - name: Check out the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reproduce the release job's chain (dev-env twice, then Python runs vcvarsall)
+        shell: pwsh
+        run: |
+          $vc = Join-Path $env:RUNNER_TEMP 'vc.py'
+          @'
+          import os, subprocess, sys
+          vs = sys.argv[1]
+          args = [vs + r'\VC\Auxiliary\Build\vcvarsall.bat', 'amd64_x86', '10.0.28000.0', '&&', 'set']
+          p = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+          out, _ = p.communicate()
+          print('returncode', p.returncode, 'PATH length', len(os.environ.get('PATH', '')), 'VSCMD_VER', os.environ.get('VSCMD_VER'))
+          lines = out.splitlines()
+          print('\n'.join(lines[:12]))
+          print('...')
+          print('\n'.join(l for l in lines if 'ERROR' in l or 'error' in l or 'WARNING' in l)[:2000])
+          '@ | Set-Content -LiteralPath $vc -Encoding utf8
+          $inner = Join-Path $env:RUNNER_TEMP 'inner.ps1'
+          @'
+          . "$args/scripts/dev-env.ps1"
+          "--- inner: VSCMD_VER=$env:VSCMD_VER PATH length $($env:PATH.Length)"
+          python $env:RUNNER_TEMP\vc.py $vs
+          '@ | Set-Content -LiteralPath $inner -Encoding utf8
+          $outer = Join-Path $env:RUNNER_TEMP 'outer.ps1'
+          @'
+          . "$args/scripts/dev-env.ps1"
+          "--- outer: VSCMD_VER=$env:VSCMD_VER PATH length $($env:PATH.Length)"
+          "=== one dev-env, python -> vcvarsall"
+          python $env:RUNNER_TEMP\vc.py $vs
+          "=== two dev-envs (native.ps1 -> webrtc.ps1), python -> vcvarsall"
+          powershell -NoProfile -ExecutionPolicy Bypass -File $env:RUNNER_TEMP\inner.ps1 $args
+          '@ | Set-Content -LiteralPath $outer -Encoding utf8
+          "=== no dev-env, python -> vcvarsall"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          python $vc $vs
+          powershell -NoProfile -ExecutionPolicy Bypass -File $outer $env:GITHUB_WORKSPACE
+          exit 0
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
