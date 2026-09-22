@@ -53,6 +53,25 @@ jobs:
           echo WindowsSDKVersion=%WindowsSDKVersion%
           exit /b 0
 
+      - name: Run vcvarsall from an environment Enter-VsDevShell already initialized
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installerswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          "VSCMD_VER=$env:VSCMD_VER WindowsSDKVersion=$env:WindowsSDKVersion VCToolsVersion=$env:VCToolsVersion"
+          "=== inside the dev shell: amd64_x86 10.0.28000.0"
+          cmd /c "call `"$vs\VC\Auxiliary\Buildcvarsall.bat`" amd64_x86 10.0.28000.0 && echo exit=0 || echo exit=%ERRORLEVEL%"
+          "=== same, with VSCMD_VER removed"
+          $saved = $env:VSCMD_VER; Remove-Item Env:VSCMD_VER
+          cmd /c "call `"$vs\VC\Auxiliary\Buildcvarsall.bat`" amd64_x86 10.0.28000.0 && echo exit=0 || echo exit=%ERRORLEVEL%"
+          $env:VSCMD_VER = $saved
+          "=== same, with every VSCMD_* removed"
+          Get-ChildItem Env: | Where-Object Name -like 'VSCMD_*' | ForEach-Object { Remove-Item "Env:$($_.Name)" }
+          cmd /c "call `"$vs\VC\Auxiliary\Buildcvarsall.bat`" amd64_x86 10.0.28000.0 && echo exit=0 || echo exit=%ERRORLEVEL%"
+          exit 0
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
