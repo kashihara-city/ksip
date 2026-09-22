@@ -1,13 +1,15 @@
 # タグ v* を push すると、ランナーだけで KSIP を最初から組み、対向の要らない
 # テストを通し、来歴（attestation）を付けて GitHub Release に載せる。
 # SIP サーバーと実機が要るテスト（asterisk-*.py・app-*.ps1）は、タグを打つ前に
-# 手元で通しておく決まり。
+# 手元で通しておく決まり。手動実行（workflow_dispatch）ではビルドとテストだけを
+# 行い、来歴と Release は作らない。
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -65,6 +67,7 @@ jobs:
           & $vswhere -latest -products * -property installationVersion
 
       - name: Verify the tag matches the committed versions
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         working-directory: ${{ env.KSIP_ROOT }}
         env:
@@ -205,13 +208,12 @@ jobs:
         id: package
         shell: pwsh
         working-directory: ${{ env.KSIP_ROOT }}
-        env:
-          TAG_NAME: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
           python -X utf8 scripts/build/package.py
           if ($LASTEXITCODE -ne 0) { throw "package.py failed" }
-          $version = $env:TAG_NAME.TrimStart("v")
+          $manifest = Get-Content -LiteralPath "src-tauri/Cargo.toml" -Raw
+          $version = [regex]::Match($manifest, '(?m)^version = "(?<version>[^"]+)"').Groups["version"].Value
           $folder = (Resolve-Path "temp/build/single-v$version").Path
           $exe = Join-Path $folder "ksip-v$version.exe"
           $zip = Join-Path $folder "KSIP-v$version-source.zip"
@@ -222,11 +224,13 @@ jobs:
           "zip_sha256=$((Get-FileHash $zip).Hash.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Attest the build provenance of the executable
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-path: ${{ steps.package.outputs.exe }}
 
       - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -262,12 +266,13 @@ jobs:
             --verify-tag --title "KSIP $tag" --notes-file $notesPath --repo $env:REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw "Could not create Release $tag." }
 
-      - name: Keep the reports and the installer log
+      - name: Keep the reports, the executable and the installer log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: reports-${{ github.ref_name }}
+          name: build-${{ github.ref_name }}
           path: |
             D:\ksip\temp\reports\*.json
+            D:\ksip\release\ksip-v*.exe
             ${{ runner.temp }}\sdk-install.log
           if-no-files-found: warn

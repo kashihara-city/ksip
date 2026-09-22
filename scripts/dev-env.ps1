@@ -3,12 +3,19 @@ $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$vs) { throw 'Visual Studio C++ Build Tools not found' }
-$env:PATH = "$(Split-Path $vswhere);$env:PATH"
-Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+# A script started from a shell this file already set up (native.ps1 runs
+# webrtc.ps1) must not set it up again: every Enter-VsDevShell adds to PATH, and
+# a PATH that has grown past what cmd.exe accepts makes vcvarsall.bat fail with
+# "The input line is too long", which is how the WebRTC build died on a runner.
+if (!$env:VSCMD_VER) {
+    $env:PATH = "$(Split-Path $vswhere);$env:PATH"
+    Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+    Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+}
 $root = Split-Path $PSScriptRoot
 $env:CARGO_TARGET_DIR = "$root\temp\cargo-target"
-$env:PATH = "$root\temp\build\native\bin;$env:PATH"
+$native = "$root\temp\build\native\bin"
+if (($env:PATH -split ';') -notcontains $native) { $env:PATH = "$native;$env:PATH" }
 
 function Mount-TauriGeneratedDirectory([string]$projectRoot) {
     $link = Join-Path $projectRoot 'src-tauri/gen'
