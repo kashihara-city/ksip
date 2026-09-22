@@ -44,6 +44,9 @@ pub struct Settings {
     pub shortcut_window: String,
     pub shortcut_call: String,
     pub incoming_action: String,
+    /// Seconds after the last call ends before the window goes to the tray;
+    /// -1 leaves the window where it is.
+    pub tray_after_call: i32,
     pub language: String,
     pub sound_ring: String,
     pub sound_ringback: String,
@@ -60,7 +63,7 @@ pub struct Settings {
 #[serde(default)]
 pub struct CustomButton {
     pub title: String,
-    /// Empty (unused), `transfer`, `dial` or `park`.
+    /// Empty (unused), `transfer`, `dial`, `park` or `open`.
     pub kind: String,
     pub number: String,
     /// For `park` only: where the call is sent when that differs from the
@@ -69,7 +72,7 @@ pub struct CustomButton {
 }
 impl CustomButton {
     pub const COUNT: usize = 6;
-    pub const KINDS: [&'static str; 3] = ["transfer", "dial", "park"];
+    pub const KINDS: [&'static str; 4] = ["transfer", "dial", "park", "open"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
     }
@@ -107,6 +110,17 @@ impl CustomButton {
                     .all(|b| b.is_ascii_alphanumeric() || b"*#+".contains(&b))
         }
     }
+    /// A web address for the `open` kind: the browser gets it, nothing else does.
+    pub fn link_ok(text: &str) -> bool {
+        let text = text.trim();
+        let lower = text.to_ascii_lowercase();
+        (lower.starts_with("http://") || lower.starts_with("https://"))
+            && text.len() <= 500
+            && !text.chars().any(|c| c.is_control() || c == ' ')
+    }
+    pub fn link_target(&self) -> Option<&str> {
+        (self.kind == "open").then(|| self.number.trim())
+    }
     /// The address the engine watches and calls, for the kinds that do so.
     pub fn dial_target(&self) -> Option<&str> {
         self.watches().then(|| Self::address(&self.number))
@@ -143,6 +157,7 @@ impl Default for Settings {
             shortcut_window: String::new(),
             shortcut_call: String::new(),
             incoming_action: "show".into(),
+            tray_after_call: -1,
             language: String::new(),
             sound_ring: String::new(),
             sound_ringback: String::new(),
@@ -930,6 +945,9 @@ impl AppState {
         if !(30..=3600).contains(&s.register_interval) {
             return Err(message("SETTINGS_REGISTER_INTERVAL_RANGE"));
         }
+        if !(-1..=3600).contains(&s.tray_after_call) {
+            return Err(message("SETTINGS_TRAY_AFTER_CALL_RANGE"));
+        }
         // The keys are only read here; registering them needs the window.
         crate::shortcuts::parse_settings(s)?;
         if !matches!(s.incoming_action.as_str(), "show" | "notify") {
@@ -968,10 +986,13 @@ impl AppState {
             if button.title.chars().count() > 40 || button.title.chars().any(char::is_control) {
                 return Err(message("SETTINGS_BUTTON_TITLE_INVALID"));
             }
-            if !CustomButton::target_ok(&button.number)
-                || !CustomButton::target_ok(&button.transfer)
-                || (button.configured() && CustomButton::address(&button.number).is_empty())
-            {
+            let number_ok = if button.kind == "open" {
+                CustomButton::link_ok(&button.number)
+            } else {
+                CustomButton::target_ok(&button.number)
+                    && !(button.configured() && CustomButton::address(&button.number).is_empty())
+            };
+            if !number_ok || !CustomButton::target_ok(&button.transfer) {
                 return Err(message("SETTINGS_BUTTON_NUMBER_INVALID"));
             }
         }
@@ -2011,6 +2032,19 @@ mod tests {
         assert_eq!(odd.buttons[0].dial_target(), Some("61"));
         assert_eq!(odd.watched_numbers(), vec!["61", "sip:sales@pbx.example"]);
         assert!(AppState::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());
+        // A link button holds a web address and nothing the engine would dial.
+        let page = with(vec![button("open", " https://pbx.example/extensions ", "")]);
+        assert!(AppState::validate(&page).is_ok());
+        assert_eq!(page.buttons[0].link_target(), Some("https://pbx.example/extensions"));
+        assert_eq!(page.buttons[0].dial_target(), None);
+        assert_eq!(page.buttons[0].transfer_target(), None);
+        assert!(AppState::validate(&with(vec![button("open", "ftp://pbx.example/", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("open", "https://pbx.example/a b", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("dial", "https://pbx.example/", "")])).is_err());
+        // The tray delay is -1 (never) or up to an hour.
+        assert!(AppState::validate(&Settings { tray_after_call: 0, ..Settings::default() }).is_ok());
+        assert!(AppState::validate(&Settings { tray_after_call: -2, ..Settings::default() }).is_err());
+        assert!(AppState::validate(&Settings { tray_after_call: 3601, ..Settings::default() }).is_err());
         assert!(AppState::validate(&with(vec![button("transfer", &format!("sip:{}@pbx", "6".repeat(200)), "")])).is_err());
         // The policy values round-trip through their registry names.
         let mut read_back = Settings::default();
@@ -2140,6 +2174,7 @@ mod tests {
         assert_eq!(settings.speaker_gain, 100);
         assert_eq!(settings.aec_delay_ms, 20);
         assert_eq!(settings.register_interval, 300);
+        assert_eq!(settings.tray_after_call, -1);
         assert!(!settings.detail_log);
         assert!(!settings.auto_record);
         assert!(!settings.auto_answer);

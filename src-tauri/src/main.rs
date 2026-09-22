@@ -187,6 +187,22 @@ fn open_sound_control(state: State<AppState>) -> Result<(), String> {
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
+/// Opens the web address a button was set up with, and no other.
+#[tauri::command]
+fn open_link(url: String, state: State<AppState>) -> Result<(), String> {
+    let wanted = url.trim();
+    let known = state
+        .snapshot()
+        .settings
+        .buttons
+        .iter()
+        .any(|b| b.link_target() == Some(wanted));
+    if !known {
+        return Err(message::message("LINK_TARGET_INVALID"));
+    }
+    state.log_app(format!("ksip: opening {wanted}"));
+    native::open_url(wanted)
+}
 pub fn show(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -293,6 +309,7 @@ fn main() {
             calibrate_aec,
             select_audio_device,
             open_sound_control,
+            open_link,
             quit_app
         ])
         .setup(move |app| {
@@ -369,6 +386,10 @@ fn main() {
                 // Calls the person was told about rather than shown; answering
                 // one of them brings the window back.
                 let mut announced = std::collections::HashSet::new();
+                // The window goes to the tray a set time after the last call
+                // ends, if the settings ask for it; a new call calls it off.
+                let mut had_calls = false;
+                let mut hide_at: Option<std::time::Instant> = None;
                 while !state.is_closing() {
                     // The window stops asking for the microphone level while it
                     // is in the tray, which lets the microphone close.
@@ -411,6 +432,25 @@ fn main() {
                         announced.retain(|id| incoming.contains(id));
                     }
                     previous_incoming = incoming;
+                    let in_call = !snapshot.calls.is_empty();
+                    if in_call {
+                        hide_at = None;
+                    } else if had_calls && snapshot.settings.tray_after_call >= 0 {
+                        hide_at = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_secs(snapshot.settings.tray_after_call as u64),
+                        );
+                    }
+                    had_calls = in_call;
+                    if hide_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                        hide_at = None;
+                        if is_visible(&handle) {
+                            if let Some(window) = handle.get_webview_window("main") {
+                                let _ = window.hide();
+                                state.log_app("ksip: window to the tray after the call".into());
+                            }
+                        }
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
             });

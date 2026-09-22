@@ -23,9 +23,13 @@ if sys.argv[1]=='setup':
                  ('button_2_title','Park'),('button_2_kind','park'),('button_2_number','701'),('button_2_transfer','*701'),
                  ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number','9001'),
                  # The same player named as a full URI in angle brackets, as some PBXs want it.
-                 ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>')]
+                 ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>'),
+                 ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
-        winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)))
+        general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
+        # The buttons profile also asks for the window to go to the tray ten seconds after a call.
+        if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':general['tray_after_call']=10
+        winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(general))
         for name,value in policy:
             winreg.SetValueEx(key,name,0,winreg.REG_SZ,value)
     (BASE/'peer-extension.txt').write_text(configured[1]['extension'])

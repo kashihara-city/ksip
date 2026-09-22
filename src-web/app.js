@@ -257,7 +257,7 @@ function openSettings(){
   for(let n=1;n<=6;n++){const b=(state.settings.buttons||[])[n-1]||{};$('button_'+n+'_title').value=b.title||'';$('button_'+n+'_kind').value=b.kind||'';$('button_'+n+'_number').value=b.number||'';$('button_'+n+'_transfer').value=b.transfer||'';syncButtonRow(n);}
   fillAdapters(state.settings.network_adapter||'');
   for(const key of ['sound_ring', 'sound_ringback', 'sound_callwaiting', 'sound_busy', 'sound_notfound', 'sound_error'])$(key).value=state.settings[key]||'';
-  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
+  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   $('settings-error').hidden=true;$('configuration').showModal();
 }
@@ -289,10 +289,11 @@ function renderButtons(c){
   }
   const active=c?.state==='ESTABLISHED'&&!c.held,freeLine=[1,2].some(line=>!callAt(line)),registered=state.registration==='REGISTER_OK';
   for(const b of configured){
-    const button=$('custom-'+b.index),watched=b.kind!=='transfer',s=watched?watchState(b.number):'';
-    let status,enabled;
+    const button=$('custom-'+b.index),watched=b.kind==='dial'||b.kind==='park',s=watched?watchState(b.number):'';
+    let status,enabled,needsPhone=true;
     if(b.kind==='transfer'){status=fill('BUTTON_TRANSFER_TO',b.number);enabled=active;}
     else if(b.kind==='dial'){status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=freeLine;}
+    else if(b.kind==='open'){status=b.number;enabled=true;needsPhone=false;}
     else{status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=s!=='UNKNOWN'&&(active?s==='IDLE':s==='INUSE'&&freeLine);}
     button.firstChild.textContent=b.title||b.number;
     // A button's children are presentational to assistive technology, so its
@@ -300,12 +301,17 @@ function renderButtons(c){
     button.setAttribute('aria-label',(b.title||b.number)+' '+status);
     $('custom-'+b.index+'-status').textContent=status;
     button.classList.toggle('occupied',watched&&s==='INUSE');
-    button.disabled=busy||!registered||!!state.transfer.pending||!enabled;
+    button.disabled=busy||!enabled||(needsPhone&&(!registered||!!state.transfer.pending));
   }
 }
 async function useButton(n){
   const b=configuredButtons().find(button=>button.index===n);
   if(!b)return;
+  if(b.kind==='open'){
+    try{await invoke('open_link',{url:b.number});}
+    catch(e){error=String(e);logUi('open link',e);render();}
+    return;
+  }
   const c=current(),active=c?.state==='ESTABLISHED'&&!c.held,s=b.kind==='transfer'?'':watchState(b.number);
   if(b.kind==='transfer'){if(active)await act('blind_transfer',c.id,b.number);return;}
   if(b.kind==='park'&&active&&s==='IDLE'){await act('blind_transfer',c.id,b.transfer||b.number);return;}
@@ -344,7 +350,7 @@ for(const button of document.querySelectorAll('[data-sound]'))button.addEventLis
 });
 $('settings-form').addEventListener('submit',async e=>{
   e.preventDefault();$('settings-error').hidden=true;
-  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:[1,2,3,4,5,6].map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
+  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:[1,2,3,4,5,6].map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
   const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
   try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
   catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}

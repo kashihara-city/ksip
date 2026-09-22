@@ -1,4 +1,4 @@
-use crate::message::message;
+use crate::message::{message, message_with};
 use std::{
     ffi::{c_char, CString},
     path::PathBuf,
@@ -125,6 +125,29 @@ pub fn run_engine(args: &[String]) -> i32 {
         CloseHandle(singleton);
     }
     result
+}
+/// Hands a web address to whatever the person reads the web with.
+pub fn open_url(url: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let verb: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: the strings are null-terminated; a value above 32 means the
+    // address was handed over (SW_SHOWNORMAL is 1).
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result as usize > 32 {
+        Ok(())
+    } else {
+        Err(message_with("LINK_OPEN_FAILED", [result as usize]))
+    }
 }
 /// One network adapter as Windows reports it. The name is the adapter's own
 /// identifier, which survives a rename or a new address; the rest is for the
