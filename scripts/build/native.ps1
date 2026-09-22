@@ -25,7 +25,9 @@ Run python @('scripts/build/patch-baresip.py')
 # repository path must not contain one. The prefix ends in a slash, not a
 # backslash: quoted on a command line, a trailing backslash escapes the quote.
 if ($root -match ' ') { throw "The repository path must not contain spaces: $root" }
-$flags = "/O2 /DNDEBUG /Brepro /d1trimfile:$root/"
+# C4068 is MSVC's own <system_error> complaining about its own pragma, six
+# hundred times per build; without it the real warnings can be read.
+$flags = "/O2 /DNDEBUG /Brepro /wd4068 /d1trimfile:$root/"
 $common = @('-G','Ninja','-DCMAKE_BUILD_TYPE=Release',"-DCMAKE_C_FLAGS_RELEASE=$flags","-DCMAKE_CXX_FLAGS_RELEASE=$flags",'-DCMAKE_EXE_LINKER_FLAGS=/Brepro bcrypt.lib','-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded')
 # TLS and the crypto SRTP needs. LibreSSL builds with the same CMake and Ninja
 # as the rest, and libre supports it upstream.

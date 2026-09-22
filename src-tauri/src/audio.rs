@@ -155,7 +155,18 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                 }
             };
             let mut session: Option<MicSession> = None;
-            while let Ok(request) = rx.recv() {
+            loop {
+                // The meter is asked for ten times a second while the window is
+                // shown. Once the asking stops, the microphone is released, so
+                // that Windows does not show it in use while KSIP is in the tray.
+                let request = match rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(request) => request,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        session = None;
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                };
                 if session
                     .as_ref()
                     .is_none_or(|value| value.requested_id != request.device_id)
@@ -691,7 +702,7 @@ fn aggregate_careful(
     let maximum = runs.last().unwrap().measured_ms;
     let spread = maximum - minimum;
     let stable = enough_sessions && enough_consensus && spread <= 10;
-    let measured = if runs.len() % 2 == 0 {
+    let measured = if runs.len().is_multiple_of(2) {
         let high = runs.len() / 2;
         (runs[high - 1].measured_ms + runs[high].measured_ms) / 2
     } else {

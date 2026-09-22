@@ -4,7 +4,7 @@ Windows用のSIPクライアントです。Tauriの画面、Rustの状態管理�
 
 SIPサーバに自動REGISTERし、保留、アテンド転送、コールパーク、PAIによる番号更新、通話履歴、自動録音、音声デバイス選択、などが可能です。画面上部には登録に使われた接続方式（UDPかTLS）を、下部には通話中のコーデックとRTPの暗号化方式を表示します。いずれも設定値ではなく交渉の結果で、通話していないときは空欄です。通話履歴の番号は、右のボタンでクリップボードへコピーできます。
 
-信号はUDPのほかにTLSを選べます。TLSのときは音声もSRTPで暗号化でき、鍵の運び方はSDESとDTLSのどちらかを選びます。接続先の証明書は、信頼する認証局の証明書を指定したときだけ検証します。
+信号はUDPのほかにTLSを選べます。TLSのときは音声もSRTPで暗号化でき、鍵の運び方はSDESとDTLSのどちらかを選びます。接続先の証明書は常に検証します。信頼する認証局の証明書を指定すればその認証局だけを、指定しなければWindowsの証明書ストアを信頼します。
 
 音声コーデックはOpus、G.722、G.711（μ-law・A-law）を、この順で提示します。相手が持っているものの中で最初に一致したものが選ばれるため、対応していないサーバーや電話機とはG.711で通話します。OpusはVoIP用途向けに、モノラル・32 kbps・帯域内FEC有効で使います。無線LANのパケットロスを前提にした設定です。
 
@@ -67,10 +67,12 @@ SIPサーバに自動REGISTERし、保留、アテンド転送、コールパー
 | `park_slot_3`         | 保留3の駐車番号                                                                                                                                      | 保留3のボタンを使わない    |
 | `transport`           | SIPの信号に使う方式。`udp` か `tls`。設定画面で切り替えると、ポートが既定値のときだけ5060と5061を入れ替えます                                        | `udp`（暗号化しない）      |
 | `media_encryption`    | 音声の暗号化。`sdes`＝SRTP（鍵を信号に載せる）、`dtls`＝SRTP（鍵をメディア経路で交換）                                                               | 暗号化しない               |
-| `ca_file`             | 信頼する認証局の証明書（PEM）のパス。400文字以内                                                                                                     | 接続先の証明書を検証しない |
+| `ca_file`             | 信頼する認証局の証明書（PEM）のパス。400文字以内                                                                                                     | Windowsの証明書ストアで検証 |
 | `browser_integration` | `ksip:` のリンクを受け付けるか。`true`・`1`・`yes`・`on` でON。ONのとき、起動時と設定保存時に `HKCU\Software\Classes\ksip` へ登録し、OFFにすると消す | 受け付けない               |
 
-`ca_file` を指定しない場合、通信は暗号化されますが接続先が本物かどうかは確かめないため、中間者攻撃を防げません。`media_encryption` に `sdes` を選ぶ場合は `transport` を `tls` にしてください。SDESは鍵を信号に載せるため、信号が平文では意味がありません（保存時に拒否します）。
+`ca_file` を指定しない場合は、Windowsが信頼する認証局（現在のユーザーとコンピューターの「信頼されたルート証明機関」と「中間証明機関」）で接続先の証明書を検証します。接続のたびにストアの内容を `%TEMP%\ksip-profile\` へPEMとして書き出してエンジンへ渡すので、Windowsに証明書を追加すれば再接続で反映されます。自己署名の証明書を使うサーバーには、その証明書を `ca_file` に指定するか、Windowsの「信頼されたルート証明機関」に入れてください。`media_encryption` に `sdes` を選ぶ場合は `transport` を `tls` にしてください。SDESは鍵を信号に載せるため、信号が平文では意味がありません（保存時に拒否します）。
+
+コールパークは標準のSIPだけで動きます。空き状況は駐車番号そのものに対する `dialog` イベントの購読（BLF。SUBSCRIBE/NOTIFY、`application/dialog-info+xml`）で得て、取得は駐車番号への発信です。駐車だけは `*<駐車番号>` へ転送（REFER）します。この `*` を付けた番号で特定の駐車番号へ駐車できるという約束事は、開発に使ったAsteriskのダイヤルプランに合わせたもので、SIPサーバー側で同じ番号を用意すればほかのPBXでも使えます。
 
 同じ組織の他のアプリと並ぶ配置です。
 
@@ -110,6 +112,10 @@ HKCU
 戻すときは「再接続」を押します。登録し直して、着信も発信もできるようになります。KSIPを起動し直したときも登録済みの状態で始まります。
 
 ヘッダーは左のランプと2行で状態を示します。1行目が内線番号と状態、2行目が接続先（サーバー:ポートと通信方式）です。2行目は**登録できているときだけ**出ます。ランプは緑（登録済み）・琥珀（接続解除・接続中）・赤（登録失敗）です。
+
+### マイクの使用
+
+ウィンドウが表示されている間は、待機中でもマイクのレベル表示のためにマイクを開いています。Windowsの「マイクが使用中」の表示はこのためです。ウィンドウをタスクトレイにしまうと数秒で閉じ、通話中でなければマイクを使いません。通話中の音声は音声エンジンが別に開きます。
 
 ### 転送
 
@@ -186,7 +192,7 @@ src-web/locales/zh-TW.js   繁体字中国語
 
 選んだ言語に訳が無い名前は日本語で出し、日本語にも無ければ名前のまま出します。画面のどこかが空になることはありません。
 
-Windowsが自分で描くもの（タスクトレイのメニュー、ファイル選択ダイアログ、通知）だけは画面の表に届かないので、本体側の小さな表（`src-tauri/src/message.rs`）が文言を持ちます。
+Windowsが自分で描くもの（タスクトレイのメニュー、ファイル選択ダイアログ、通知）だけは画面の表に届かないので、本体側の小さな表（`src-tauri/src/message.rs`）が文言を持ちます。こちらも同じ3言語を持ち、設定の言語（未設定ならWindowsの表示言語）に従います。
 
 `scripts/test/i18n.py` が、報告される名前と表の文言が食い違っていないかを検査します。
 
@@ -315,6 +321,17 @@ python -X utf8 scripts/test/build-paths.py
 
 同じコミットをどの環境で組んでも同じexeになるように、ソースの改行は `.gitattributes` でCRLFに固定してあります。`src-web/` はそのままexeへ埋め込まれるため、取り出しの改行が違えば別のexeができます（Rust と C/C++ はコンパイラが改行を正規化するので影響しません）。`test/line-endings.py` が `src-web/` の改行を見ます。
 
+## 開発の決まり
+
+- ビルドは上の固定した手順だけを使います。ネイティブは `scripts/build/native.ps1`、本体は `scripts/build/app.ps1`、Rustのテストは `scripts/test/rust.ps1` です。
+- 依存は公式の取得元から取り、lockとハッシュで固定します。公開から7日未満の版は追加しません。更新したら `scripts/test/supply-chain.py` を通します。
+- `src-web/` はHTML・CSS・最小限のvanilla JavaScriptのままにし、npm依存を追加しません。
+- スクリプトはPowerShellとPythonだけです。PowerShellはMSVC環境が要るものとUIAutomationを使うものに限り、それ以外はPython標準ライブラリで書きます。テスト用にthird-party依存を追加しません。
+- スクリプトは用途で置き場を分けます。取得は `scripts/deps/`、ビルドは `scripts/build/`、テストは `scripts/test/`。テスト名の接頭辞は対向先で、`app-` はKSIPアプリ、`asterisk-` は実サーバー、`loopback-` はローカル2プロセスです。各スクリプトの先頭には用途を1行で書きます。
+- 生成物はGit管理しません。テスト生成物は `temp/build/`、テストと監査の結果は `temp/reports/` に置きます。
+- 開発用SIPサーバーの接続先と資格情報は `local-asterisk/` に置き、表示もログ出力もGit追加も配布もしません。
+- 変更を報告するときは「実装済み」「ビルド成功」「実機で動作確認済み」を区別します。
+
 ## 主なテスト
 
 テストの共通部品は `test/sip_fixture.py`（SIP端末の起動と制御、資格情報、通話確立）、`test/app_fixture.py`（使い捨てプロファイルと対向端末）、`test/app-fixture.ps1`・`test/ui-automation.ps1`（アプリの起動・終了とUIAutomation操作）です。製品のバージョンは `src-tauri/Cargo.toml` から読むため、版を上げてもテスト側の修正は要りません。
@@ -344,6 +361,35 @@ python -X utf8 scripts/test/line-endings.py
 
 `test/supply-chain.py` はRustクレートの公開日とチェックサム、ネイティブ原本のハッシュとrevision、npm依存が無いことを検証し、続けて `cargo audit` で `Cargo.lock` のRustSec勧告を照会します。脆弱性が1件でもあれば失敗し、結果は `temp/reports/cargo-audit.json` に残します。unmaintained・unsoundの警告は記録だけして通します。
 
+### 開発用SIPサーバーが要るテスト
+
+`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先を `local-asterisk/lab.json` から、内線番号とパスワードを `local-asterisk/asteriskserver.md` の表から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。無ければ何が足りないかを言って止まります。
+
+```json
+{
+  "server": "<開発用SIPサーバーのIP>",
+  "port": 5060,
+  "tls_host": "<TLSで使うホスト名>",
+  "tls_port": 5061,
+  "server_certificate": "local-asterisk/<サーバー証明書>.crt"
+}
+```
+
+`asteriskserver.md` には、内線番号とパスワードを空白で区切った行を2つ以上置きます。TLSのテストは `local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
+
+```powershell
+python -X utf8 scripts/test/asterisk-transfer.py
+python -X utf8 scripts/test/asterisk-codec.py
+python -X utf8 scripts/test/asterisk-tls.py
+python -X utf8 scripts/test/asterisk-pai.py
+python -X utf8 scripts/test/asterisk-record-switch.py
+python -X utf8 scripts/test/asterisk-playback.py
+python -X utf8 scripts/test/asterisk-live-aec.py
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
+```
+
+`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration` があり、同じ形で実行します。
+
 ### ローカルの2プロセスだけで行うテスト
 
 実音声デバイスは不要です。
@@ -353,3 +399,7 @@ python -X utf8 scripts/test/loopback-call.py
 python -X utf8 scripts/test/loopback-gain.py
 python -X utf8 scripts/test/loopback-silent-mic.py
 ```
+
+## ライセンス
+
+KSIPはMITライセンスです。全文は `LICENSE` にあります。組み込んでいる第三者ソフトウェアの著作権表示は、タスクトレイのメニュー「ライセンス」から開けます。

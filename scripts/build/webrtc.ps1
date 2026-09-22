@@ -13,10 +13,10 @@ $env:vs2022_install = $vs
 python -X utf8 "$root/scripts/build/patch-webrtc.py" $source
 if ($LASTEXITCODE -ne 0) { throw 'WebRTC bridge preparation failed' }
 $out = "$source/out/ksip"
-$args = 'target_os=\"win\" target_cpu=\"x64\" is_debug=false is_component_build=false rtc_include_tests=false rtc_build_examples=false rtc_build_tools=false rtc_enable_protobuf=false rtc_use_h264=false symbol_level=0 use_custom_libcxx=false'
+$gnArgs = 'target_os=\"win\" target_cpu=\"x64\" is_debug=false is_component_build=false rtc_include_tests=false rtc_build_examples=false rtc_build_tools=false rtc_enable_protobuf=false rtc_use_h264=false symbol_level=0 use_custom_libcxx=false'
 Push-Location $source
 try {
-    & "$depot/gn.bat" gen $out "--args=$args"
+    & "$depot/gn.bat" gen $out "--args=$gnArgs"
     if ($LASTEXITCODE -ne 0) { throw 'WebRTC GN generation failed' }
     & "$depot/autoninja.bat" -C $out ksip_webrtc_audio
     if ($LASTEXITCODE -ne 0) { throw 'WebRTC audio build failed' }

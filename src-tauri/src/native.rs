@@ -59,9 +59,9 @@ pub fn choose_file(kind: &str) -> Option<String> {
 pub fn engine_exe() -> Result<PathBuf, String> {
     #[cfg(test)]
     {
-        return std::env::var_os("KSIP_ENGINE_EXE")
+        std::env::var_os("KSIP_ENGINE_EXE")
             .map(PathBuf::from)
-            .ok_or("Set KSIP_ENGINE_EXE to the built KSIP executable".into());
+            .ok_or("Set KSIP_ENGINE_EXE to the built KSIP executable".into())
     }
     #[cfg(not(test))]
     std::env::current_exe().map_err(|e| e.to_string())
@@ -248,8 +248,15 @@ pub fn copy_text(value: &str) -> Result<(), String> {
     const CF_UNICODETEXT: u32 = 13;
     let wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
     unsafe {
-        if OpenClipboard(std::ptr::null_mut::<core::ffi::c_void>() as HWND) == 0 {
-            return Err(message("CLIPBOARD_UNAVAILABLE"));
+        // The clipboard is shared, and another program can hold it for a moment;
+        // a few short retries are what other Windows programs do as well.
+        let mut attempts = 0;
+        while OpenClipboard(std::ptr::null_mut::<core::ffi::c_void>() as HWND) == 0 {
+            attempts += 1;
+            if attempts >= 10 {
+                return Err(message("CLIPBOARD_UNAVAILABLE"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let result = (|| -> Result<(), String> {
             if EmptyClipboard() == 0 {

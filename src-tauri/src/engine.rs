@@ -164,6 +164,8 @@ pub use crate::audio::{Calibration, Device, Peak, Volume};
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
     pub running: bool,
+    /// Whether the window is on screen. Off, the window leaves the microphone alone.
+    pub window_visible: bool,
     pub recording: bool,
     pub recording_path: String,
     pub error: String,
@@ -407,25 +409,26 @@ fn write_netstring(w: &mut impl Write, data: &[u8]) -> Result<(), String> {
 impl AppState {
     pub fn new() -> Self {
         let store = Store::new();
+        // Everything the running app reads or writes stays beside the executable,
+        // so a deployment is one folder that can be copied as it is. Nothing here
+        // may panic: the panic hook is only installed once this state exists.
+        let exe = std::env::current_exe().unwrap_or_default();
+        let beside = exe.parent().map(PathBuf::from).unwrap_or_default();
         let data = if store.target.starts_with("KSIP/Test/") {
             // Test profiles keep their data in the repository's temp/build. The
-            // repository is found from the executable, which the tests always run
-            // from inside it (release/, temp/build/<test>/, temp/cargo-target/).
+            // repository is found from the executable, which the tests run from
+            // inside it (release/, temp/build/<test>/, temp/cargo-target/).
             // Naming it at compile time would put the build machine's path into
             // the product and make the binary depend on where it was built.
-            let exe = std::env::current_exe().expect("executable path is required");
             exe.ancestors()
                 .find(|dir| dir.join("src-tauri/Cargo.toml").is_file())
-                .expect("test profiles run from inside the repository")
-                .join("temp/build")
-                .join(store.target.rsplit('/').next().unwrap())
+                .map(|dir| {
+                    dir.join("temp/build")
+                        .join(store.target.rsplit('/').next().unwrap_or("test"))
+                })
+                .unwrap_or_else(|| beside.clone())
         } else {
-            // Everything the running app reads or writes stays beside the executable,
-            // so a deployment is one folder that can be copied as it is.
-            std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(PathBuf::from))
-                .expect("executable directory is required")
+            beside
         };
         let loaded = store.read_settings::<Settings>();
         let mut startup_error = loaded.as_ref().err().cloned().unwrap_or_default();
@@ -448,6 +451,7 @@ impl AppState {
             inner: Arc::new(Mutex::new(None)),
             view: Arc::new(Mutex::new(Snapshot {
                 running: false,
+                window_visible: true,
                 recording: false,
                 recording_path: String::new(),
                 error: startup_error,
@@ -732,6 +736,10 @@ impl AppState {
         self.view.lock().unwrap().devices = crate::audio::devices()?;
         Ok(())
     }
+    /// Told by the polling loop, which can see the window; the state cannot.
+    pub fn set_window_visible(&self, visible: bool) {
+        self.view.lock().unwrap().window_visible = visible;
+    }
     pub fn volume(&self, kind: &str, device: &str, level: Option<u16>) -> Result<Volume, String> {
         if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
             return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
@@ -812,7 +820,7 @@ impl AppState {
         if !s.network_adapter.trim().is_empty() {
             crate::native::adapter_address(s.network_adapter.trim())?;
         }
-        if s.sip_port < 1024 || s.rtp_port < 1024 || s.rtp_port > 65400 || s.rtp_port % 2 != 0 {
+        if s.sip_port < 1024 || s.rtp_port < 1024 || s.rtp_port > 65400 || !s.rtp_port.is_multiple_of(2) {
             return Err(message("SETTINGS_PORT_RANGE"));
         }
         if (s.rtp_port..=s.rtp_port + 20).contains(&s.sip_port) {
@@ -852,6 +860,11 @@ impl AppState {
             if sound.len() > 400 || sound.chars().any(char::is_control) {
                 return Err(message("SETTINGS_SOUND_PATH_INVALID"));
             }
+        }
+        // A policy can write this value without passing through the dialog, and
+        // it ends up on a line of the engine's config.
+        if s.ca_file.len() > 400 || s.ca_file.chars().any(char::is_control) {
+            return Err(message("SETTINGS_CA_FILE_INVALID"));
         }
         // An empty parking slot leaves that button unconfigured instead of failing the save.
         let configured: Vec<&String> = [&s.park_slot_1, &s.park_slot_2, &s.park_slot_3]
@@ -942,17 +955,91 @@ impl AppState {
             self.log(LOG_APP, format!("ksip: adapter {label} {adapter} {address}"));
         }
         *self.bound.lock().unwrap() = address.clone();
-        let aec = if s.aec { "yes" } else { "no" };
-        let mut config=format!("ksip_sip_server {}\nksip_sip_port {}\nksip_extension {}\nsip_listen {}:{}\nsip_transports {}\nsip_cuser_random no\ncall_max_calls 2\ncall_hold_other_calls yes\ncall_accept no\ncall_local_timeout 120\naudio_player ksip_audio,{}\naudio_source ksip_audio,{}\naudio_alert wasapi,{}\nausrc_srate 48000\nauplay_srate 48000\nausrc_channels 1\nauplay_channels 1\nausrc_format s16\nauplay_format s16\nauenc_format s16\naudec_format s16\naudio_buffer 20-160\naudio_jitter_buffer_type fixed\naudio_jitter_buffer_ms 40-80\nwebrtc_aec_delay_ms {}\nksip_aec_enabled {}\nksip_register_interval {}\nksip_detail_log {}\nksip_sip_transport {}\nksip_mediaenc {}\nopus_stereo no\nopus_sprop_stereo no\nopus_bitrate 32000\nopus_inbandfec yes\nopus_packet_loss 10\nopus_dtx no\nopus_application voip\nksip_microphone_gain {}\nksip_speaker_gain {}\nrtp_ports {}-{}\nrtp_timeout 60\nctrl_tcp_listen 127.0.0.1:{}\nmodule g711.dll\nmodule libg722.dll\nmodule opus.dll\nmodule wasapi.dll\nmodule ksip_audio.dll\nmodule postlab.dll\nmodule auconv.dll\nmodule auresamp.dll\nmodule ctrl_tcp.dll\nmodule menu.dll\nmodule srtp.dll\nmodule dtls_srtp.dll\nmodule ksip.dll\n",account.server,account.port,account.extension,address,s.sip_port,s.sip_transport(),speaker,microphone,speaker,s.aec_delay_ms,aec,s.register_interval,if s.detail_log {"yes"} else {"no"},s.sip_transport(),s.mediaenc().unwrap_or(""),s.microphone_gain,s.speaker_gain,s.rtp_port,s.rtp_port+20,ctrl);
-        if !adapter.is_empty() {
-            config.push_str(&format!("net_interface {adapter}\n"));
+        let yes_no = |flag: bool| if flag { "yes" } else { "no" };
+        // One line per setting, so that a value cannot land under the wrong name.
+        let mut config = String::new();
+        let mut put = |line: String| {
+            config.push_str(&line);
+            config.push('\n');
+        };
+        put(format!("ksip_sip_server {}", account.server));
+        put(format!("ksip_sip_port {}", account.port));
+        put(format!("ksip_extension {}", account.extension));
+        put(format!("sip_listen {address}:{}", s.sip_port));
+        put(format!("sip_transports {}", s.sip_transport()));
+        for line in [
+            "sip_cuser_random no",
+            "call_max_calls 2",
+            "call_hold_other_calls yes",
+            "call_accept no",
+            "call_local_timeout 120",
+        ] {
+            put(line.into());
         }
-        // baresip verifies the server only when it is given a trust anchor.
-        if !s.ca_file.trim().is_empty() {
-            config.push_str(&format!(
-                "sip_cafile {}\nsip_verify_server yes\n",
-                s.ca_file.trim().replace('\\', "/")
-            ));
+        put(format!("audio_player ksip_audio,{speaker}"));
+        put(format!("audio_source ksip_audio,{microphone}"));
+        put(format!("audio_alert wasapi,{speaker}"));
+        for line in [
+            "ausrc_srate 48000",
+            "auplay_srate 48000",
+            "ausrc_channels 1",
+            "auplay_channels 1",
+            "ausrc_format s16",
+            "auplay_format s16",
+            "auenc_format s16",
+            "audec_format s16",
+            "audio_buffer 20-160",
+            "audio_jitter_buffer_type fixed",
+            "audio_jitter_buffer_ms 40-80",
+        ] {
+            put(line.into());
+        }
+        put(format!("webrtc_aec_delay_ms {}", s.aec_delay_ms));
+        put(format!("ksip_aec_enabled {}", yes_no(s.aec)));
+        put(format!("ksip_register_interval {}", s.register_interval));
+        put(format!("ksip_detail_log {}", yes_no(s.detail_log)));
+        put(format!("ksip_sip_transport {}", s.sip_transport()));
+        put(format!("ksip_mediaenc {}", s.mediaenc().unwrap_or("")));
+        // Opus for voice on a wireless network: mono, 32 kbps, in-band FEC.
+        for line in [
+            "opus_stereo no",
+            "opus_sprop_stereo no",
+            "opus_bitrate 32000",
+            "opus_inbandfec yes",
+            "opus_packet_loss 10",
+            "opus_dtx no",
+            "opus_application voip",
+        ] {
+            put(line.into());
+        }
+        put(format!("ksip_microphone_gain {}", s.microphone_gain));
+        put(format!("ksip_speaker_gain {}", s.speaker_gain));
+        put(format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20));
+        put("rtp_timeout 60".into());
+        put(format!("ctrl_tcp_listen 127.0.0.1:{ctrl}"));
+        for module in [
+            "g711", "libg722", "opus", "wasapi", "ksip_audio", "postlab", "auconv", "auresamp",
+            "ctrl_tcp", "menu", "srtp", "dtls_srtp", "ksip",
+        ] {
+            put(format!("module {module}.dll"));
+        }
+        if !adapter.is_empty() {
+            put(format!("net_interface {adapter}"));
+        }
+        // Over TLS the server is always verified: against the chosen authority,
+        // or, without one, against everything Windows trusts. The Windows store
+        // is written out for each start, because it can change at any time.
+        if s.sip_transport() == "TLS" {
+            let chosen = s.ca_file.trim();
+            let trust = if chosen.is_empty() {
+                let path = profile.join("windows-trust.pem");
+                std::fs::write(&path, crate::trust::windows_pem()?).map_err(err)?;
+                path.to_string_lossy().replace('\\', "/")
+            } else {
+                chosen.replace('\\', "/")
+            };
+            put(format!("sip_cafile {trust}"));
+            put("sip_verify_server yes".into());
         }
         // baresip only treats a path starting with "/" as absolute, so a chosen file
         // cannot be named directly on Windows. The sounds are replaced in place instead.
@@ -962,10 +1049,7 @@ impl AppState {
                     self.log(LOG_APP, format!("ksip: {key} sound not replaced, {e}"));
                 }
             }
-            config.push_str(&format!(
-                "audio_path {}\n",
-                dir.to_string_lossy().replace('\\', "/")
-            ));
+            put(format!("audio_path {}", dir.to_string_lossy().replace('\\', "/")));
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
         self.clear_logs();
@@ -1429,8 +1513,7 @@ impl AppState {
                 message("AUTO_RECORD_ON")
             } else {
                 message("AUTO_RECORD_OFF")
-            }
-            .into());
+            });
         }
         if name == "dial" && self.snapshot().calls.iter().any(|c| c.line == line) {
             return Err(message("CALL_LINE_BUSY"));
@@ -1459,7 +1542,7 @@ impl AppState {
                 return Err(message("PARK_NEEDS_CALL_AND_SLOT"));
             }
         }
-        if matches!(name, "dial" | "consult")
+        if name == "dial"
             && (value.is_empty()
                 || !value
                     .bytes()
@@ -1529,7 +1612,6 @@ impl AppState {
     }
     pub fn open_recordings(&self) -> Result<(), String> {
         let path = self.data.join("recordings");
-        std::fs::create_dir_all(&path).map_err(err)?;
         std::fs::create_dir_all(&path).map_err(err)?;
         Command::new("explorer.exe")
             .arg(explorer_path(&path))
@@ -1671,7 +1753,7 @@ mod tests {
         result.unwrap();
     }
     #[test]
-    #[ignore = "requires scripts/build-native.ps1; uses isolated temp/build/rust-engine-test"]
+    #[ignore = "requires scripts/build/native.ps1; uses isolated temp/build/rust-engine-test"]
     fn real_engine_starts_stops_and_restarts() {
         let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1766,15 +1848,11 @@ mod tests {
     }
     #[test]
     fn reject_config_injection_and_port_overlap() {
-        let mut s = Settings::default();
-        s.microphone = "default\nmodule evil".into();
-        assert!(AppState::validate(&s).is_err());
-        s = Settings::default();
-        s.sip_port = s.rtp_port;
-        assert!(AppState::validate(&s).is_err());
-        s = Settings::default();
-        s.aec_delay_ms = 501;
-        assert!(AppState::validate(&s).is_err());
+        let rejected = |s: Settings| AppState::validate(&s).is_err();
+        assert!(rejected(Settings { microphone: "default\nmodule evil".into(), ..Settings::default() }));
+        assert!(rejected(Settings { sip_port: 10000, rtp_port: 10000, ..Settings::default() }));
+        assert!(rejected(Settings { aec_delay_ms: 501, ..Settings::default() }));
+        assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
         assert!(AppState::validate(&Settings::default()).is_ok());
     }
     #[test]

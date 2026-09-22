@@ -8,6 +8,7 @@ mod native;
 mod protocol;
 mod shortcuts;
 mod storage;
+mod trust;
 mod wav;
 use engine::{AppState, Settings};
 use storage::Account;
@@ -35,6 +36,7 @@ async fn save_configuration(
 ) -> Result<(), String> {
     let state = state.inner().clone();
     let previous = state.snapshot().settings;
+    let language = settings.language.clone();
     if let Err(e) = shortcuts::apply(&app, &settings) {
         // Nothing was stored, so the keys go back to the ones that worked.
         let _ = shortcuts::apply(&app, &previous);
@@ -47,8 +49,26 @@ async fn save_configuration(
     .map_err(|e| e.to_string())?;
     if saved.is_err() {
         let _ = shortcuts::apply(&app, &previous);
+    } else {
+        // What Windows draws follows the window's language from now on.
+        message::set_windows_language(&language);
+        relabel_tray(&app);
     }
     saved
+}
+/// The tray menu's items, kept so that their words can follow the language.
+struct TrayMenu {
+    open: MenuItem<tauri::Wry>,
+    licenses: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+fn relabel_tray(app: &tauri::AppHandle) {
+    let text = message::windows_text;
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        let _ = menu.open.set_text(text("TRAY_OPEN"));
+        let _ = menu.licenses.set_text(text("TRAY_LICENSES"));
+        let _ = menu.quit.set_text(text("TRAY_QUIT"));
+    }
 }
 #[tauri::command]
 async fn action(
@@ -235,8 +255,9 @@ fn main() {
         return;
     }
     let state = AppState::new();
+    message::set_windows_language(&state.snapshot().settings.language);
     // Without this the process would die silently: the window subsystem has no
-    // console for the default panic message.
+    // console for the default panic message. Nothing before this line panics.
     let panic_state = state.clone();
     std::panic::set_hook(Box::new(move |info| {
         panic_state.log_panic(format!("panic {info}"));
@@ -281,6 +302,11 @@ fn main() {
             let licenses =
                 MenuItem::with_id(app, "licenses", text("TRAY_LICENSES"), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &licenses, &quit])?;
+            app.manage(TrayMenu {
+                open: open.clone(),
+                licenses: licenses.clone(),
+                quit: quit.clone(),
+            });
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("KSIP")
@@ -344,6 +370,9 @@ fn main() {
                 // one of them brings the window back.
                 let mut announced = std::collections::HashSet::new();
                 while !state.is_closing() {
+                    // The window stops asking for the microphone level while it
+                    // is in the tray, which lets the microphone close.
+                    state.set_window_visible(is_visible(&handle));
                     match state.sync_phone() {
                         Err(e) => state.report_error(e),
                         Ok(()) => state.clear_polling_error(),

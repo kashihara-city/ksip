@@ -1,7 +1,8 @@
 """Fail closed on unpinned/untrusted/too-new dependencies; retain audit evidence."""
 import datetime,hashlib,json,pathlib,re,subprocess,tomllib,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[2]
-CUTOFF=datetime.datetime(2026,9,13,tzinfo=datetime.timezone.utc)
+# Nothing published in the last seven days is accepted, whenever this runs.
+CUTOFF=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=7)
 def get(url):return json.load(urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'ksip-audit/0.1'}),timeout=40))
 def old(date):return datetime.datetime.fromisoformat(date.replace('Z','+00:00'))<=CUTOFF
 def main():

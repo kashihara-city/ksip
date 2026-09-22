@@ -22,7 +22,7 @@ fn main() {
     ] {
         assert!(
             lib.join(format!("{name}.lib")).exists(),
-            "Run scripts/build-native.ps1 first: {name}"
+            "Run scripts/build/native.ps1 first: {name}"
         );
         println!("cargo:rustc-link-lib=static={name}");
         println!(

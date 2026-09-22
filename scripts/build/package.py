@@ -30,7 +30,7 @@ def main():
             if p.is_file() and '__pycache__' not in p.parts:copy(p,OUT/p.relative_to(ROOT))
     for p in (ROOT/'src-tauri').rglob('*'):
         if p.is_file() and not {'target','gen'}.intersection(p.relative_to(ROOT/'src-tauri').parts):copy(p,OUT/p.relative_to(ROOT))
-    for n in ['README.md','PROJECT.md','AGENTS.md','.gitignore','deps/native-sources.lock.json']:
+    for n in ['README.md','LICENSE','.gitignore','.gitattributes','deps/native-sources.lock.json']:
         copy(ROOT/n,OUT/n)
     # Native libraries include notices from bundled third-party source trees.
     for name in ['baresip','re']:

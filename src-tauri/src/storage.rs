@@ -270,6 +270,7 @@ impl Store {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub fn cleanup_test(&self) {
         assert!(self.target.starts_with("KSIP/Test/"));
         unsafe {

@@ -141,13 +141,25 @@ function Value-Id([string]$id, [int]$seconds = 20) {
 }
 function Select-Index([string]$id, [int]$index) {
     # Options are picked by position, because their labels are translated.
-    $box = Wait-Id $id
-    $expand = $box.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
-    $expand.Expand()
-    Start-Sleep -Milliseconds 300
+    # A select the page has only just drawn can refuse to expand for a moment,
+    # or expand without its options being in the tree yet, so the whole step
+    # is repeated until the option is there.
     $condition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem)
-    $items = $box.FindAll([Windows.Automation.TreeScope]::Descendants, $condition)
-    if ($index -ge $items.Count) { $expand.Collapse(); Save-KsipElements; throw "UI missing option $index in $id" }
+    $end = [DateTime]::UtcNow.AddSeconds(10)
+    while ($true) {
+        $box = Wait-Id $id
+        $expand = $box.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern)
+        $items = $null
+        try {
+            $expand.Expand()
+            Start-Sleep -Milliseconds 300
+            $items = $box.FindAll([Windows.Automation.TreeScope]::Descendants, $condition)
+        } catch { $items = $null }
+        if ($items -and $index -lt $items.Count) { break }
+        try { $expand.Collapse() } catch {}
+        if ([DateTime]::UtcNow -ge $end) { Save-KsipElements; throw "UI missing option $index in $id" }
+        Start-Sleep -Milliseconds 300
+    }
     $items[$index].GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Start-Sleep -Milliseconds 400
 }

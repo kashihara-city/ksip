@@ -1,4 +1,6 @@
 // The diagnostic tool reports the same message names as the app itself.
+// It takes both modules whole and uses a few functions of each.
+#![allow(dead_code)]
 #[path = "../src/message.rs"]
 mod message;
 #[path = "../src/audio.rs"]

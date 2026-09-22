@@ -2,7 +2,8 @@
 import datetime, hashlib, io, json, pathlib, tarfile, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CUTOFF = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)
+# Nothing published in the last seven days is accepted, whenever this runs.
+CUTOFF = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
 SOURCES = [('re', 'baresip/re', 'v4.11.0'),
            ('baresip', 'baresip/baresip', 'v4.11.0'),
            # Audio codecs for baresip's opus and libg722 modules.

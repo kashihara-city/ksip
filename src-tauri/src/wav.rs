@@ -113,7 +113,12 @@ pub fn to_pcm16(bytes: &[u8]) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&format.channels.to_le_bytes());
     out.extend_from_slice(&format.rate.to_le_bytes());
     let block = u32::from(format.channels) * 2;
-    out.extend_from_slice(&(format.rate * block).to_le_bytes());
+    // A rate large enough to overflow here describes no sound anyone recorded.
+    let bytes_per_second = format
+        .rate
+        .checked_mul(block)
+        .ok_or(message("WAV_HEADER_INVALID"))?;
+    out.extend_from_slice(&bytes_per_second.to_le_bytes());
     out.extend_from_slice(&(block as u16).to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");
@@ -173,6 +178,9 @@ mod tests {
     #[test]
     fn refuses_what_it_cannot_turn_into_sound() {
         assert!(to_pcm16(b"not a wav at all").is_err());
+        let mut absurd = wav(1, 16, &[0x00, 0x80]);
+        absurd[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(to_pcm16(&absurd).is_err(), "a rate that overflows the header is refused");
         assert!(to_pcm16(&wav(2, 4, &[0x11])).is_err(), "ADPCM is not decoded");
         assert!(to_pcm16(&vec![0u8; MAX_INPUT + 1]).is_err());
     }

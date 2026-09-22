@@ -33,7 +33,22 @@ try {
     "PASS: 実アプリがTLSで登録しSRTPで通話した"
     Click-Id 'hangup'
     Wait-Class 'line-1' 'call-idle'
-    @{version=$version;transport='tls';verifiedCertificate=$true;mediaEncrypted=$true} | ConvertTo-Json |
+    # Without a chosen authority, the Windows certificate store is the trust
+    # anchor. The lab's authority is installed there, so registration succeeds.
+    Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null
+    (Value-Id 'ca_file').SetValue('')
+    Click-Id 'save-settings'
+    $end=[DateTime]::UtcNow.AddSeconds(25)
+    while((Find-Id 'save-settings') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 150}
+    if(Find-Id 'save-settings'){throw 'Settings did not save/reconnect without a CA file'}
+    Wait-Class 'registration' 'reg-register_ok'
+    $config=Get-Content (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config') -Raw
+    if($config -notmatch 'sip_cafile .*windows-trust\.pem'){throw 'Engine config does not use the Windows store'}
+    if($config -notmatch 'sip_verify_server yes'){throw 'Engine config does not verify the server'}
+    if(!(Test-Path (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/windows-trust.pem'))){throw 'windows-trust.pem was not written'}
+    Wait-Text 'transport-label' '^TLS$' | Out-Null
+    "PASS: 認証局を指定しなくてもWindowsの証明書ストアで検証して登録した"
+    @{version=$version;transport='tls';verifiedCertificate=$true;mediaEncrypted=$true;windowsStoreVerified=$true} | ConvertTo-Json |
         Set-Content -Encoding utf8 "$root/temp/reports/app-tls-v$version.json"
     'PASS: real KSIP over SIP/TLS with a verified certificate and SRTP media'
 } finally {

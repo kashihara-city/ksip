@@ -84,7 +84,7 @@ function logText(row){const body=row.code?t(row.code&&row.args?.length?JSON.stri
 const logBody=()=>logRows.map(logText).join('\n');
 const durationText=seconds=>String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)+unit:'—';
-const count=value=>Number.isFinite(value)?value.toLocaleString('ja-JP'):'—';
+const count=value=>Number.isFinite(value)?value.toLocaleString(language):'—';
 const codecNames={opus:'Opus',G722:'G.722',PCMU:'G.711 μ-law',PCMA:'G.711 A-law'};
 const encryptionNames={srtp:'SRTP（SDES）',dtls_srtp:'SRTP（DTLS）'};
 function codecName(reported){
@@ -397,7 +397,8 @@ async function poll(){
 }
 async function pollVolumes(){await Promise.all(kinds.map(k=>refreshVolume(k)));setTimeout(pollVolumes,1000);}
 async function refreshPeak(kind){
-  if(!ready||$('configuration').open||peakPending[kind])return;peakPending[kind]=true;
+  // In the tray nobody sees the meter, and not asking lets the microphone close.
+  if(!ready||$('configuration').open||peakPending[kind]||state.window_visible===false)return;peakPending[kind]=true;
   try{const result=await invoke('audio_peak',{kind,device:volumeDevice(kind)}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));$(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));}
   catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');logUi('peak '+kind,e);}
   finally{peakPending[kind]=false;}

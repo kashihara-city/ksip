@@ -27,7 +27,8 @@ def main():
             timeout=20,
         )
         peer = next(c["peer"] for c in state["calls"] if c["id"] == pickup)
-        print("PASS: parked pickup display follows received PAI (peer=" + peer + ")")
+        # The host part is the lab's address, which stays out of any log.
+        print("PASS: parked pickup display follows received PAI (peer=" + peer.split("@")[0] + ")")
     finally:
         if a:
             a.close()

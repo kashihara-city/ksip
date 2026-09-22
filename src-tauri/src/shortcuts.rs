@@ -40,10 +40,10 @@ pub fn apply_now(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let manager = app.global_shortcut();
     let _ = manager.unregister_all();
     if let Some(shortcut) = window {
-        register(app, shortcut, &settings.shortcut_window, |app| toggle(app))?;
+        register(app, shortcut, &settings.shortcut_window, toggle)?;
     }
     if let Some(shortcut) = call {
-        register(app, shortcut, &settings.shortcut_call, |app| answer_or_hangup(app))?;
+        register(app, shortcut, &settings.shortcut_call, answer_or_hangup)?;
     }
     Ok(())
 }
@@ -188,9 +188,11 @@ mod tests {
 
     #[test]
     fn the_two_shortcuts_have_to_differ() {
-        let mut settings = Settings::default();
-        settings.shortcut_window = "SHIFT+F2".into();
-        settings.shortcut_call = "shift+f2".into();
+        let mut settings = Settings {
+            shortcut_window: "SHIFT+F2".into(),
+            shortcut_call: "shift+f2".into(),
+            ..Settings::default()
+        };
         assert!(parse_settings(&settings).is_err());
         settings.shortcut_call = "SHIFT+F3".into();
         assert!(parse_settings(&settings).is_ok());

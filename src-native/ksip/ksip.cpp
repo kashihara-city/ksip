@@ -22,6 +22,9 @@ std::string transfer_hangup;
 std::string registered_transport, media_encryption;
 bool pending=false;
 tmr transfer_timer;
+// Retries the park subscriptions a while after one closes.
+tmr parking_timer;
+int subscribe_parking();
 struct ParkSlot { struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN"; };
 std::array<ParkSlot,3> parking;
 bool sip_message_log=false;
@@ -105,10 +108,19 @@ void parking_notify(struct sip *sip,const struct sip_msg *msg,void *arg) {
     slot->state=active ? "INUSE" : "IDLE";
     (void)sip_treply(nullptr,sip,msg,200,"OK");
 }
+void parking_retry(void*) {
+    if(subscribe_parking())tmr_start(&parking_timer,30000,parking_retry,nullptr);
+}
 void parking_closed(int,const struct sip_msg*,const struct sipevent_substate*,void *arg) {
-    auto slot=static_cast<ParkSlot*>(arg);slot->sub=nullptr;slot->state="UNKNOWN";
+    // The subscription is over, so its reference goes here, as baresip's own
+    // presence module does. The server is asked again after a while rather
+    // than only at the next registration, or the buttons would stay unknown
+    // for minutes.
+    auto slot=static_cast<ParkSlot*>(arg);slot->sub=static_cast<sipsub*>(mem_deref(slot->sub));slot->state="UNKNOWN";
+    tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
 void clear_parking_subscriptions() {
+    tmr_cancel(&parking_timer);
     for(auto &slot:parking) {
         auto sub=slot.sub;slot.sub=nullptr;slot.state="UNKNOWN";
         if(sub)mem_deref(sub);
@@ -335,7 +347,8 @@ int action(re_printf *pf, void *arg) {
     mem_deref(od);
     call *c=find(id);
     int err=0;
-    if (pending && op!="hangup") return EBUSY;
+    // Hanging up and calling the transfer off are the two ways out of a pending transfer.
+    if (pending && op!="hangup" && op!="cancel_transfer") return EBUSY;
     if (op=="select") {
         if (c && call_state(c)==CALL_STATE_ESTABLISHED) return uag_hold_resume(c);
         for (le *u=list_head(uag_list());u;u=u->next)
@@ -445,7 +458,7 @@ int init(){
     conf_get_bool(conf_cur(),"ksip_detail_log",&detail);
     sip_message_log=detail;
     if(detail)log_enable_debug(true);
-    tmr_init(&transfer_timer);sip_set_trace_handler(uag_sip(),sip_trace);int err=bevent_register(event,nullptr);if(!err)err=cmd_register(baresip_commands(),commands,RE_ARRAY_SIZE(commands));return err;}
+    tmr_init(&transfer_timer);tmr_init(&parking_timer);sip_set_trace_handler(uag_sip(),sip_trace);int err=bevent_register(event,nullptr);if(!err)err=cmd_register(baresip_commands(),commands,RE_ARRAY_SIZE(commands));return err;}
 int close(){sip_set_trace_handler(uag_sip(),nullptr);connected_identity.clear();clear_transfer();clear_parking_subscriptions();bevent_unregister(event);cmd_unregister(baresip_commands(),commands);account_ua=nullptr;return 0;}
 }
 extern "C" const struct mod_export DECL_EXPORTS(ksip)={"ksip","application",init,close};

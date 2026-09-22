@@ -80,6 +80,5 @@ try {
         python -X utf8 "$PSScriptRoot/app_fixture.py" stop-engine
         Stop-Process -Id $app.Id -Force
     }
-    python -X utf8 "$PSScriptRoot/app_fixture.py" cleanup
-    $env:KSIP_TEST_PROFILE=$oldProfile
+    Stop-KsipProfile
 }
