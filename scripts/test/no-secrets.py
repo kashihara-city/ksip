@@ -8,7 +8,8 @@ PATTERNS = [
     ("私有IPアドレス", re.compile(r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}|192\.168\.\d{1,3})\.\d{1,3}\b")),
     ("社内ホスト名", re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|internal|intra)\b")),
     ("32桁の秘密らしき文字列", re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{32}(?![0-9a-fA-F])")),
-    ("PEMの中身", re.compile(r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----|-----BEGIN CERTIFICATE-----")),
+    # 行頭に限る。本物のPEMは必ず行頭から始まり、ソース中の文字列リテラルは通る。
+    ("PEMの中身", re.compile(r"^-----BEGIN (?:RSA |EC )?PRIVATE KEY-----|^-----BEGIN CERTIFICATE-----")),
 ]
 # 依存の固定に使うハッシュと、説明のための例示アドレスは秘密ではない。
 ALLOWED = [

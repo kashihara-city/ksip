@@ -86,17 +86,20 @@ fn known(tag: &str) -> Option<&'static str> {
         .find(|language| language.split('-').next().unwrap_or("") == primary)
 }
 
-/// The language Windows itself is shown in, such as `ja-JP`.
+/// The language Windows itself is shown in, as the window sees it through
+/// `navigator.language`. This is the display language, not the locale used for
+/// dates and numbers, which can differ.
 fn windows_locale() -> String {
-    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
-    // LOCALE_NAME_MAX_LENGTH, including the terminator.
-    let mut name = [0u16; 85];
-    // SAFETY: the buffer and its length are handed over together.
-    let written = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
-    if written <= 1 {
-        return String::new();
+    use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+    // SAFETY: the call takes nothing and returns a language identifier.
+    let primary = unsafe { GetUserDefaultUILanguage() } & 0x3ff;
+    match primary {
+        0x11 => "ja",
+        0x09 => "en",
+        0x04 => "zh",
+        _ => "",
     }
-    String::from_utf16_lossy(&name[..(written - 1) as usize])
+    .to_string()
 }
 
 /// Chooses the language for what Windows draws: the saved one, or the one

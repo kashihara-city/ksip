@@ -614,6 +614,11 @@ impl AppState {
         if s.contains("postlab: receive WAV closed") && !s.contains("0 dropped samples, error=0") {
             v.error = message("RECORDING_WRITE_PROBLEM");
         }
+        // The engine only warns when it cannot load the trust list, and then
+        // fails every TLS registration with nothing else to show for it.
+        if s.contains("tls_add_ca() failed") {
+            v.error = message("TRUST_STORE_UNUSABLE");
+        }
         drop(v);
         let mut logs = self.logs.lock().unwrap();
         logs.entries.push_back(LogLine::new(Self::stamp(), source, s));
@@ -1029,11 +1034,14 @@ impl AppState {
         // Over TLS the server is always verified: against the chosen authority,
         // or, without one, against everything Windows trusts. The Windows store
         // is written out for each start, because it can change at any time.
+        let mut trust_note = None;
         if s.sip_transport() == "TLS" {
             let chosen = s.ca_file.trim();
             let trust = if chosen.is_empty() {
+                let store = crate::trust::windows_trust()?;
+                trust_note = Some((store.included, store.left_out));
                 let path = profile.join("windows-trust.pem");
-                std::fs::write(&path, crate::trust::windows_pem()?).map_err(err)?;
+                std::fs::write(&path, store.pem).map_err(err)?;
                 path.to_string_lossy().replace('\\', "/")
             } else {
                 chosen.replace('\\', "/")
@@ -1053,6 +1061,13 @@ impl AppState {
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
         self.clear_logs();
+        // The log starts afresh with each start, so this is written after that.
+        if let Some((included, left_out)) = trust_note {
+            self.log(
+                LOG_APP,
+                format!("ksip: windows trust store, {included} certificates, {left_out} left out"),
+            );
+        }
         {
             let mut v = self.view.lock().unwrap();
             v.settings = s;

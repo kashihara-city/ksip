@@ -1,10 +1,11 @@
 [package]
 name = "ksip"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "KSIP Windows SIP client"
 license = "MIT"
 authors = ["Kashihara City"]
+repository = "https://github.com/kashihara-city/ksip"
 
 [[bin]]
 name = "ksip"

@@ -4,4 +4,7 @@ target_link_libraries(ksip_entry PRIVATE baresip)
 add_library(ksip_stdio STATIC "${KSIP_ROOT}/src-native/stdio.cpp")
 target_compile_features(ksip_stdio PRIVATE cxx_std_17)
 target_compile_options(ksip_stdio PRIVATE /utf-8)
-install(TARGETS ksip_entry ksip_stdio ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+# The app asks LibreSSL, which the engine links, whether a Windows certificate parses.
+add_library(ksip_trust STATIC "${KSIP_ROOT}/src-native/trust.c")
+target_include_directories(ksip_trust PRIVATE "${KSIP_NATIVE}/include")
+install(TARGETS ksip_entry ksip_stdio ksip_trust ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})

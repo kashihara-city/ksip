@@ -269,6 +269,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_UNKNOWN:'転送結果を確認できません。通話状態を確認してください。',
       TRUST_STORE_EMPTY:'Windowsの証明書ストアに信頼する認証局がありません',
       TRUST_STORE_FAILED:'Windowsの証明書ストアを読めません（{0}）',
+      TRUST_STORE_UNUSABLE:'TLSの信頼リストを読み込めませんでした。認証局の証明書を指定してください',
       UNREGISTER:'接続解除',
       UNREGISTER_CONFIRM:'SIPサーバーへの登録を解除します。解除中は着信しません。よろしいですか',
       WAV_BROKEN:'WAVの構造が壊れています',

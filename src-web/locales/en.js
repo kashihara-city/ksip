@@ -269,6 +269,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_UNKNOWN:'The result of the transfer is unknown. Check the state of the calls.',
       TRUST_STORE_EMPTY:'The Windows certificate store holds no trusted authority',
       TRUST_STORE_FAILED:'The Windows certificate store could not be read ({0})',
+      TRUST_STORE_UNUSABLE:'The TLS trust list could not be loaded. Choose a certificate authority file',
       UNREGISTER:'Unregister',
       UNREGISTER_CONFIRM:'Unregister from the SIP server? No calls will arrive until you reconnect.',
       WAV_BROKEN:'The WAV file is malformed',

@@ -225,7 +225,16 @@ mod tests {
         serve_named(&name, move |command| {
             let _ = tx.send(command);
         });
-        std::thread::sleep(Duration::from_millis(200));
+        // The server thread creates the pipe in its own time; a slow machine
+        // is given up to five seconds rather than a fixed pause. WaitNamedPipe
+        // only waits on a pipe that exists, so it is asked again until one does.
+        use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+        let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while unsafe { WaitNamedPipeW(wide.as_ptr(), 100) } == 0 {
+            assert!(Instant::now() < deadline, "the pipe appeared");
+            std::thread::sleep(Duration::from_millis(20));
+        }
         // A client that connects and never writes must not block the next one.
         let silent = std::fs::OpenOptions::new()
             .read(true)

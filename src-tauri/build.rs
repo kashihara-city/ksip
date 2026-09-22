@@ -9,6 +9,7 @@ fn main() {
     for name in [
         "ksip_entry",
         "ksip_stdio",
+        "ksip_trust",
         "libbaresip",
         // Codec libraries the baresip modules call into.
         "opus",

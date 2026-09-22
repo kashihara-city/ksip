@@ -269,6 +269,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_UNKNOWN:'無法確認轉接結果，請確認通話狀態。',
       TRUST_STORE_EMPTY:'Windows 憑證存放區中沒有信任的憑證授權單位',
       TRUST_STORE_FAILED:'無法讀取 Windows 憑證存放區（{0}）',
+      TRUST_STORE_UNUSABLE:'無法載入 TLS 信任清單。請指定憑證授權單位的憑證',
       UNREGISTER:'解除註冊',
       UNREGISTER_CONFIRM:'要解除 SIP 伺服器的註冊嗎？解除期間不會有來電。',
       WAV_BROKEN:'WAV 的結構已損毀',
