@@ -46,6 +46,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_CONTROL_PANEL:'Windows sound settings',
       AUDIO_DEVICE_ARGUMENT_INVALID:'The audio device was given something it cannot use',
       AUDIO_DEVICE_FAILED:'Windows could not work with the audio device. Check the connection and settings: {0}',
+      AUDIO_DEVICE_FALLBACK:'The saved device was not found, so the default is in use (the setting is kept; press Refresh devices once it is back)',
       AUDIO_DEVICE_FORMAT_INVALID:'The chosen audio device reports an invalid format',
       AUDIO_DEVICE_INIT_FAILED:'The audio device could not be started. Check the settings',
       AUDIO_DEVICE_INIT_FAILED_DETAIL:'The audio device could not be started: {0}',

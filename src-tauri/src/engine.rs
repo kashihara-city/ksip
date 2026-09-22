@@ -277,6 +277,10 @@ pub struct Snapshot {
     pub transport: String,
     pub media_encryption: String,
     pub microphone_fallback: bool,
+    /// The saved microphone or speaker was not there when the engine started,
+    /// so the default is in use. The saved choice stands; nothing is written.
+    pub microphone_missing: bool,
+    pub speaker_missing: bool,
     pub microphone_id: String,
     pub speaker_id: String,
     pub account: AccountView,
@@ -563,6 +567,8 @@ impl AppState {
                 transport: String::new(),
                 media_encryption: String::new(),
                 microphone_fallback: false,
+                microphone_missing: false,
+                speaker_missing: false,
                 microphone_id: String::new(),
                 speaker_id: String::new(),
                 account,
@@ -837,8 +843,14 @@ impl AppState {
         view.history_sequence = self.history.lock().unwrap().sequence;
         view
     }
+    /// Reads the devices again and, when no call is going on, restarts the
+    /// engine on the saved ones: a device that was unplugged and put back, or
+    /// a new Windows default, is only picked up by a fresh start.
     pub fn refresh_devices(&self) -> Result<(), String> {
         self.view.lock().unwrap().devices = crate::audio::devices()?;
+        if self.snapshot().running && self.ensure_idle().is_ok() {
+            self.connect()?;
+        }
         Ok(())
     }
     /// Told by the polling loop, which can see the window; the state cannot.
@@ -1013,7 +1025,7 @@ impl AppState {
         }
         Ok((crate::native::adapter_address(chosen)?, chosen.to_string()))
     }
-    pub fn start(&self, mut s: Settings, account: &Account) -> Result<(), String> {
+    pub fn start(&self, s: Settings, account: &Account) -> Result<(), String> {
         Self::validate(&s)?;
         let mut guard = self.inner.lock().unwrap();
         if let Some(e) = guard.as_mut() {
@@ -1030,32 +1042,29 @@ impl AppState {
         let exe = crate::native::engine_exe()?;
         // Resolve the communications defaults once: the volume controls must
         // target the same endpoints that the running engine actually opens.
-        let mut repaired = false;
+        // A saved device that is not there gets the default in its place, and
+        // nothing is written back: the choice stands, and it is used again
+        // once the device is back and the engine is started afresh.
+        let mut microphone_missing = false;
         let microphone = match self.volume("microphone", &s.microphone, None) {
             Ok(volume) => volume.id,
             Err(_) => {
-                if s.microphone != "default" {
-                    repaired = true;
-                    s.microphone = "default".into();
-                }
+                microphone_missing = s.microphone != "default";
                 // The native source emits timed silent PCM when Windows has no
                 // usable capture endpoint, so a missing microphone must not
                 // prevent SIP registration or RTP transmission.
                 "default".into()
             }
         };
+        let mut speaker_missing = false;
         let speaker = match self.volume("speaker", &s.speaker, None) {
             Ok(volume) => volume.id,
             Err(_) if s.speaker != "default" => {
-                repaired = true;
-                s.speaker = "default".into();
+                speaker_missing = true;
                 self.volume("speaker", "default", None)?.id
             }
             Err(error) => return Err(error),
         };
-        if repaired {
-            self.save_settings(&s)?;
-        }
         let profile = self.profile_dir();
         std::fs::create_dir_all(&profile).map_err(err)?;
         // Reserve an ephemeral control port until immediately before spawn.
@@ -1175,7 +1184,12 @@ impl AppState {
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
         self.clear_logs();
-        // The log starts afresh with each start, so this is written after that.
+        // The log starts afresh with each start, so these are written after that.
+        for (missing, kind) in [(microphone_missing, "microphone"), (speaker_missing, "speaker")] {
+            if missing {
+                self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
+            }
+        }
         if let Some((included, left_out)) = trust_note {
             self.log(
                 LOG_APP,
@@ -1188,6 +1202,8 @@ impl AppState {
             v.error.clear();
             v.microphone_id = microphone.clone();
             v.speaker_id = speaker.clone();
+            v.microphone_missing = microphone_missing;
+            v.speaker_missing = speaker_missing;
             v.aec_active = false;
             v.microphone_fallback = false;
             v.recording = false;

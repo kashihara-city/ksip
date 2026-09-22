@@ -46,6 +46,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_CONTROL_PANEL:'音声コントロールパネル',
       AUDIO_DEVICE_ARGUMENT_INVALID:'音声デバイスの指定が正しくありません',
       AUDIO_DEVICE_FAILED:'Windowsの音声デバイスを操作できません。接続と設定を確認してください: {0}',
+      AUDIO_DEVICE_FALLBACK:'保存したデバイスが見つからないため既定のデバイスを使用中（設定はそのまま。戻ったら「音声デバイスを更新」）',
       AUDIO_DEVICE_FORMAT_INVALID:'選択した音声デバイスの形式が正しくありません',
       AUDIO_DEVICE_INIT_FAILED:'音声デバイスを初期化できません。設定を確認してください',
       AUDIO_DEVICE_INIT_FAILED_DETAIL:'音声デバイスを初期化できません: {0}',

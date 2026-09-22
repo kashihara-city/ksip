@@ -29,6 +29,8 @@ if sys.argv[1]=='setup':
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.
         if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':general['tray_after_call']=10
+        # 'setup missing-device' saves a microphone that no machine has.
+        if len(sys.argv)>2 and sys.argv[2].strip()=='missing-device':general['microphone']='{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}'
         winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(general))
         for name,value in policy:
             winreg.SetValueEx(key,name,0,winreg.REG_SZ,value)

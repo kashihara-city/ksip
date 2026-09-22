@@ -46,6 +46,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_CONTROL_PANEL:'Windows 音效設定',
       AUDIO_DEVICE_ARGUMENT_INVALID:'音訊裝置的指定不正確',
       AUDIO_DEVICE_FAILED:'Windows 無法操作音訊裝置，請確認連接與設定：{0}',
+      AUDIO_DEVICE_FALLBACK:'找不到儲存的裝置，正在使用預設裝置（設定保留；裝置回來後請按「更新音訊裝置」）',
       AUDIO_DEVICE_FORMAT_INVALID:'所選音訊裝置的格式不正確',
       AUDIO_DEVICE_INIT_FAILED:'無法啟動音訊裝置，請確認設定',
       AUDIO_DEVICE_INIT_FAILED_DETAIL:'無法啟動音訊裝置：{0}',
