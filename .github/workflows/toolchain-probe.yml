@@ -1,0 +1,61 @@
+# 調査用。ランナーに Windows SDK 10.0.28000 を入れたあと、WebRTC の GN が呼ぶ
+# vcvarsall.bat が通るかだけを見る。製品のビルドはしない。用が済んだら消す。
+name: toolchain-probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install the Windows SDK the same way the release does
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = "$env:RUNNER_TEMP\winsdksetup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2376217" -OutFile $setup -UseBasicParsing
+          "winsdksetup.exe version {0}, SHA256 {1}" -f (Get-Item $setup).VersionInfo.ProductVersion, (Get-FileHash $setup).Hash
+          $arguments = @("/features", "OptionId.DesktopCPPx64", "OptionId.DesktopCPPx86", "OptionId.WindowsDesktopDebuggers",
+                         "/quiet", "/norestart", "/ceip", "off", "/log", "$env:RUNNER_TEMP\sdk-install.log")
+          $p = Start-Process -FilePath $setup -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+          "winsdksetup.exe exit $($p.ExitCode)"
+
+      - name: What the SDK install left behind
+        shell: pwsh
+        run: |
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          "--- Include:"; Get-ChildItem "$kits\Include" | Select-Object -ExpandProperty Name
+          "--- Lib:"; Get-ChildItem "$kits\Lib" | Select-Object -ExpandProperty Name
+          "--- Lib\10.0.28000.0\um:"; Get-ChildItem "$kits\Lib\10.0.28000.0\um" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          "--- Lib\10.0.28000.0\ucrt:"; Get-ChildItem "$kits\Lib\10.0.28000.0\ucrt" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          "--- bin\10.0.28000.0:"; Get-ChildItem "$kits\bin\10.0.28000.0" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          "--- registry Installed Roots:"
+          Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots" | Format-List | Out-String
+          Get-ChildItem "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots" | Select-Object -ExpandProperty PSChildName
+
+      - name: Run vcvarsall the way WebRTC does
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set VS=%%i
+          echo VS=%VS%
+          dir "%VS%\VC\Tools\MSVC"
+          echo === amd64_x86 10.0.28000.0
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86 10.0.28000.0
+          echo exit=%ERRORLEVEL%
+          echo === amd64 10.0.28000.0
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" amd64 10.0.28000.0
+          echo exit=%ERRORLEVEL%
+          echo === amd64_x86 (default SDK)
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86
+          echo exit=%ERRORLEVEL%
+          echo WindowsSDKVersion=%WindowsSDKVersion%
+          exit /b 0
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: sdk-install-log
+          path: ${{ runner.temp }}\sdk-install.log
+          if-no-files-found: warn
