@@ -257,7 +257,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SOUND_RING:'着信音',
       SETTINGS_SOUND_RINGBACK:'呼出音',
       SETTINGS_TITLE:'設定',
-      SETTINGS_TLS_HINT:'TLSを選ぶとポートは通常5061です。SDESは鍵を信号に載せるため、TLSと組み合わせないと意味がありません。接続先の証明書は常に検証します。証明書を指定するとその認証局だけを信頼し、空欄ならWindowsの証明書ストア（信頼されたルート証明機関と中間証明機関）を使います。',
+      SETTINGS_TLS_HINT:'TLSを選ぶとポートは通常5061です。SDESは鍵を信号に載せるため、TLSと組み合わせないと意味がありません。接続先の証明書は常に検証します。証明書を指定するとその認証局だけを信頼し、空欄ならWindowsの「信頼されたルート証明機関」を使います。中間証明書は接続先が送るものを使い、信頼の起点にはしません。',
       SETTINGS_TRANSPORT:'接続方式',
       SETTINGS_TRANSPORT_UDP:'UDP（暗号化なし）',
       SETTINGS_TRAY_AFTER_CALL:'通話が終わったらタスクトレイへ戻す',

@@ -257,7 +257,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SOUND_RING:'Ringing',
       SETTINGS_SOUND_RINGBACK:'Ringback',
       SETTINGS_TITLE:'Settings',
-      SETTINGS_TLS_HINT:'With TLS the port is usually 5061. SDES carries its keys in the signalling, so it only means something together with TLS. The server certificate is always verified: against the chosen authority, or, when none is chosen, against the Windows certificate store (trusted root and intermediate authorities).',
+      SETTINGS_TLS_HINT:'With TLS the port is usually 5061. SDES carries its keys in the signalling, so it only means something together with TLS. The server certificate is always verified: against the chosen authority, or, when none is chosen, against the Windows trusted root authorities. Intermediate certificates come from the server and are not trust anchors.',
       SETTINGS_TRANSPORT:'Transport',
       SETTINGS_TRANSPORT_UDP:'UDP (not encrypted)',
       SETTINGS_TRAY_AFTER_CALL:'Return to the tray after a call',
