@@ -33,8 +33,9 @@ try {
     if((Get-SavedMicrophone) -ne $missing){throw 'The saved microphone was overwritten'}
     'PASS: 保存したマイクが無ければ既定で動き、設定は上書きしない'
     # Once the saved device exists again, refreshing brings the engine back to it.
+    # The button sits on the main screen; the settings dialog is modal and would
+    # take the main screen out of the accessibility tree.
     Set-SavedMicrophone $real.id
-    Click-Id 'settings-button';Wait-Id 'refresh-devices' | Out-Null
     Click-Id 'refresh-devices'
     $end=[DateTime]::UtcNow.AddSeconds(25)
     do {
@@ -42,7 +43,6 @@ try {
         $config=Get-Content $configPath -Raw -ErrorAction SilentlyContinue
     } while(($config -notmatch [regex]::Escape("audio_source ksip_audio,$($real.id)")) -and [DateTime]::UtcNow -lt $end)
     if($config -notmatch [regex]::Escape("audio_source ksip_audio,$($real.id)")){throw 'Refresh did not restart the engine on the saved microphone'}
-    Click-Id 'close-settings'
     Wait-Class 'registration' 'reg-register_ok'
     # An empty status element leaves the accessibility tree, so "not there" is "no notice".
     function Get-FallbackNotice { $node=Find-Id 'microphone-volume-status'; if($node){$node.Current.Name}else{''} }

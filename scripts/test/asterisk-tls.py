@@ -1,6 +1,6 @@
 """SIP over TLS with a verified certificate and SDES-SRTP media, against the user-provided Asterisk."""
 import json,re,time
-from sip_fixture import ROOT,Phone,accounts,connect,lab,version
+from sip_fixture import ROOT,Phone,accounts,connect,dtls_account,lab,version
 
 CA=ROOT/'local-asterisk/LocalCA.crt'
 SERVER=lab()['tls_host']
@@ -40,11 +40,12 @@ def main():
     finally:
         if a:a.close()
         if b:b.close()
-    # 1004 is the DTLS endpoint on the lab server, where the keys are
-    # exchanged on the media path instead of in the signalling.
+    # The account marked dtls in lab.json is the DTLS endpoint on the lab
+    # server (use_avpf), where the keys are exchanged on the media path
+    # instead of in the signalling.
     dtls=None
     try:
-        dtls=Phone('tls-dtls',secure[3],18576,19010,transport='TLS',mediaenc='dtls_srtp',ca_file=str(CA))
+        dtls=Phone('tls-dtls',dict(dtls_account(),server=SERVER,port=5061),18576,19010,transport='TLS',mediaenc='dtls_srtp',ca_file=str(CA))
         call=dtls.action('dial',value='9001')
         dtls.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),timeout=25)
         time.sleep(3)

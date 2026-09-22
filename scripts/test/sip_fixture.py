@@ -22,19 +22,27 @@ def lab():
     path = ROOT / 'local-asterisk/lab.json'
     assert path.exists(), 'local-asterisk/lab.json がありません。開発用Asteriskの接続先を書いてください'
     settings = json.loads(path.read_text(encoding='utf-8-sig'))
-    for name in ('server', 'port', 'tls_host', 'tls_port', 'server_certificate'):
+    for name in ('server', 'port', 'tls_host', 'tls_port', 'server_certificate', 'accounts'):
         assert name in settings, f'local-asterisk/lab.json に {name} がありません'
+    for item in settings['accounts']:
+        assert item.get('extension') and item.get('password'), 'local-asterisk/lab.json の accounts には extension と password が要ります'
+    assert len(settings['accounts']) >= 2, 'local-asterisk/lab.json の accounts は2件以上要ります'
     return settings
 def accounts():
-    """Every extension documented in local-asterisk, ordered by number."""
-    text=(ROOT/'local-asterisk/asteriskserver.md').read_text(encoding='utf-8-sig')
-    rows=sorted(re.findall(r'(?m)^(\d{3,6})[ \t]+([0-9a-fA-F]{32})[ \t]*$',text))
-    assert len(rows)>=2, 'Expected at least two documented test accounts'
+    """The test extensions of lab.json, in the order written there: the first
+    two carry every test, the third the recording switch, and the one marked
+    dtls the DTLS-SRTP call."""
     where=lab()
-    return [dict(server=where['server'],port=where['port'],extension=user,auth_user=user,password=password) for user,password in rows]
-def account(extension):
-    match=[a for a in accounts() if a['extension']==extension]
-    assert match, f'{extension} is not documented in local-asterisk/asteriskserver.md'
+    return [dict(server=where['server'],port=where['port'],extension=item['extension'],auth_user=item['extension'],password=item['password'],dtls=bool(item.get('dtls')))
+            for item in where['accounts']]
+def account(index, purpose):
+    """The account at that position, or a clear word on what lab.json lacks."""
+    configured=accounts()
+    assert len(configured)>index, f'local-asterisk/lab.json の accounts に{index+1}件目がありません（{purpose}）'
+    return configured[index]
+def dtls_account():
+    match=[a for a in accounts() if a['dtls']]
+    assert match, 'local-asterisk/lab.json の accounts に "dtls": true の内線がありません（DTLS-SRTPのテストに使う）'
     return match[0]
 def put_account(target,account):
     """Only the sign-in secret goes to the vault; the address is engine config."""

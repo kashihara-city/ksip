@@ -345,7 +345,7 @@ python -X utf8 scripts/test/line-endings.py
 
 ### 開発用SIPサーバーが要るテスト
 
-`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先を `local-asterisk/lab.json` から、内線番号とパスワードを `local-asterisk/asteriskserver.md` の表から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。無ければ何が足りないかを言って止まります。
+`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `local-asterisk/lab.json` から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。無ければ何が足りないかを言って止まります。
 
 ```json
 {
@@ -353,11 +353,19 @@ python -X utf8 scripts/test/line-endings.py
   "port": 5060,
   "tls_host": "<TLSで使うホスト名>",
   "tls_port": 5061,
-  "server_certificate": "local-asterisk/<サーバー証明書>.crt"
+  "server_certificate": "local-asterisk/<サーバー証明書>.crt",
+  "accounts": [
+    { "extension": "1001", "password": "<パスワード>" },
+    { "extension": "1002", "password": "<パスワード>" },
+    { "extension": "1003", "password": "<パスワード>" },
+    { "extension": "1004", "password": "<パスワード>", "dtls": true }
+  ]
 }
 ```
 
-`asteriskserver.md` には、内線番号とパスワードを空白で区切った行を2つ以上置きます。TLSのテストは `local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
+`accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`asterisk-record-switch` は3件目も使い、`asterisk-tls` は `"dtls": true` を付けた内線でDTLS-SRTPの通話をします。TLSのテストは `local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。
+
+開発にはAsterisk 22.11.0（codec_opus 1.3.0）を使いました。サーバー側には、自動応答して音を流す `9001`、`*701` で駐車し `701` で取り出せるパークロット（res_parking）、各内線の `hint`、DTLSの内線に `use_avpf=yes` が要ります。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
 
 ```powershell
 python -X utf8 scripts/test/asterisk-transfer.py
@@ -370,7 +378,7 @@ python -X utf8 scripts/test/asterisk-live-aec.py
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
 ```
 
-`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration` があり、同じ形で実行します。
+`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices` があり、同じ形で実行します。
 
 ### ローカルの2プロセスだけで行うテスト
 

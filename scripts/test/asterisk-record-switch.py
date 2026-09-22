@@ -8,16 +8,17 @@ from sip_fixture import Phone, account, accounts, connect
 def main():
     recorder = callee = None
     try:
+        third = account(2, '録音切替の3台目')
         recorder = Phone('switch-a', accounts()[1], 18586, 19230)
-        callee = Phone('switch-c', account('1003'), 18588, 19260)
-        first, remote = connect(recorder, callee, '1003')
+        callee = Phone('switch-c', third, 18588, 19260)
+        first, remote = connect(recorder, callee, third['extension'])
         path = recorder.dir / 'switch.wav'
         recorder.command('lab_record', first + ' ' + path.as_posix())
         time.sleep(1)
 
         # The second call rings without carrying audio, which is where the old build
         # answered EAGAIN and left the recording detached.
-        second = recorder.action('dial', value='1003')
+        second = recorder.action('dial', value=third['extension'])
         recorder.wait(lambda s: any(c['id'] == second and c['state'] in ('RINGING', 'EARLY')
                                     for c in s['calls']))
         reply = recorder.command('lab_record_select', second).strip()
