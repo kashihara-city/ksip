@@ -1,0 +1,273 @@
+# タグ v* を push すると、ランナーだけで KSIP を最初から組み、対向の要らない
+# テストを通し、来歴（attestation）を付けて GitHub Release に載せる。
+# SIP サーバーと実機が要るテスト（asterisk-*.py・app-*.ps1）は、タグを打つ前に
+# 手元で通しておく決まり。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 15 万ファイルの WebRTC を置くので、空きの多い D: に作業ツリーを移す。
+  KSIP_ROOT: D:\ksip
+
+jobs:
+  release:
+    name: Build, test, attest and publish
+    runs-on: windows-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Move the working tree to D:"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "D:\")) { throw "The runner has no D: drive." }
+          Get-PSDrive C, D | ForEach-Object { "{0}: {1:N1} GB free" -f $_.Name, ($_.Free / 1GB) }
+          New-Item -ItemType Directory -Force -Path $env:KSIP_ROOT | Out-Null
+          robocopy $env:GITHUB_WORKSPACE $env:KSIP_ROOT /E /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -gt 7) { throw "robocopy failed with $LASTEXITCODE" }
+          git -C $env:KSIP_ROOT status --short | Out-Null
+          "Working tree: $env:KSIP_ROOT"
+
+      - name: Use Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: Report the toolchain
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version
+          python --version
+          cmake --version | Select-Object -First 1
+          ninja --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          & $vswhere -latest -products * -property installationPath
+          & $vswhere -latest -products * -property installationVersion
+
+      - name: Verify the tag matches the committed versions
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tagMatch = [regex]::Match($env:TAG_NAME, '^v(?<version>\d+\.\d+\.\d+)$')
+          if (-not $tagMatch.Success) { throw "Tag '$($env:TAG_NAME)' must have the form v1.2.3." }
+          $version = $tagMatch.Groups["version"].Value
+          $cargoToml = Get-Content -LiteralPath "src-tauri/Cargo.toml" -Raw
+          $cargoVersion = [regex]::Match($cargoToml, '(?m)^version = "(?<version>[^"]+)"').Groups["version"].Value
+          $tauriVersion = (Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $metadata = (cargo metadata --locked --no-deps --format-version 1 --manifest-path "src-tauri/Cargo.toml") -join "`n" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Cargo.lock does not match the committed manifest." }
+          $lockedVersion = ($metadata.packages | Where-Object { $_.name -eq "ksip" } | Select-Object -First 1).version
+          if ($cargoVersion -ne $version -or $tauriVersion -ne $version -or $lockedVersion -ne $version) {
+            throw "Tag does not match committed versions (tag=$version, Cargo.toml=$cargoVersion, tauri.conf.json=$tauriVersion, Cargo.lock=$lockedVersion)."
+          }
+          "Version $version"
+
+      - name: Install the Windows SDK the pinned WebRTC requires
+        shell: pwsh
+        run: |
+          # 固定している WebRTC の build/vs_toolchain.py は SDK 10.0.28000.0 を決め打ち
+          # している。ランナーの既定は 26100 なので、単体インストーラーで足す。
+          # Debuggers は vs_toolchain.py が dbghelp・dbgcore・symsrv を拾うために要る。
+          $ErrorActionPreference = "Stop"
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          if (Test-Path "$kits\Include\10.0.28000.0\um\windows.h") { "SDK 10.0.28000.0 is already there"; exit 0 }
+          $setup = "$env:RUNNER_TEMP\winsdksetup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2376217" -OutFile $setup -UseBasicParsing
+          "winsdksetup.exe {0:N1} MB, version {1}, SHA256 {2}" -f ((Get-Item $setup).Length / 1MB), (Get-Item $setup).VersionInfo.ProductVersion, (Get-FileHash $setup).Hash
+          $arguments = @("/features", "OptionId.DesktopCPPx64", "OptionId.DesktopCPPx86", "OptionId.WindowsDesktopDebuggers",
+                         "/quiet", "/norestart", "/ceip", "off", "/log", "$env:RUNNER_TEMP\sdk-install.log")
+          $started = Get-Date
+          $p = Start-Process -FilePath $setup -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+          "winsdksetup.exe exit {0} after {1:N1} min" -f $p.ExitCode, ((Get-Date) - $started).TotalMinutes
+          if ($p.ExitCode -ne 0) { throw "winsdksetup.exe failed" }
+          foreach ($f in "$kits\Include\10.0.28000.0\um\windows.h", "$kits\Lib\10.0.28000.0\um\x64\kernel32.lib", "$kits\Debuggers\x64\symsrv.dll") {
+            if (-not (Test-Path $f)) { throw "Missing after install: $f" }
+          }
+
+      - name: Unpack the pinned native sources
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $started = Get-Date
+          python -X utf8 scripts/deps/fetch-baresip.py
+          if ($LASTEXITCODE -ne 0) { throw "fetch-baresip.py failed" }
+          "fetch-baresip: {0:N1} min" -f ((Get-Date) - $started).TotalMinutes
+
+      - name: Fetch the pinned Google WebRTC
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $started = Get-Date
+          python -X utf8 scripts/deps/fetch-webrtc.py
+          if ($LASTEXITCODE -ne 0) { throw "fetch-webrtc.py failed" }
+          "fetch-webrtc: {0:N1} min" -f ((Get-Date) - $started).TotalMinutes
+          Get-PSDrive C, D | ForEach-Object { "{0}: {1:N1} GB free" -f $_.Name, ($_.Free / 1GB) }
+
+      - name: Fetch the locked Rust dependencies
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          # app.ps1 と package.py は cargo tree --offline を使うので、先に取っておく。
+          cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "cargo fetch failed" }
+
+      - name: Install cargo-audit
+        shell: pwsh
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Check the sources before building
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($script in "supply-chain", "no-secrets", "i18n", "line-endings") {
+            python -X utf8 "scripts/test/$script.py"
+            if ($LASTEXITCODE -ne 0) { throw "$script.py failed" }
+          }
+
+      - name: Build WebRTC, LibreSSL, re, baresip and the KSIP modules
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $started = Get-Date
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/native.ps1 -Clean
+          if ($LASTEXITCODE -ne 0) { throw "native.ps1 failed" }
+          "native.ps1: {0:N1} min" -f ((Get-Date) - $started).TotalMinutes
+          Get-ChildItem temp/build/native/lib -File | Measure-Object -Property Length -Sum |
+            ForEach-Object { "native libraries: {0:N0} MB in {1} files" -f ($_.Sum / 1MB), $_.Count }
+          Get-PSDrive C, D | ForEach-Object { "{0}: {1:N1} GB free" -f $_.Name, ($_.Free / 1GB) }
+
+      - name: Build the application
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $started = Get-Date
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/app.ps1 -Clean
+          if ($LASTEXITCODE -ne 0) { throw "app.ps1 failed" }
+          "app.ps1: {0:N1} min" -f ((Get-Date) - $started).TotalMinutes
+          Get-ChildItem release -File | ForEach-Object {
+            "{0}  {1:N0} bytes  SHA256={2}" -f $_.Name, $_.Length, (Get-FileHash $_.FullName).Hash
+          }
+
+      - name: Run Clippy and the unit tests
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command {
+            . scripts/dev-env.ps1
+            $env:RUSTFLAGS = "-C target-feature=+crt-static"
+            cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+            if ($LASTEXITCODE -ne 0) { throw "clippy failed" }
+            cargo test --locked --manifest-path src-tauri/Cargo.toml
+            if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Clippy or the unit tests failed" }
+
+      - name: Check the built executable and run the tests that need no server
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -X utf8 scripts/test/build-paths.py
+          if ($LASTEXITCODE -ne 0) { throw "build-paths.py failed" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
+          if ($LASTEXITCODE -ne 0) { throw "aec.ps1 failed" }
+          foreach ($script in "loopback-call", "loopback-gain", "loopback-silent-mic") {
+            python -X utf8 "scripts/test/$script.py"
+            if ($LASTEXITCODE -ne 0) { throw "$script.py failed" }
+          }
+
+      - name: Package the executable and the source archive
+        id: package
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -X utf8 scripts/build/package.py
+          if ($LASTEXITCODE -ne 0) { throw "package.py failed" }
+          $version = $env:TAG_NAME.TrimStart("v")
+          $folder = (Resolve-Path "temp/build/single-v$version").Path
+          $exe = Join-Path $folder "ksip-v$version.exe"
+          $zip = Join-Path $folder "KSIP-v$version-source.zip"
+          foreach ($f in $exe, "$exe.sha256", $zip, "$zip.sha256") { if (-not (Test-Path $f)) { throw "Missing: $f" } }
+          "exe=$exe" >> $env:GITHUB_OUTPUT
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+          "exe_sha256=$((Get-FileHash $exe).Hash.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "zip_sha256=$((Get-FileHash $zip).Hash.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Attest the build provenance of the executable
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ steps.package.outputs.exe }}
+
+      - name: Publish the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          EXE: ${{ steps.package.outputs.exe }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          EXE_SHA256: ${{ steps.package.outputs.exe_sha256 }}
+          ZIP_SHA256: ${{ steps.package.outputs.zip_sha256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:TAG_NAME
+          $exeName = Split-Path $env:EXE -Leaf
+          $zipName = Split-Path $env:ZIP -Leaf
+          gh release view $tag --json isDraft --repo $env:REPOSITORY 2> $null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists. Published release assets are not replaced." }
+          # YAML は共通のインデントを剥がすので、PowerShell には列 0 の here-string として届く。
+          $template = @'
+          GitHub Actions がこのタグのソースだけから組んだ実行ファイルです。SIP サーバーと実機が要るテスト（`asterisk-*.py`・`app-*.ps1`）は、タグを打つ前に手元で通しています。
+
+          来歴の確認: `gh attestation verify {0} --repo {1}`
+
+          | ファイル | SHA256 |
+          | --- | --- |
+          | `{0}` | `{2}` |
+          | `{3}` | `{4}` |
+          '@
+          $notes = $template -f $exeName, $env:REPOSITORY, $env:EXE_SHA256, $zipName, $env:ZIP_SHA256
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
+          gh release create $tag $env:EXE "$env:EXE.sha256" $env:ZIP "$env:ZIP.sha256" `
+            --verify-tag --title "KSIP $tag" --notes-file $notesPath --repo $env:REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "Could not create Release $tag." }
+
+      - name: Keep the reports and the installer log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reports-${{ github.ref_name }}
+          path: |
+            D:\ksip\temp\reports\*.json
+            ${{ runner.temp }}\sdk-install.log
+          if-no-files-found: warn
