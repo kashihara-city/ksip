@@ -1,24 +1,40 @@
 # KSIP
 
+## 概要
+
 Windows用のSIPクライアントです。  
 Tauri/Rustで画面と状態管理、baresipでSIP/RTP処理、Google WebRTCでADM/AEC/AGCを、LibreSSLでSIP/RTP通信の暗号化を行います。  
-主要依存バージョンは以下のとおりです。画面のNPM依存はありません。
+単独exeで動作し、設定値はレジストリで管理するため、GPOによる一斉デプロイ等も可能です。  
+主要依存ライブラリのバージョンは以下のとおりです。画面のNPM依存はありません。
 
 - Tauri 2.11.5
 - baresip/re 4.11.0
 - WebRTC 2026/9/12版
 - LibreSSL 4.3.2
 
-動作には、Microsoft WebView2ランタイムが必要です。
+## 何を解決し（避け）ようとしているか
+
+- PBXサーバ/通信事業者とSIPクライアントとの密結合
+- 謎のインストーラ・サプライチェーン・テレメトリ通信
+- ライセンス確認のためのインターネット通信
+- 面倒なインストール、個別設定作業（AEC用の遅延計測）、DLL配布
+- 古いAEC実装、検証不能ビルド
+
+## 動作要件
+
+- Windows11
+- Microsoft WebView2ランタイム
 
 ## 主な機能
 
-SIPサーバに自動REGISTERし、アテンド転送、保留、カスタムボタン（転送・BLF付き短縮ダイヤル・保留・リンク）、PAIによる番号更新、通話履歴、自動録音、音声デバイス選択、などが可能です。  
-タスクトレイに常駐し、ショートカットキーで、開く/閉じる・電話に出る/切るが可能です。  
-常駐中は、ブラウザや他のプログラムから、電話をかける・切るなどの制御が可能です。  
-多言語対応です。  
-単一exeで動作し、設定はGPO管理が容易なように、Windows資格情報とレジストリに保存します。  
-音声コーデックはOpus、G.722、G.711（μ-law・A-law）を、この順で提示します。
+- 基本的な設定はSIPサーバとアカウント設定のみです。
+- サーバとアカウントを設定すると、自動REGISTERします
+- アテンド転送、カスタムボタン（転送・BLF付き短縮ダイヤル・保留・リンク）、PAIによる番号更新、通話履歴、自動録音、音声デバイス選択などが可能です。
+- タスクトレイに常駐し、ショートカットキーで、開く/閉じる・電話に出る/切るが可能です。
+- 常駐中は、ブラウザや他のプログラムから、電話をかける・切るなどの制御が可能です。
+- 多言語対応です。
+- 単一exeで動作し、設定はGPO管理が容易なように、Windows資格情報とレジストリに保存します。
+- 音声コーデックはOpus、G.722、G.711（μ-law・A-law）を、この順で提示します。
 
 ## メイン画面の機能
 
@@ -232,7 +248,7 @@ Windowsの通知は、アプリの識別子（AUMID）をたどって表示名�
     (既定)                  = "<ksip.exeのフルパス>" "/ksip=%1"
 ```
 
-## 開発手順
+## 開発に関する方針
 
 - ビルド手順は固定し、再現可能なビルドを目指します。（ネイティブは `scripts/build/native.ps1`、本体は `scripts/build/app.ps1`）
 - 依存は公式の取得元から取り、lockとハッシュで固定します。公開から7日未満の版は追加しません。更新したら `scripts/test/supply-chain.py` を通します。
@@ -345,7 +361,7 @@ python -X utf8 scripts/test/line-endings.py
 
 ### 開発用SIPサーバーが要るテスト
 
-`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `local-asterisk/lab.json` から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。無ければ何が足りないかを言って止まります。
+`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `local-asterisk/lab.json` から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
 
 ```json
 {
@@ -365,7 +381,7 @@ python -X utf8 scripts/test/line-endings.py
 
 `accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`asterisk-record-switch` は3件目も使い、`asterisk-tls` は `"dtls": true` を付けた内線でDTLS-SRTPの通話をします。TLSのテストは `local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。
 
-開発にはAsterisk 22.11.0（codec_opus 1.3.0）を使いました。サーバー側には、自動応答して音を流す `9001`、`*701` で駐車し `701` で取り出せるパークロット（res_parking）、各内線の `hint`、DTLSの内線に `use_avpf=yes` が要ります。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
+開発にはAsterisk 22.11.0（codec_opus 1.3.0）を使いました。サーバー側には、自動応答して音を流す `9001`、`*701` で保留し `701` で取り出せるパークロット（res_parking）、各内線の `hint`、DTLSの内線に `use_avpf=yes` が要ります。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
 
 ```powershell
 python -X utf8 scripts/test/asterisk-transfer.py
