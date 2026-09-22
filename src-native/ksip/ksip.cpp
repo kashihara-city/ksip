@@ -37,6 +37,17 @@ bool transfer_reversed=false;
 // de-registration arrives as a register event, which must not undo it.
 bool unregistered=false;
 void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); }
+// A button may name a full SIP URI instead of a number; it is passed on as it
+// is, and only has to be one line of visible ASCII.
+bool sip_uri(const std::string &s) {
+    std::string head=s.substr(0,5);for(auto &ch:head)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return head.rfind("sip:",0)==0 || head.rfind("sips:",0)==0;
+}
+bool address_ok(const std::string &s) {
+    if(s.empty() || s.size()>200)return false;
+    for(unsigned char ch:s)if(ch<0x21 || ch>0x7e)return false;
+    return true;
+}
 bool token(const char *s, const char *extra) {
     if (!s || !*s || strlen(s)>253) return false;
     for (;*s;++s) if (!(static_cast<unsigned char>(*s)<128 && (isalnum(static_cast<unsigned char>(*s)) || strchr(extra,*s)))) return false;
@@ -103,8 +114,10 @@ int auth_handler(char **username,char **password,const char *realm,void *arg) {
 void parking_notify(struct sip *sip,const struct sip_msg *msg,void *arg) {
     auto slot=static_cast<ParkSlot*>(arg);
     std::string body(reinterpret_cast<const char*>(mbuf_buf(msg->mb)),mbuf_get_left(msg->mb));
+    // Every dialog state but terminated counts as in use (RFC 4235).
     bool active=body.find("<state>confirmed</state>")!=std::string::npos ||
         body.find("<state>early</state>")!=std::string::npos ||
+        body.find("<state>proceeding</state>")!=std::string::npos ||
         body.find("<state>trying</state>")!=std::string::npos;
     slot->state=active ? "INUSE" : "IDLE";
     (void)sip_treply(nullptr,sip,msg,200,"OK");
@@ -133,7 +146,7 @@ int subscribe_parking() {
     int result=0;
     for(auto &slot:parking) {
         if(slot.number.empty() || slot.sub)continue;
-        std::string uri="sip:"+slot.number+"@"+authority+";transport="+sip_scheme;
+        std::string uri=sip_uri(slot.number) ? slot.number : "sip:"+slot.number+"@"+authority+";transport="+sip_scheme;
         int err=sipevent_subscribe(&slot.sub,uag_sipevent_sock(),uri.c_str(),nullptr,
             account_aor(ua_account(account_ua)),"dialog",nullptr,600,ua_cuser(account_ua),
             routev,routev[0] ? 1 : 0,auth_handler,ua_account(account_ua),true,nullptr,
@@ -361,11 +374,12 @@ int action(re_printf *pf, void *arg) {
     }
     if (op=="dial" || op=="consult") {
         if (!account_ua || !ua_isregistered(account_ua)) return EAGAIN;
-        if (!original.empty() || !token(value.c_str(),"*#+_.-")) return EINVAL;
+        if (!original.empty() || !(sip_uri(value) ? address_ok(value) : token(value.c_str(),"*#+_.-"))) return EINVAL;
         if (op=="consult" && (!c || call_state(c)!=CALL_STATE_ESTABLISHED || !call_supported(c,REPLACES))) return ENOTSUP;
-        // A URI is always constructed with the configured registrar; arbitrary direct SIP URIs are not accepted.
+        // A number is completed with the configured registrar. A full URI comes
+        // only from a button, which the app has checked against its settings.
         std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
-        std::string uri="sip:"+user+"@"+authority+";transport="+sip_scheme;
+        std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next) {
             auto other=static_cast<call*>(l->data);
             if (call_state(other)==CALL_STATE_ESTABLISHED && !call_is_onhold(other)) { c=other;err=call_hold(other,true);if(err)return err; }
@@ -400,9 +414,10 @@ int action(re_printf *pf, void *arg) {
         // The call in progress is sent to the number as it is; the buttons
         // decide what the number means (a park slot, a colleague, a queue).
         if(!c || call_state(c)!=CALL_STATE_ESTABLISHED || call_is_onhold(c))return EINVAL;
-        if(!token(value.c_str(),"*#+"))return EINVAL;
+        if(!(sip_uri(value) ? address_ok(value) : token(value.c_str(),"*#+")))return EINVAL;
         std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
-        std::string uri="sip:"+user+"@"+authority+";transport="+sip_scheme;
+        // baresip writes a decodable URI into Refer-To as it is (addr-spec form).
+        std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
         return call_transfer(c,uri.c_str());
     }
     // Unregistering is about the account, not about a call.
@@ -432,7 +447,7 @@ int configure_parking(re_printf *pf,void *arg) {
         if(count==values.size())return EINVAL;
         auto end=text.find(',',start);
         values[count]=text.substr(start,end==std::string::npos ? end : end-start);
-        if(!values[count].empty() && (values[count].size()>30 || !token(values[count].c_str(),"*#+")))return EINVAL;
+        if(!values[count].empty() && !(sip_uri(values[count]) ? address_ok(values[count]) : (values[count].size()<=30 && token(values[count].c_str(),"*#+"))))return EINVAL;
         ++count;
         if(end==std::string::npos)break;
         start=end+1;

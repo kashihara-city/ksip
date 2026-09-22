@@ -6,8 +6,9 @@ $root=Split-Path (Split-Path $PSScriptRoot)
 Use-KsipBuild $Folder $PSBoundParameters.ContainsKey('Folder')
 $version=Get-KsipVersion
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
-# The profile defines three buttons: a speed dial to the peer, a park slot the
-# lab parks on *701 and picks up on 701, and a blind transfer to the 9001 player.
+# The profile defines four buttons: a speed dial to the peer, a park slot the
+# lab parks on *701 and picks up on 701, a blind transfer to the 9001 player,
+# and the same transfer written as a full SIP URI in angle brackets.
 Start-KsipProfile 'buttons'
 $app=$null;$peer=$null
 function Get-ButtonOrder {
@@ -24,13 +25,14 @@ try {
     Wait-Class 'registration' 'reg-register_ok'
     # Only the configured buttons are shown, in their own order, each with its id.
     $order=Get-ButtonOrder
-    if(($order -join ',') -ne 'custom-1,custom-2,custom-3'){throw "Buttons shown: $($order -join ',')"}
-    if(Find-Id 'custom-4'){throw 'An unconfigured button is shown'}
+    if(($order -join ',') -ne 'custom-1,custom-2,custom-3,custom-4'){throw "Buttons shown: $($order -join ',')"}
+    if(Find-Id 'custom-5'){throw 'An unconfigured button is shown'}
     $extension=(Get-Content "$root/temp/build/ksip-ui/peer-extension.txt" -Raw).Trim()
     # The status is part of the button's name: its children are presentational.
     Wait-Text 'custom-1' ([regex]::Escape($extension)) | Out-Null
     Wait-Text 'custom-2' '701' | Out-Null
     Wait-Text 'custom-3' '9001' | Out-Null
+    Wait-Text 'custom-4' 'sip:9001@' | Out-Null
     'PASS: 設定したボタンだけが順に出る'
     # Idle: the speed dial can be pressed, the park slot is free and waits for a
     # call, the transfer has nothing to send.
@@ -52,7 +54,11 @@ try {
     Click-Id 'custom-1';Wait-Class 'line-1' 'call-established'
     Click-Id 'custom-3';Wait-Class 'line-1' 'call-idle'
     'PASS: 転送ボタンで相手を9001へ転送した'
-    @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true} |
+    # The same, with the target written as a full URI: the engine passes it on.
+    Click-Id 'custom-1';Wait-Class 'line-1' 'call-established'
+    Click-Id 'custom-4';Wait-Class 'line-1' 'call-idle'
+    'PASS: 完全なSIP URIを転送先にしたボタンでも転送できた'
+    @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true;transferToUri=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-buttons-v$version.json"
     'PASS: real KSIP custom buttons: speed dial, park with BLF, pick up, blind transfer'
 } finally {

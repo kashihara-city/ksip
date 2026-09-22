@@ -80,12 +80,43 @@ impl CustomButton {
     pub fn watches(&self) -> bool {
         matches!(self.kind.as_str(), "dial" | "park")
     }
+    /// What the engine is given: a number, or a full SIP URI. A URI may be
+    /// written between angle brackets, as a Refer-To header carries it; the
+    /// engine's library wants it bare, so the brackets go here.
+    pub fn address(text: &str) -> &str {
+        let text = text.trim();
+        text.strip_prefix('<')
+            .and_then(|inner| inner.strip_suffix('>'))
+            .map_or(text, str::trim)
+    }
+    /// Whether the text names a SIP URI rather than a number for the registrar.
+    pub fn is_uri(text: &str) -> bool {
+        let lower = Self::address(text).to_ascii_lowercase();
+        lower.starts_with("sip:") || lower.starts_with("sips:")
+    }
+    /// A number is what the registrar dials; a URI is passed on as it is, and
+    /// has to be one line of visible ASCII, which is all a SIP URI ever is.
+    pub fn target_ok(text: &str) -> bool {
+        let address = Self::address(text);
+        if Self::is_uri(text) {
+            address.len() <= 200 && address.bytes().all(|b| (0x21..=0x7e).contains(&b))
+        } else {
+            address.len() <= 30
+                && address
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"*#+".contains(&b))
+        }
+    }
+    /// The address the engine watches and calls, for the kinds that do so.
+    pub fn dial_target(&self) -> Option<&str> {
+        self.watches().then(|| Self::address(&self.number))
+    }
     /// Where a call in progress goes when the button is pressed, if anywhere.
     pub fn transfer_target(&self) -> Option<&str> {
         match self.kind.as_str() {
-            "transfer" => Some(&self.number),
-            "park" if self.transfer.is_empty() => Some(&self.number),
-            "park" => Some(&self.transfer),
+            "transfer" => Some(Self::address(&self.number)),
+            "park" if Self::address(&self.transfer).is_empty() => Some(Self::address(&self.number)),
+            "park" => Some(Self::address(&self.transfer)),
             _ => None,
         }
     }
@@ -177,9 +208,9 @@ impl Settings {
     /// The numbers the engine watches, each once, in button order.
     pub fn watched_numbers(&self) -> Vec<&str> {
         let mut numbers: Vec<&str> = Vec::new();
-        for button in self.buttons.iter().filter(|b| b.watches()) {
-            if !numbers.contains(&button.number.as_str()) {
-                numbers.push(&button.number);
+        for target in self.buttons.iter().filter_map(CustomButton::dial_target) {
+            if !numbers.contains(&target) {
+                numbers.push(target);
             }
         }
         numbers
@@ -930,12 +961,6 @@ impl AppState {
         if s.buttons.len() > CustomButton::COUNT {
             return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
         }
-        let number_ok = |number: &str| {
-            number.len() <= 30
-                && number
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"*#+".contains(&b))
-        };
         for button in &s.buttons {
             if !button.kind.is_empty() && !CustomButton::KINDS.contains(&button.kind.as_str()) {
                 return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
@@ -943,16 +968,16 @@ impl AppState {
             if button.title.chars().count() > 40 || button.title.chars().any(char::is_control) {
                 return Err(message("SETTINGS_BUTTON_TITLE_INVALID"));
             }
-            if !number_ok(&button.number)
-                || !number_ok(&button.transfer)
-                || (button.configured() && button.number.is_empty())
+            if !CustomButton::target_ok(&button.number)
+                || !CustomButton::target_ok(&button.transfer)
+                || (button.configured() && CustomButton::address(&button.number).is_empty())
             {
                 return Err(message("SETTINGS_BUTTON_NUMBER_INVALID"));
             }
         }
         // The engine subscribes to each watched number once, so two buttons
         // cannot watch the same one.
-        let watched: Vec<&str> = s.buttons.iter().filter(|b| b.watches()).map(|b| b.number.as_str()).collect();
+        let watched: Vec<&str> = s.buttons.iter().filter_map(CustomButton::dial_target).collect();
         if watched.iter().enumerate().any(|(i, n)| watched[i + 1..].contains(n)) {
             return Err(message("SETTINGS_BUTTON_NUMBER_DUPLICATE"));
         }
@@ -1612,30 +1637,45 @@ impl AppState {
                 return Err(message("TRANSFER_NEEDS_TWO_CALLS"));
             }
         }
+        // What the engine is sent: the value as it came, or, for a button,
+        // the address the button was set up with.
+        let mut target = value.to_string();
         if name == "blind_transfer" {
-            // Only a number one of the buttons was set up with, and only a
+            // Only a target one of the buttons was set up with, and only a
             // call that is actually in progress.
             let v = self.snapshot();
-            if !v.settings.buttons.iter().any(|b| b.transfer_target() == Some(value))
-                || !v
-                    .calls
-                    .iter()
-                    .any(|c| c.id == id && c.state == "ESTABLISHED" && !c.held)
-            {
-                return Err(message("BUTTON_NEEDS_CALL_AND_TARGET"));
+            let wanted = CustomButton::address(value);
+            let known = v
+                .settings
+                .buttons
+                .iter()
+                .find_map(|b| b.transfer_target().filter(|t| *t == wanted));
+            match known {
+                Some(t) if v.calls.iter().any(|c| c.id == id && c.state == "ESTABLISHED" && !c.held) => {
+                    target = t.to_string();
+                }
+                _ => return Err(message("BUTTON_NEEDS_CALL_AND_TARGET")),
             }
         }
-        if name == "dial"
-            && (value.is_empty()
-                || !value
+        if name == "dial" {
+            let plain = !value.is_empty()
+                && value
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"*#+_.-".contains(&b)))
-        {
-            return Err(message("DIAL_TARGET_INVALID"));
+                    .all(|b| b.is_ascii_alphanumeric() || b"*#+_.-".contains(&b));
+            if !plain {
+                // A URI is dialled only when a button was set up with it. What
+                // the dial box or a link carries stays a number for the registrar.
+                let v = self.snapshot();
+                let wanted = CustomButton::address(value);
+                match v.settings.buttons.iter().find_map(|b| b.dial_target().filter(|t| *t == wanted)) {
+                    Some(t) => target = t.to_string(),
+                    None => return Err(message("DIAL_TARGET_INVALID")),
+                }
+            }
         }
         let result = self.request(
             "ksip_action",
-            &serde_json::to_string(&json!({"op":name,"id":id,"value":value})).map_err(err)?,
+            &serde_json::to_string(&json!({"op":name,"id":id,"value":target})).map_err(err)?,
         )?;
         if name == "dial" {
             self.lines
@@ -1963,6 +2003,15 @@ mod tests {
         assert!(AppState::validate(&with(vec![button("dial", "", "")])).is_err());
         assert!(AppState::validate(&with(vec![button("dial", "701", ""), button("park", "701", "")])).is_err());
         assert!(AppState::validate(&with(vec![button("", "", "")])).is_ok());
+        // A full SIP URI is accepted for either address, with or without the
+        // angle brackets a Refer-To header would carry, and handed on bare.
+        let odd = with(vec![button("park", "61", "<sip:61@127.0.0.1>"), button("dial", " sip:sales@pbx.example ", "")]);
+        assert!(AppState::validate(&odd).is_ok());
+        assert_eq!(odd.buttons[0].transfer_target(), Some("sip:61@127.0.0.1"));
+        assert_eq!(odd.buttons[0].dial_target(), Some("61"));
+        assert_eq!(odd.watched_numbers(), vec!["61", "sip:sales@pbx.example"]);
+        assert!(AppState::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("transfer", &format!("sip:{}@pbx", "6".repeat(200)), "")])).is_err());
         // The policy values round-trip through their registry names.
         let mut read_back = Settings::default();
         let stored: std::collections::HashMap<String, String> = ok.policy_values().into_iter().collect();

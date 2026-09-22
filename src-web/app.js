@@ -117,7 +117,9 @@ function callSummary(call){
 }
 // The buttons a site defined, with their position, leaving out the unused ones.
 const configuredButtons=()=>(state.settings.buttons||[]).map((b,i)=>({...b,index:i+1})).filter(b=>b.kind);
-const watchState=number=>state.parking?.find(slot=>slot.number===number)?.state||'UNKNOWN';
+// A URI may be written between angle brackets; the engine reports it bare.
+const address=text=>String(text||'').trim().replace(/^<\s*/,'').replace(/\s*>$/,'');
+const watchState=number=>state.parking?.find(slot=>slot.number===address(number))?.state||'UNKNOWN';
 function ask(message){
   // The page's own confirm() is prefixed with the origin, which means nothing
   // to the person reading it, so the question is asked inside the window.
