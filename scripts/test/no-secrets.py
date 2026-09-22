@@ -47,7 +47,7 @@ def main():
     if problems:
         print("\n".join(problems))
         raise SystemExit("公開してはいけない情報が追跡対象にあります: %d件" % len(problems))
-    print("tracked files:", len(tracked()), "— 接続先・ホスト名・秘密は見つからない")
+    print("tracked files:", len(tracked()), "：接続先・ホスト名・秘密は見つからない")
 
 
 if __name__ == "__main__":

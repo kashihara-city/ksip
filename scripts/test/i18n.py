@@ -128,7 +128,7 @@ def main():
         print("\n".join(problems))
         raise SystemExit("文言の対応が取れていません: %d件" % len(problems))
     print("names:", len(reported), "| languages:", ", ".join(sorted(locales)),
-          "| entries:", len(japanese), "| windows:", len(windows), "— all matched")
+          "| entries:", len(japanese), "| windows:", len(windows), "：all matched")
 
 
 if __name__ == "__main__":
