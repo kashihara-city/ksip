@@ -97,6 +97,17 @@ try {
     }
     Click-Id 'custom-8';Wait-NoClass 'custom-8' 'dnd'
     'PASS: 着信拒否ボタンでONの間は着信が鳴らず、OFFで戻る'
+    # Voicemail: a message left in the box (by a phone on the peer's account,
+    # so also last) makes the button count one more and turn red.
+    # The call refused above went to the box as well; its count arrives a moment later.
+    Start-Sleep -Seconds 4
+    Wait-Text 'custom-9' '新着' | Out-Null
+    $before=if((Text-Id 'custom-9') -match '新着 (\d+) 件'){[int]$Matches[1]}else{0}
+    python -X utf8 "$PSScriptRoot/app_fixture.py" voicemail
+    if($LASTEXITCODE -ne 0){throw 'Leaving a voicemail failed'}
+    Wait-Text 'custom-9' ('新着 '+($before+1)+' 件') 30 | Out-Null
+    Wait-Class 'custom-9' 'mwi-new'
+    'PASS: 留守番電話ボタンに新着の件数が出て赤くなる'
     @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true;transferToUri=$true;linkButton=$true;trayAfterCall=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-buttons-v$version.json"
     'PASS: real KSIP custom buttons: speed dial, park with BLF, pick up, blind transfer'

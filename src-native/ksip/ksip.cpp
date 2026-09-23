@@ -25,6 +25,7 @@ tmr transfer_timer;
 // Retries the park subscriptions a while after one closes.
 tmr parking_timer;
 int subscribe_parking();
+int subscribe_mwi();
 struct ParkSlot { struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN"; };
 // The numbers the buttons watch: up to thirty dialog subscriptions, six
 // for the phone and the rest for the panel beside it.
@@ -40,6 +41,11 @@ bool unregistered=false;
 // Do not disturb: an incoming call is answered with 486 Busy Here, so the PBX
 // treats the phone as busy rather than absent. Never kept across a start.
 bool dnd=false;
+// The voicemail box's message-summary subscription, and the last summary
+// body the server sent ("Messages-Waiting: yes", "Voice-Message: 2/5").
+// The app reads the counts out of it.
+struct sipsub *mwi_sub=nullptr;
+std::string mwi_summary, own_user;
 void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); }
 // A button may name a full SIP URI instead of a number; it is passed on as it
 // is, and only has to be one line of visible ASCII.
@@ -127,7 +133,9 @@ void parking_notify(struct sip *sip,const struct sip_msg *msg,void *arg) {
     (void)sip_treply(nullptr,sip,msg,200,"OK");
 }
 void parking_retry(void*) {
-    if(subscribe_parking())tmr_start(&parking_timer,30000,parking_retry,nullptr);
+    int err=subscribe_parking();
+    if(subscribe_mwi())err=EAGAIN;
+    if(err)tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
 void parking_closed(int,const struct sip_msg*,const struct sipevent_substate*,void *arg) {
     // The subscription is over, so its reference goes here, as baresip's own
@@ -137,8 +145,31 @@ void parking_closed(int,const struct sip_msg*,const struct sipevent_substate*,vo
     auto slot=static_cast<ParkSlot*>(arg);slot->sub=static_cast<sipsub*>(mem_deref(slot->sub));slot->state="UNKNOWN";
     tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
+void mwi_notify(struct sip *sip,const struct sip_msg *msg,void *) {
+    mwi_summary=std::string(reinterpret_cast<const char*>(mbuf_buf(msg->mb)),mbuf_get_left(msg->mb));
+    (void)sip_treply(nullptr,sip,msg,200,"OK");
+}
+void parking_retry(void*);
+void mwi_closed(int,const struct sip_msg*,const struct sipevent_substate*,void*) {
+    mwi_sub=static_cast<sipsub*>(mem_deref(mwi_sub));mwi_summary.clear();
+    tmr_start(&parking_timer,30000,parking_retry,nullptr);
+}
+int subscribe_mwi() {
+    if(!account_ua || !ua_isregistered(account_ua) || mwi_sub || own_user.empty())return 0;
+    const char *routev[1]={ua_outbound(account_ua)};
+    std::string uri="sip:"+own_user+"@"+authority+";transport="+sip_scheme;
+    int err=sipevent_subscribe(&mwi_sub,uag_sipevent_sock(),uri.c_str(),nullptr,
+        account_aor(ua_account(account_ua)),"message-summary",nullptr,600,ua_cuser(account_ua),
+        routev,routev[0] ? 1 : 0,auth_handler,ua_account(account_ua),true,nullptr,
+        mwi_notify,mwi_closed,nullptr,"Accept: application/simple-message-summary\r\n");
+    if(err)warning("ksip: mwi subscription to %s failed (%d)\n",uri.c_str(),err);
+    else info("ksip: mwi subscription to %s\n",uri.c_str());
+    return err;
+}
 void clear_parking_subscriptions() {
     tmr_cancel(&parking_timer);
+    if(mwi_sub){auto sub=mwi_sub;mwi_sub=nullptr;mem_deref(sub);}
+    mwi_summary.clear();
     for(auto &slot:parking) {
         auto sub=slot.sub;slot.sub=nullptr;slot.state="UNKNOWN";
         if(sub)mem_deref(sub);
@@ -193,6 +224,7 @@ int login(re_printf *pf, void*) {
     }
     // An empty extension means the account registers under its user name.
     std::string user=(extension && *extension) ? extension : auth;
+    own_user=user;
     if (!err && (!token(server,".-") || !token(user.c_str(),"_.+-") || !token(auth.c_str(),"_.+-") ||
         password.empty() || password.size()>512 || !port || port>65535)) err=EINVAL;
     if (!err) {
@@ -226,7 +258,7 @@ void transfer_timeout(void*) {
 }
 void event(bevent_ev ev, bevent *e, void*) {
     if (bevent_get_ua(e)==account_ua) {
-        if (ev==BEVENT_REGISTER_OK && !unregistered) {registration="REGISTER_OK";(void)subscribe_parking();}
+        if (ev==BEVENT_REGISTER_OK && !unregistered) {registration="REGISTER_OK";(void)subscribe_parking();(void)subscribe_mwi();}
         if (ev==BEVENT_REGISTER_FAIL) {registration="REGISTER_FAIL";registered_transport.clear();}
         if (ev==BEVENT_REGISTERING) registration="REGISTERING";
         if (ev==BEVENT_UNREGISTERING) {registration="UNREGISTERING";registered_transport.clear();}
@@ -290,6 +322,7 @@ int state(re_printf *pf, void*) {
     if (err) { mem_deref(od);mem_deref(calls);mem_deref(xfer);return err; }
     odict_entry_add(od,"registration",ODICT_STRING,registration.c_str());
     odict_entry_add(od,"dnd",ODICT_BOOL,dnd?1:0);
+    odict_entry_add(od,"mwi_summary",ODICT_STRING,mwi_summary.c_str());
     odict_entry_add(od,"transport",ODICT_STRING,registered_transport.c_str());
     odict_entry_add(od,"media_encryption",ODICT_STRING,media_encryption.c_str());
     unsigned index=0;

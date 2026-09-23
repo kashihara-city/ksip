@@ -28,7 +28,8 @@ if sys.argv[1]=='setup':
                  ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
                  # A button in the panel beside the phone, which makes the window twice as wide.
                  ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001'),
-                 ('button_8_title','DND'),('button_8_kind','dnd')]
+                 ('button_8_title','DND'),('button_8_kind','dnd'),
+                 ('button_9_title','Voicemail'),('button_9_kind','mwi'),('button_9_number','*97')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.
@@ -65,6 +66,18 @@ elif sys.argv[1]=='caller':
             time.sleep(.15)
         (BASE/'caller-result.txt').write_text('ESTABLISHED' if established else 'NOT_ESTABLISHED')
     finally:caller.close()
+elif sys.argv[1]=='voicemail':
+    # Leaves a message in the phone's own box: the lab's 8100X records for 100X
+    # straight away, and the box's message-summary then reports one more.
+    configured=accounts()
+    talker=Phone('ui-talker',configured[1],18566,19000)
+    try:
+        call=talker.action('dial',value='8'+configured[0]['extension'])
+        talker.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),20)
+        time.sleep(4)
+        talker.action('hangup',call)
+        time.sleep(1)
+    finally:talker.close()
 elif sys.argv[1]=='cleanup':
     delete_account(TARGET)
     try:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,KEY)

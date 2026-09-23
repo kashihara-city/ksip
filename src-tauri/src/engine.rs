@@ -63,7 +63,7 @@ pub struct Settings {
 #[serde(default)]
 pub struct CustomButton {
     pub title: String,
-    /// Empty (unused), `transfer`, `dial`, `park`, `open` or `dnd`.
+    /// Empty (unused), `transfer`, `dial`, `park`, `open`, `dnd` or `mwi`.
     pub kind: String,
     pub number: String,
     /// For `park`: where the call in progress is sent while the watched
@@ -78,7 +78,7 @@ impl CustomButton {
     /// which appears while any of them is set.
     pub const MAIN: usize = 6;
     pub const COUNT: usize = 30;
-    pub const KINDS: [&'static str; 5] = ["transfer", "dial", "park", "open", "dnd"];
+    pub const KINDS: [&'static str; 6] = ["transfer", "dial", "park", "open", "dnd", "mwi"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
     }
@@ -309,6 +309,8 @@ pub struct Snapshot {
     pub history_sequence: u64,
     pub parking: Vec<ParkingInfo>,
     pub audio_processing_stats: Option<AudioProcessingStats>,
+    #[serde(default)]
+    pub mwi: Mwi,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CallInfo {
@@ -371,6 +373,36 @@ pub struct ParkingInfo {
     pub number: String,
     pub state: String,
 }
+/// What the voicemail box reports through its message-summary subscription.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mwi {
+    pub waiting: bool,
+    pub new: u32,
+    pub old: u32,
+}
+impl Mwi {
+    /// Reads an RFC 3842 summary: `Messages-Waiting: yes` and
+    /// `Voice-Message: 2/5 (0/1)`, new before old, urgent ones in brackets.
+    pub fn parse(summary: &str) -> Self {
+        let mut mwi = Self::default();
+        for line in summary.lines() {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let value = value.trim();
+            if name.eq_ignore_ascii_case("Messages-Waiting") {
+                mwi.waiting = value.eq_ignore_ascii_case("yes");
+            } else if name.eq_ignore_ascii_case("Voice-Message") {
+                let counts = value.split_whitespace().next().unwrap_or_default();
+                let (new, old) = counts.split_once('/').unwrap_or((counts, "0"));
+                mwi.new = new.trim().parse().unwrap_or(0);
+                mwi.old = old.trim().parse().unwrap_or(0);
+            }
+        }
+        mwi
+    }
+}
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioProcessingStats {
@@ -418,6 +450,8 @@ struct PhoneState {
     parking: Vec<ParkingInfo>,
     #[serde(default)]
     audio_processing_stats: Option<AudioProcessingStats>,
+    #[serde(default)]
+    mwi_summary: String,
 }
 /// What the registrar is asked to call. A SIP URI is taken as written, one
 /// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
@@ -904,6 +938,7 @@ impl AppState {
                 history_sequence: 0,
                 parking: vec![],
                 audio_processing_stats: None,
+                mwi: Mwi::default(),
             })),
             serial: Arc::new(AtomicU64::new(1)),
             data,
@@ -1730,6 +1765,7 @@ impl AppState {
         };
         v.transfer = phone.transfer;
         v.parking = phone.parking;
+        v.mwi = Mwi::parse(&phone.mwi_summary);
         v.audio_processing_stats = phone.audio_processing_stats;
         v.registration = phone.registration;
         v.dnd = phone.dnd;
@@ -2426,6 +2462,9 @@ mod tests {
         assert_eq!(button("transfer", "701", "").pickup_target(), None);
         assert!(AppState::validate(&with(vec![pickup])).is_ok());
         assert!(AppState::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
+        // A voicemail button names the number that plays the messages.
+        assert!(AppState::validate(&with(vec![button("mwi", "*97", "")])).is_ok());
+        assert!(AppState::validate(&with(vec![button("mwi", "", "")])).is_err());
         // A do-not-disturb switch names nothing.
         assert!(AppState::validate(&with(vec![button("dnd", "", "")])).is_ok());
         assert!(AppState::validate(&with(vec![button("dnd", "701", "")])).is_err());
@@ -2769,6 +2808,15 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
         assert!(history.rows.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_message_summary_is_read_into_counts() {
+        let summary = "Messages-Waiting: yes\r\nMessage-Account: sip:1001@pbx\r\nVoice-Message: 2/5 (0/1)\r\n";
+        assert_eq!(Mwi::parse(summary), Mwi { waiting: true, new: 2, old: 5 });
+        assert_eq!(Mwi::parse("Messages-Waiting: no\r\nVoice-Message: 0/3\r\n"), Mwi { waiting: false, new: 0, old: 3 });
+        assert_eq!(Mwi::parse(""), Mwi::default());
+        assert_eq!(Mwi::parse("messages-waiting: YES\n"), Mwi { waiting: true, new: 0, old: 0 });
     }
 
     #[test]
