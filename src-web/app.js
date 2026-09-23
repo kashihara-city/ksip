@@ -167,10 +167,32 @@ function renderHistory(){
   for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=(item.peer||'—').replace(/^sip:/,'').split('@')[0];peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));const meta=document.createElement('span');meta.className='history-meta';meta.textContent=durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
 }
 function dialHistory(peer){
-  const number=(peer||'').replace(/^sip:/i,'').split(/[;@]/)[0],line=[1,2].find(n=>!callAt(n));
-  if(!number||busy||state.registration!=='REGISTER_OK'||state.transfer.pending)return;
+  dial((peer||'').replace(/^sip:/i,'').split(/[;@]/)[0]);
+}
+// Every way of placing a call ends here: the dial box, a button, the history
+// and a link. The selected line is used while it is free, otherwise the free
+// one; the number goes into the dial box, so that what was dialled can be seen
+// afterwards. The box and the buttons are disabled while something else is
+// going on, so of the refusals only a link ever meets one.
+function dial(number){
+  if(!number||busy||state.transfer.pending)return;
+  if(state.registration!=='REGISTER_OK'){error=t('NOT_REGISTERED_YET');render();return;}
+  const line=!callAt(selected)?selected:[1,2].find(n=>!callAt(n));
   if(!line){error=t('NO_FREE_LINE');render();return;}
-  selected=line;$('target').value=number;render();act('dial','',number,line);
+  selected=line;$('target').value=number;render();return act('dial','',number,line);
+}
+// Answering goes to the line that rings, whichever is selected, which is how a
+// link or a shortcut key finds it; the answer button is enabled only while the
+// selected line rings, so for it the two are the same. With nothing to act on,
+// the request is noted and nothing else happens.
+function answer(){
+  const ringing=current()?.state==='INCOMING'?current():state.calls.find(c=>c.state==='INCOMING');
+  if(!ringing){logUi('call','ANSWER without an incoming call');return;}
+  selected=ringing.line;render();return act('answer',ringing.id,'',ringing.line);
+}
+function hangup(){
+  if(!current()){logUi('call','HANGUP without a call');return;}
+  return act('hangup');
 }
 function render(){
   // The first row says who this phone is and how it is; the second where it
@@ -273,9 +295,9 @@ async function act(name,id=current()?.id||'',value='',line=selected){
 for(let n=1;n<=2;n++)$('line-'+n).addEventListener('click',async()=>{
   try{await run(async()=>{if(state.running)await invoke('action',{name:'select',id:callAt(n)?.id||'',value:'',line:n});selected=n;});}catch{}
 });
-$('dial-form').addEventListener('submit',e=>{e.preventDefault();act('dial','',$('target').value.trim());});
-$('answer').addEventListener('click',()=>act('answer'));
-$('hangup').addEventListener('click',()=>act('hangup'));
+$('dial-form').addEventListener('submit',e=>{e.preventDefault();dial($('target').value.trim());});
+$('answer').addEventListener('click',()=>answer());
+$('hangup').addEventListener('click',()=>hangup());
 $('hold').addEventListener('click',()=>act(current()?.held?'resume':'hold'));
 // The buttons are drawn from the settings: only the configured ones, in
 // order, each keeping its own id so that a test can find it by position.
@@ -315,11 +337,7 @@ async function useButton(n){
   const c=current(),active=c?.state==='ESTABLISHED'&&!c.held,s=b.kind==='transfer'?'':watchState(b.number);
   if(b.kind==='transfer'){if(active)await act('blind_transfer',c.id,b.number);return;}
   if(b.kind==='park'&&active&&s==='IDLE'){await act('blind_transfer',c.id,b.transfer||b.number);return;}
-  if(b.kind==='dial'||(b.kind==='park'&&s==='INUSE')){
-    const line=[1,2].find(value=>!callAt(value));
-    if(!line)return;
-    selected=line;$('target').value=b.number;render();await act('dial','',b.number,line);
-  }
+  if(b.kind==='dial'||(b.kind==='park'&&s==='INUSE'))await dial(b.number);
 }
 $('transfer').addEventListener('click',()=>act('transfer',callAt(1)?.id||'',callAt(2)?.id||'',1));
 $('record').addEventListener('click',()=>act('auto_record','',state.settings.auto_record?'off':'on'));
@@ -418,23 +436,14 @@ async function syncHistory(){
   if(sequence===historySequence)return;
   historyRows=await invoke('read_call_history');historySequence=sequence;renderHistory();
 }
-// A link or a shortcut key answers or hangs up. Answering goes to the line
-// that rings, whichever is selected; with nothing to act on, the request is
-// noted and nothing else happens.
+// A link or a shortcut key does what the answer and hang-up buttons do.
 function onLink(command){
-  if(command==='ANSWER'){
-    const ringing=state.calls.find(c=>c.state==='INCOMING');
-    if(!ringing){logUi('link','ANSWER without an incoming call');return;}
-    selected=ringing.line;render();act('answer',ringing.id,'',ringing.line);
-  }
-  if(command==='HANGUP'){
-    if(!current()){logUi('link','HANGUP without a call');return;}
-    act('hangup');
-  }
+  if(command==='ANSWER')answer();
+  if(command==='HANGUP')hangup();
 }
 // The number arrives as the registrar will dial it, and the app has said
-// whether to ask first. It goes into the dial box, so that what was dialled
-// can be seen afterwards; one the app refused goes there too, beside the error.
+// whether to ask first. One the app refused only goes into the dial box,
+// beside the error, so that what came can be seen.
 async function onDial({target,confirm,refused}){
   if(refused){$('target').value=target;render();return;}
   if(!target)return;
@@ -443,10 +452,7 @@ async function onDial({target,confirm,refused}){
   // browser started the app; the call waits for that rather than failing.
   const end=Date.now()+20000;
   while(state.registration!=='REGISTER_OK'&&Date.now()<end)await new Promise(done=>setTimeout(done,250));
-  if(state.registration!=='REGISTER_OK'){error=t('NOT_REGISTERED_YET');render();return;}
-  const line=!callAt(selected)?selected:[1,2].find(n=>!callAt(n));
-  if(!line){error=t('NO_FREE_LINE');render();return;}
-  selected=line;$('target').value=target;render();act('dial','',target,line);
+  dial(target);
 }
 window.__TAURI__.event.listen('ksip-link',event=>{onLink(String(event.payload||''));});
 window.__TAURI__.event.listen('ksip-dial',event=>{onDial(event.payload||{});});
