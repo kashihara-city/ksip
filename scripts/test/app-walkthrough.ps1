@@ -55,7 +55,27 @@ try {
     $wav=@(Get-ChildItem "$root/temp/build/test-ui-ksip/recordings" -Filter '*.wav' | Sort-Object LastWriteTime | Select-Object -Last 1)
     if(!$wav -or $wav[0].Name -notmatch "^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_$extension\.wav$"){throw "The recording is named $($wav[0].Name)"}
     'PASS: 録音した通話に「録音を再生」が出て、ファイル名は日時と相手番号'
-    Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
+    # One box narrows both panels: the history by number, the log by tag and
+    # words, and says so while it does.
+    Focus-Id 'panel-filter'
+    [System.Windows.Forms.SendKeys]::SendWait('zzz')
+    Wait-Text 'call-history' 'フィルターに一致する通話はありません' | Out-Null
+    Wait-Id 'filter-active' | Out-Null
+    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}'+$extension)
+    Wait-Text 'call-history' '\d+/\d+ \d+:\d+' | Out-Null
+    Click-Id 'logs-tab';Wait-Text 'logs' 'CALL_ESTABLISHED' | Out-Null
+    # The words are matched regardless of case; a line about another event goes.
+    Focus-Id 'panel-filter'
+    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}register_ok')
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while((Text-Id 'logs') -match 'CALL_ESTABLISHED' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if((Text-Id 'logs') -match 'CALL_ESTABLISHED' -or (Text-Id 'logs') -notmatch 'REGISTER_OK'){throw "The log filter did not narrow the lines: $((Text-Id 'logs').Substring(0,[Math]::Min(200,(Text-Id 'logs').Length)))"}
+    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}')
+    Wait-Text 'logs' 'CALL_ESTABLISHED' | Out-Null
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while((Find-Id 'filter-active') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if(Find-Id 'filter-active'){throw 'The filter label is still shown with an empty box'}
+    'PASS: 入力欄で通話履歴は番号、ログは属性と本文で絞り込め、絞り込み中と出る'
     Click-Id 'history-tab'
     # The number can be taken to another application. The button sits in the row,
     # and its name ends with the number it copies.

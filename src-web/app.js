@@ -79,10 +79,15 @@ const peerLabel=c=>c?.peer?.replace(/^sip:/,'').split('@')[0] || '—';
 const status=c=>c?(c.held?texts.callHeld:texts.callState[c.state]||c.state):texts.callIdle;
 const two=value=>String(value).padStart(2,'0');
 function logTime(iso){const at=new Date(iso);return isNaN(at)?iso:(at.getMonth()+1)+'/'+at.getDate()+' '+at.getHours()+':'+two(at.getMinutes())+':'+two(at.getSeconds());}
-function logText(row){const body=row.code?t(row.code&&row.args?.length?JSON.stringify({code:row.code,args:row.args}):row.code):row.text;
-  return body?logTime(row.time)+' ['+row.src+'] '+body:'';}
+const logMessage=row=>row.code?t(row.code&&row.args?.length?JSON.stringify({code:row.code,args:row.args}):row.code):row.text;
+function logText(row){const body=logMessage(row);return body?logTime(row.time)+' ['+row.src+'] '+body:'';}
+// One box narrows both panels: the history by number, the log by its source
+// tag and its words. Empty means everything, as before.
+const filterText=()=>$('panel-filter').value.trim().toLowerCase();
+const passesFilter=(...parts)=>{const wanted=filterText();return !wanted||parts.some(part=>String(part||'').toLowerCase().includes(wanted));};
+const historyNumber=peer=>(peer||'—').replace(/^sip:/,'').split('@')[0];
 // Newest first, as the call history is shown.
-const logBody=()=>logRows.map(logText).reverse().join('\n');
+const logBody=()=>logRows.filter(row=>passesFilter(row.src,logMessage(row))).map(logText).reverse().join('\n');
 // The log tab is left alone while the person is in it, selecting lines to
 // copy: rewriting the text would drop the selection. Lines keep arriving
 // meanwhile and are shown the moment the tab is left.
@@ -94,6 +99,7 @@ function logPaused(){
 function renderLogs(){
   const paused=activePanel==='logs'&&logPaused();
   $('logs-paused').hidden=!paused;
+  $('filter-active').hidden=!filterText();
   if(activePanel!=='logs'||paused)return;
   const body=logBody();
   if(body!==logShown){logShown=body;$('logs').textContent=body;}
@@ -199,10 +205,10 @@ function copyButton(number){
   return button;
 }
 function renderHistory(){
-  const history=historyRows;
+  const history=historyRows.filter(item=>passesFilter(historyNumber(item.peer)));
   const panel=$('call-history');panel.replaceChildren();panel.className='history'+(history.length?'':' empty');
-  if(!history.length){const empty=document.createElement('div');empty.className='history-empty';empty.textContent=t('HISTORY_EMPTY');panel.append(empty);return;}
-  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=(item.peer||'—').replace(/^sip:/,'').split('@')[0];peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording));const meta=document.createElement('span');meta.className='history-meta';meta.textContent=durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
+  if(!history.length){const empty=document.createElement('div');empty.className='history-empty';empty.textContent=t(historyRows.length?'HISTORY_NO_MATCH':'HISTORY_EMPTY');panel.append(empty);return;}
+  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=historyNumber(item.peer);peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording));const meta=document.createElement('span');meta.className='history-meta';meta.textContent=durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
 }
 function dialHistory(peer){
   dial((peer||'').replace(/^sip:/i,'').split(/[;@]/)[0]);
@@ -435,6 +441,7 @@ for(const kind of kinds)$(kind).addEventListener('change',async()=>{
 for(const digit of '123456789*0#'){const button=document.createElement('button');button.textContent=digit;button.addEventListener('click',()=>{if(current()?.state==='ESTABLISHED'&&!current().held)act('dtmf',current().id,digit);else if(!current())$('target').value+=digit;});$('keypad').append(button);}
 $('history-tab').addEventListener('click',()=>{activePanel='history';render();});
 $('logs-tab').addEventListener('click',()=>{activePanel='logs';render();});
+$('panel-filter').addEventListener('input',()=>{renderHistory();renderLogs();});
 $('clear-panel').addEventListener('click',async()=>{
   const history=activePanel==='history';
   if(!await ask(fill('CLEAR_CONFIRM',t(history?'PANEL_HISTORY':'PANEL_LOGS'))))return;
