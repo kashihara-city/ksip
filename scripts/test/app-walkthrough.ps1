@@ -14,6 +14,7 @@ try {
     $end=[DateTime]::UtcNow.AddSeconds(25)
     while(!(Test-Path "$root/temp/build/ksip-ui/ready") -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 150}
     if(!(Test-Path "$root/temp/build/ksip-ui/ready")){throw 'SIP peer not ready'}
+    $started=[DateTime]::Now
     $app=Start-KsipApp "$Folder/ksip.exe" "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
     Wait-Id 'refresh-devices' | Out-Null
@@ -52,9 +53,20 @@ try {
     # so only the button and the file are checked.
     $play=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'録音を再生')
     if(!(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$play)){throw 'The recorded call has no play button'}
-    $wav=@(Get-ChildItem "$root/temp/build/test-ui-ksip/recordings" -Filter '*.wav' | Sort-Object LastWriteTime | Select-Object -Last 1)
-    if(!$wav -or $wav[0].Name -notmatch "^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_$extension\.wav$"){throw "The recording is named $($wav[0].Name)"}
-    'PASS: 録音した通話に「録音を再生」が出て、ファイル名は日時と相手番号'
+    # Once the recording closed it is turned into an MP3 and the WAV goes.
+    $end=[DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $mp3=@(Get-ChildItem "$root/temp/build/test-ui-ksip/recordings" -Filter '*.mp3' | Where-Object { $_.LastWriteTime -gt $started })
+        if($mp3){break}
+        Start-Sleep -Milliseconds 300
+    } while([DateTime]::UtcNow -lt $end)
+    if(!$mp3){throw 'No MP3 appeared after the recording closed'}
+    if($mp3[0].Name -notmatch "^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_$extension\.mp3$"){throw "The recording is named $($mp3[0].Name)"}
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while((Test-Path ($mp3[0].FullName -replace '\.mp3$','.wav')) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if(Test-Path ($mp3[0].FullName -replace '\.mp3$','.wav')){throw 'The WAV stayed beside the MP3'}
+    Wait-Text 'record-status' '自動' | Out-Null
+    'PASS: 録音した通話に「録音を再生」が出て、録音は日時と相手番号の名前のMP3になる'
     # One box narrows both panels: the history by number, the log by tag and
     # words, and says so while it does.
     Focus-Id 'panel-filter'

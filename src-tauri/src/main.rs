@@ -4,6 +4,7 @@ mod audio;
 mod engine;
 mod licenses;
 mod message;
+mod mp3;
 mod native;
 mod protocol;
 mod shortcuts;

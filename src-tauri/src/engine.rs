@@ -261,6 +261,10 @@ pub struct Snapshot {
     pub window_visible: bool,
     pub recording: bool,
     pub recording_path: String,
+    /// Recordings being turned into MP3 at the moment, so the window can say
+    /// what the processor is busy with.
+    #[serde(default)]
+    pub converting: u32,
     pub error: String,
     pub settings: Settings,
     pub devices: Vec<Device>,
@@ -781,6 +785,7 @@ pub struct AppState {
     /// The recording file each call in progress has been put in, by call id,
     /// so that the history can point at it once the call ends.
     recorded: Arc<Mutex<HashMap<String, String>>>,
+    converting: Arc<AtomicU64>,
     auto_answered: Arc<Mutex<HashSet<String>>>,
     logs: Arc<Mutex<Logs>>,
     history: Arc<Mutex<History>>,
@@ -853,6 +858,7 @@ impl AppState {
                 window_visible: true,
                 recording: false,
                 recording_path: String::new(),
+                converting: 0,
                 error: startup_error,
                 settings,
                 devices: vec![],
@@ -882,6 +888,7 @@ impl AppState {
             lines: Arc::new(Mutex::new(HashMap::new())),
             call_directions: Arc::new(Mutex::new(HashMap::new())),
             recorded: Arc::new(Mutex::new(HashMap::new())),
+            converting: Arc::new(AtomicU64::new(0)),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
             logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(history)),
@@ -1065,13 +1072,25 @@ impl AppState {
     pub fn clear_call_history(&self) -> Result<(), String> {
         self.history.lock().unwrap().clear(&self.data)
     }
+    /// The file a history row's recording is in now: the MP3 once it has
+    /// been made, the WAV until then, nothing once both are gone.
+    fn recording_file(&self, name: &str) -> Option<PathBuf> {
+        let plain = !name.is_empty()
+            && name.ends_with(".wav")
+            && !name.contains(['/', '\\', ':'])
+            && !name.starts_with('.');
+        if !plain {
+            return None;
+        }
+        let wav = self.data.join("recordings").join(name);
+        [wav.with_extension("mp3"), wav].into_iter().find(|path| path.is_file())
+    }
     /// The rows as the tab shows them: a recording is named only while its
     /// file is still there to be played.
     pub fn read_call_history(&self) -> Vec<CallHistory> {
-        let folder = self.data.join("recordings");
         let mut rows = self.history.lock().unwrap().rows.clone();
         for row in &mut rows {
-            if !row.recording.is_empty() && !folder.join(&row.recording).is_file() {
+            if !row.recording.is_empty() && self.recording_file(&row.recording).is_none() {
                 row.recording.clear();
             }
         }
@@ -1080,14 +1099,7 @@ impl AppState {
     /// Plays a recording named in the history with whatever Windows plays
     /// sound files with. Only a file in the recordings folder can be named.
     pub fn open_recording(&self, name: &str) -> Result<(), String> {
-        let plain = !name.is_empty()
-            && name.ends_with(".wav")
-            && !name.contains(['/', '\\', ':'])
-            && !name.starts_with('.');
-        let path = self.data.join("recordings").join(name);
-        if !plain || !path.is_file() {
-            return Err(message("RECORDING_NOT_FOUND"));
-        }
+        let path = self.recording_file(name).ok_or_else(|| message("RECORDING_NOT_FOUND"))?;
         crate::native::open_url(&path.to_string_lossy())
             .map_err(|e| message_with("RECORDING_OPEN_FAILED", [crate::message::split(&e).1.join(" ")]))
     }
@@ -1122,6 +1134,7 @@ impl AppState {
             }
         }
         let mut view = self.view.lock().unwrap().clone();
+        view.converting = self.converting.load(Ordering::Relaxed) as u32;
         view.log_sequence = self.logs.lock().unwrap().sequence;
         view.history_sequence = self.history.lock().unwrap().sequence;
         view
@@ -1709,6 +1722,7 @@ impl AppState {
     }
     pub fn initialize(&self) {
         self.apply_browser_integration();
+        self.sweep_recordings();
         if let Err(e) = self.refresh_devices() {
             self.show_error(e);
         }
@@ -1883,13 +1897,57 @@ impl AppState {
         Ok(())
     }
     fn stop_recording(&self) -> Result<(), String> {
-        if self.snapshot().recording {
+        let snapshot = self.snapshot();
+        if snapshot.recording {
             self.request("lab_stop", "")?;
         }
         let mut v = self.view.lock().unwrap();
         v.recording = false;
         v.recording_call.clear();
+        drop(v);
+        if snapshot.recording {
+            self.convert_recording(PathBuf::from(snapshot.recording_path));
+        }
         Ok(())
+    }
+    /// Turns a recording that has just closed into an MP3, on a thread of
+    /// its own with a lower priority, so that the next call is not disturbed.
+    /// The WAV goes once the MP3 is there; if it is being played just then,
+    /// it stays until the next start sweeps it away. A failure leaves the WAV.
+    fn convert_recording(&self, wav: PathBuf) {
+        let me = self.clone();
+        me.converting.fetch_add(1, Ordering::Relaxed);
+        thread::spawn(move || {
+            use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+            // SAFETY: the current thread's own priority is all that is touched.
+            unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
+            let mp3 = wav.with_extension("mp3");
+            let name = wav.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            match crate::mp3::transcode(&wav, &mp3) {
+                Ok(()) => match std::fs::remove_file(&wav) {
+                    Ok(()) => me.log(LOG_APP, message_with("RECORDING_CONVERTED", [&name])),
+                    Err(_) => me.log(LOG_APP, message_with("RECORDING_WAV_KEPT", [&name])),
+                },
+                Err(e) => {
+                    let _ = std::fs::remove_file(&mp3);
+                    me.log(LOG_APP, e);
+                }
+            }
+            me.converting.fetch_sub(1, Ordering::Relaxed);
+        });
+    }
+    /// WAVs whose MP3 exists: the conversion went through but the WAV could
+    /// not go at the time, most likely because it was being played.
+    fn sweep_recordings(&self) {
+        let Ok(entries) = std::fs::read_dir(self.data.join("recordings")) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")) && path.with_extension("mp3").is_file() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
     fn sync_auto_record(&self) -> Result<(), String> {
         let snapshot = self.snapshot();

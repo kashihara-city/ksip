@@ -267,7 +267,7 @@ function render(){
   $('transfer-status').className='hint'+(outcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
   $('transfer-status').textContent=t(outcome);
   $('record').disabled=!ready||busy;$('record').textContent=t(state.settings.auto_record?'RECORD_ON':'RECORD_OFF');$('record').classList.toggle('active',!!state.settings.auto_record);$('record').setAttribute('aria-pressed',String(!!state.settings.auto_record));
-  $('record-status').classList.toggle('recording',!!state.recording);$('record-status').textContent=t(state.recording?'RECORD_RECORDING':state.settings.auto_record?'RECORD_AUTO_ON':'RECORD_AUTO_OFF');
+  $('record-status').classList.toggle('recording',!!state.recording);$('record-status').textContent=t(state.recording?'RECORD_RECORDING':state.converting?'RECORDING_CONVERTING':state.settings.auto_record?'RECORD_AUTO_ON':'RECORD_AUTO_OFF');
   $('aec-label').textContent=state.settings.aec?'ON':'OFF';
   // A codec and an encryption belong to a call, so outside one this stays empty.
   $('codec-label').textContent=callSummary(current());
