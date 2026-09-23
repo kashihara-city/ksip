@@ -38,6 +38,8 @@ Tauri/Rustで画面と状態管理、baresipでSIP/RTP処理、Google WebRTCでA
 
 ## メイン画面の機能
 
+![KSIP のメイン画面（通話中、カスタム拡張ボタンあり）](docs/ksip-main.png)
+
 ### 転送
 
 「転送」の際は、通話を別の通話に切り替え（切り替え前の通話は自動で保留になります）、転送先に電話をかけた後、転送ボタンを押します。  
@@ -281,6 +283,7 @@ rust-toolchain.toml  ビルドに使うRustの版。ランナーと手元で同�
 deps/                ネイティブ原本のロックと、取得したまま手を加えていない
                      ハッシュ固定済みアーカイブ。どちらもGit管理する
 licenses/            Rust依存の補完ライセンス
+docs/                READMEに載せる画面の画像
 src-web/             HTML・CSS・vanilla JavaScriptの画面
 src-web/locales/     言語ファイル
 src-tauri/           Rust/Tauriのソースと固定設定
