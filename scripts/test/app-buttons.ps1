@@ -80,6 +80,23 @@ try {
     'PASS: 通話が終わって設定した秒数でタスクトレイへ戻った'
     [KsipWindow]::ShowWindow($windowHandle,4) | Out-Null
     Wait-Visible $windowHandle $true 10
+    # Do not disturb, last: the caller registers as the peer's account and
+    # unseats it, so nothing may need the peer after this. While it is on, a
+    # call never reaches the phone (the lab's voicemail takes it), and the
+    # header says so.
+    Click-Id 'custom-8';Wait-Class 'custom-8' 'dnd';Wait-Text 'registration' '着信拒否中' | Out-Null
+    $base="$root/temp/build/ksip-ui"
+    Remove-Item "$base/caller-done","$base/caller-ready","$base/caller-result.txt" -ErrorAction SilentlyContinue
+    $caller=Start-KsipFixturePeer 'caller' $base
+    try {
+        $end=[DateTime]::UtcNow.AddSeconds(8)
+        while([DateTime]::UtcNow -lt $end){if(Test-Class 'line-1' 'call-incoming'){throw 'A call rang through while do not disturb was on'};Start-Sleep -Milliseconds 200}
+    } finally {
+        Set-Content "$base/caller-done" 'done'
+        if($caller -and !$caller.HasExited){$caller.WaitForExit(15000) | Out-Null}
+    }
+    Click-Id 'custom-8';Wait-NoClass 'custom-8' 'dnd'
+    'PASS: 着信拒否ボタンでONの間は着信が鳴らず、OFFで戻る'
     @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true;transferToUri=$true;linkButton=$true;trayAfterCall=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-buttons-v$version.json"
     'PASS: real KSIP custom buttons: speed dial, park with BLF, pick up, blind transfer'

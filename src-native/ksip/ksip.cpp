@@ -37,6 +37,9 @@ bool transfer_reversed=false;
 // Set when this phone was taken off the server on purpose. The 200 OK for a
 // de-registration arrives as a register event, which must not undo it.
 bool unregistered=false;
+// Do not disturb: an incoming call is answered with 486 Busy Here, so the PBX
+// treats the phone as busy rather than absent. Never kept across a start.
+bool dnd=false;
 void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); }
 // A button may name a full SIP URI instead of a number; it is passed on as it
 // is, and only has to be one line of visible ASCII.
@@ -231,6 +234,11 @@ void event(bevent_ev ev, bevent *e, void*) {
     auto c=bevent_get_call(e);
     if (!c || !call_id(c)) return;
     std::string id=call_id(c);
+    if (ev==BEVENT_CALL_INCOMING && dnd) {
+        info("ksip: dnd, incoming call refused as busy\n");
+        ua_hangup(bevent_get_ua(e),c,486,"Busy Here");
+        return;
+    }
     if (ev==BEVENT_CALL_TRANSFER_FAILED && id==original) {
         auto other=find(consultation);
         if (!transfer_reversed && other && call_state(c)==CALL_STATE_ESTABLISHED
@@ -281,6 +289,7 @@ int state(re_printf *pf, void*) {
     int err=odict_alloc(&od,16); err|=odict_alloc(&calls,16); err|=odict_alloc(&xfer,8);
     if (err) { mem_deref(od);mem_deref(calls);mem_deref(xfer);return err; }
     odict_entry_add(od,"registration",ODICT_STRING,registration.c_str());
+    odict_entry_add(od,"dnd",ODICT_BOOL,dnd?1:0);
     odict_entry_add(od,"transport",ODICT_STRING,registered_transport.c_str());
     odict_entry_add(od,"media_encryption",ODICT_STRING,media_encryption.c_str());
     unsigned index=0;
@@ -423,6 +432,8 @@ int action(re_printf *pf, void *arg) {
         std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
         return call_transfer(c,uri.c_str());
     }
+    // Do not disturb is about the account as well: on or off, no call named.
+    if (op=="dnd") { dnd=value=="on"; return 0; }
     // Unregistering is about the account, not about a call.
     if (op=="unregister") {
         if (!account_ua) return EINVAL;

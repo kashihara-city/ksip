@@ -265,7 +265,7 @@ function render(){
   $('account-label').textContent=state.account.extension;
   $('server-label').textContent=state.account.server?state.account.server+':'+state.account.port:'';
   $('connection-server').hidden=paused||!state.account.extension;
-  $('registration').textContent=(state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting;
+  $('registration').textContent=((state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting)+(state.dnd&&registered?' · '+t('DND_ACTIVE'):'');
   $('registration').className='reg-'+String(state.registration||'').toLowerCase();$('status-light').className=registered?'online':paused?'paused':state.registration==='REGISTER_FAIL'?'fault':'';
   $('transport-label').textContent=registered?state.transport||'':'';
   $('settings-button').disabled=!ready||busy||state.calls.length>0;
@@ -386,6 +386,7 @@ function renderButtonBox(box,configured,c){
     if(b.kind==='transfer'){status=fill('BUTTON_TRANSFER_TO',b.number);enabled=active;}
     else if(b.kind==='dial'){status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=freeLine;}
     else if(b.kind==='open'){status=b.number;enabled=true;needsPhone=false;}
+    else if(b.kind==='dnd'){status=t(state.dnd?'DND_ON_STATUS':'DND_OFF_STATUS');enabled=true;}
     else{status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=s!=='UNKNOWN'&&(active?s==='IDLE':s==='INUSE'&&freeLine);}
     button.firstChild.textContent=b.title||b.number;
     // A button's children are presentational to assistive technology, so its
@@ -393,6 +394,7 @@ function renderButtonBox(box,configured,c){
     button.setAttribute('aria-label',(b.title||b.number)+' '+status);
     $('custom-'+b.index+'-status').textContent=status;
     button.classList.toggle('occupied',watched&&s==='INUSE');
+    button.classList.toggle('dnd',b.kind==='dnd'&&!!state.dnd);
     button.disabled=busy||!enabled||(needsPhone&&(!registered||!!state.transfer.pending));
   }
 }
@@ -404,6 +406,7 @@ async function useButton(n){
     catch(e){error=String(e);logUi('open link',e);render();}
     return;
   }
+  if(b.kind==='dnd'){await act('dnd','',state.dnd?'off':'on');return;}
   const c=current(),active=c?.state==='ESTABLISHED'&&!c.held,s=b.kind==='transfer'?'':watchState(b.number);
   if(b.kind==='transfer'){if(active)await act('blind_transfer',c.id,b.number);return;}
   if(b.kind==='park'&&active&&s==='IDLE'){await act('blind_transfer',c.id,b.transfer||b.number);return;}
@@ -432,7 +435,7 @@ $('transport').addEventListener('change',()=>{
 // what a button does can be read off the settings.
 function syncButtonRow(n){
   const kind=$('button_'+n+'_kind').value,watches=kind==='dial'||kind==='park';
-  $('button_'+n+'_title').disabled=!kind;$('button_'+n+'_number').disabled=!kind;
+  $('button_'+n+'_title').disabled=!kind;$('button_'+n+'_number').disabled=!kind||kind==='dnd';
   $('button_'+n+'_transfer').disabled=kind!=='park';$('button_'+n+'_pickup').disabled=!watches;
   const set=side=>BUTTON_INDEXES.filter(k=>(k<=BUTTON_MAIN)===side&&$('button_'+k+'_kind').value).length;
   $('button-count').textContent=set(true)?fill('BUTTON_COUNT',set(true)):'';
@@ -449,7 +452,7 @@ for(const button of document.querySelectorAll('[data-sound]'))button.addEventLis
 });
 $('settings-form').addEventListener('submit',async e=>{
   e.preventDefault();$('settings-error').hidden=true;
-  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
+  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_callwaiting:$('sound_callwaiting').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
   const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
   try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
   catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}

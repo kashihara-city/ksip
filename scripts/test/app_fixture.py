@@ -27,7 +27,8 @@ if sys.argv[1]=='setup':
                  ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>'),
                  ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
                  # A button in the panel beside the phone, which makes the window twice as wide.
-                 ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001')]
+                 ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001'),
+                 ('button_8_title','DND'),('button_8_kind','dnd')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.

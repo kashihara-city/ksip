@@ -63,7 +63,7 @@ pub struct Settings {
 #[serde(default)]
 pub struct CustomButton {
     pub title: String,
-    /// Empty (unused), `transfer`, `dial`, `park` or `open`.
+    /// Empty (unused), `transfer`, `dial`, `park`, `open` or `dnd`.
     pub kind: String,
     pub number: String,
     /// For `park`: where the call in progress is sent while the watched
@@ -78,7 +78,7 @@ impl CustomButton {
     /// which appears while any of them is set.
     pub const MAIN: usize = 6;
     pub const COUNT: usize = 30;
-    pub const KINDS: [&'static str; 4] = ["transfer", "dial", "park", "open"];
+    pub const KINDS: [&'static str; 5] = ["transfer", "dial", "park", "open", "dnd"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
     }
@@ -302,6 +302,9 @@ pub struct Snapshot {
     pub calls: Vec<CallInfo>,
     pub transfer: Transfer,
     pub registration: String,
+    /// Do not disturb: incoming calls are refused as busy while this is on.
+    #[serde(default)]
+    pub dnd: bool,
     pub recording_call: String,
     pub history_sequence: u64,
     pub parking: Vec<ParkingInfo>,
@@ -403,6 +406,8 @@ pub struct Transfer {
 #[derive(Deserialize)]
 struct PhoneState {
     registration: String,
+    #[serde(default)]
+    dnd: bool,
     #[serde(default)]
     transport: String,
     #[serde(default)]
@@ -895,6 +900,7 @@ impl AppState {
                 transfer: Transfer::default(),
                 registration: "UNCONFIGURED".into(),
                 recording_call: String::new(),
+                dnd: false,
                 history_sequence: 0,
                 parking: vec![],
                 audio_processing_stats: None,
@@ -1319,6 +1325,9 @@ impl AppState {
             }
             let number_ok = if button.kind == "open" {
                 CustomButton::link_ok(&button.number)
+            } else if button.kind == "dnd" {
+                // A switch on the phone itself: nothing to name.
+                CustomButton::address(&button.number).is_empty()
             } else {
                 CustomButton::target_ok(&button.number)
                     && !(button.configured() && CustomButton::address(&button.number).is_empty())
@@ -1723,6 +1732,7 @@ impl AppState {
         v.parking = phone.parking;
         v.audio_processing_stats = phone.audio_processing_stats;
         v.registration = phone.registration;
+        v.dnd = phone.dnd;
         drop(v);
         if !ended.is_empty() {
             self.history.lock().unwrap().add(&self.data, ended)?;
@@ -2016,6 +2026,7 @@ impl AppState {
                 | "dtmf"
                 | "blind_transfer"
                 | "auto_record"
+                | "dnd"
         ) {
             return Err(message("ACTION_UNSUPPORTED"));
         }
@@ -2043,6 +2054,9 @@ impl AppState {
             } else {
                 message("AUTO_RECORD_OFF")
             });
+        }
+        if name == "dnd" && !matches!(value, "on" | "off") {
+            return Err(message("ACTION_ARGUMENT_INVALID"));
         }
         if name == "dial" && self.snapshot().calls.iter().any(|c| c.line == line) {
             return Err(message("CALL_LINE_BUSY"));
@@ -2083,6 +2097,9 @@ impl AppState {
             "ksip_action",
             &serde_json::to_string(&json!({"op":name,"id":id,"value":target})).map_err(err)?,
         )?;
+        if name == "dnd" {
+            self.log(LOG_APP, if value == "on" { message("DND_ON") } else { message("DND_OFF") });
+        }
         if name == "dial" {
             self.lines
                 .lock()
@@ -2409,6 +2426,9 @@ mod tests {
         assert_eq!(button("transfer", "701", "").pickup_target(), None);
         assert!(AppState::validate(&with(vec![pickup])).is_ok());
         assert!(AppState::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
+        // A do-not-disturb switch names nothing.
+        assert!(AppState::validate(&with(vec![button("dnd", "", "")])).is_ok());
+        assert!(AppState::validate(&with(vec![button("dnd", "701", "")])).is_err());
         let ok = with(vec![button("park", "701", "*701"), button("dial", "1002", ""), button("transfer", "9001", "")]);
         assert!(AppState::validate(&ok).is_ok());
         assert_eq!(ok.watched_numbers(), vec!["701", "1002"]);
