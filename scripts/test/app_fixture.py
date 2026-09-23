@@ -20,7 +20,8 @@ if sys.argv[1]=='setup':
     # park slot the lab parks on *701 and picks up on 701, and a transfer to 9001.
     if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':
         policy+=[('button_1_title','Peer'),('button_1_kind','dial'),('button_1_number',configured[1]['extension']),
-                 ('button_2_title','Park'),('button_2_kind','park'),('button_2_number','701'),('button_2_transfer','*701'),
+                 # The pickup target is named as well, so that the field is exercised; it is the slot itself here.
+                 ('button_2_title','Park'),('button_2_kind','park'),('button_2_number','701'),('button_2_transfer','*701'),('button_2_pickup','701'),
                  ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number','9001'),
                  # The same player named as a full URI in angle brackets, as some PBXs want it.
                  ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>'),

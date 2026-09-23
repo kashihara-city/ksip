@@ -56,9 +56,9 @@ pub struct Settings {
     pub sound_error: String,
 }
 /// One of the six buttons a site defines: what it says, what it does and to
-/// which number. The three kinds differ in whether the number is watched
-/// (BLF), whether a call in progress is transferred to it, and whether it is
-/// called from an idle line.
+/// which numbers. The number is the one the button is about: watched (BLF),
+/// dialled, transferred to, or, for a link, opened. The two others refine
+/// what happens around it and fall back to it when left empty.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomButton {
@@ -66,9 +66,12 @@ pub struct CustomButton {
     /// Empty (unused), `transfer`, `dial`, `park` or `open`.
     pub kind: String,
     pub number: String,
-    /// For `park` only: where the call is sent when that differs from the
-    /// number that is watched and picked up, as with Asterisk's `*701`.
+    /// For `park`: where the call in progress is sent while the watched
+    /// number is free, when that differs, as with Asterisk's `*701`.
     pub transfer: String,
+    /// For `dial` and `park`: what is called while the watched number is in
+    /// use, when that differs: a pickup code such as Asterisk's `*8701`.
+    pub pickup: String,
 }
 impl CustomButton {
     pub const COUNT: usize = 6;
@@ -127,6 +130,15 @@ impl CustomButton {
             _ => None,
         }
     }
+    /// What is called while the watched number is in use, for the kinds
+    /// that watch one.
+    pub fn pickup_target(&self) -> Option<&str> {
+        if !self.watches() {
+            return None;
+        }
+        let pickup = Self::address(&self.pickup);
+        Some(if pickup.is_empty() { Self::address(&self.number) } else { pickup })
+    }
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -167,9 +179,9 @@ impl Default for Settings {
 impl Settings {
     /// Values a group policy can set one at a time. They live in their own
     /// registry values rather than inside the settings document. The buttons
-    /// are among them, as `button_1_title`, `button_1_kind`, `button_1_number`
-    /// and `button_1_transfer` up to `button_6_…`.
-    const BUTTON_FIELDS: [&'static str; 4] = ["title", "kind", "number", "transfer"];
+    /// are among them, as `button_1_title`, `button_1_kind`, `button_1_number`,
+    /// `button_1_transfer` and `button_1_pickup` up to `button_6_…`.
+    const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
     /// The document keys that are stored as policy values instead.
     pub const POLICY_DOCUMENT_KEYS: [&'static str; 5] =
         ["transport", "ca_file", "media_encryption", "browser_integration", "buttons"];
@@ -189,6 +201,7 @@ impl Settings {
                 &button.kind,
                 &button.number,
                 &button.transfer,
+                &button.pickup,
             ]) {
                 values.push((format!("button_{}_{field}", index + 1), value.clone()));
             }
@@ -210,6 +223,7 @@ impl Settings {
                 kind: read(&format!("button_{index}_kind")).trim().to_ascii_lowercase(),
                 number: read(&format!("button_{index}_number")),
                 transfer: read(&format!("button_{index}_transfer")),
+                pickup: read(&format!("button_{index}_pickup")),
             })
             .collect();
     }
@@ -1305,7 +1319,10 @@ impl AppState {
                 CustomButton::target_ok(&button.number)
                     && !(button.configured() && CustomButton::address(&button.number).is_empty())
             };
-            if !number_ok || !CustomButton::target_ok(&button.transfer) {
+            if !number_ok
+                || !CustomButton::target_ok(&button.transfer)
+                || !CustomButton::target_ok(&button.pickup)
+            {
                 return Err(message("SETTINGS_BUTTON_NUMBER_INVALID"));
             }
         }
@@ -2378,8 +2395,16 @@ mod tests {
             kind: kind.into(),
             number: number.into(),
             transfer: transfer.into(),
+            pickup: String::new(),
         };
         let with = |buttons: Vec<CustomButton>| Settings { buttons, ..Settings::default() };
+        // The pickup falls back to the number, and is checked like one.
+        let pickup = CustomButton { pickup: "*8701".into(), ..button("dial", "701", "") };
+        assert_eq!(pickup.pickup_target(), Some("*8701"));
+        assert_eq!(button("park", "701", "*701").pickup_target(), Some("701"));
+        assert_eq!(button("transfer", "701", "").pickup_target(), None);
+        assert!(AppState::validate(&with(vec![pickup])).is_ok());
+        assert!(AppState::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
         let ok = with(vec![button("park", "701", "*701"), button("dial", "1002", ""), button("transfer", "9001", "")]);
         assert!(AppState::validate(&ok).is_ok());
         assert_eq!(ok.watched_numbers(), vec!["701", "1002"]);
