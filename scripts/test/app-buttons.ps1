@@ -111,6 +111,23 @@ try {
     Wait-Text 'custom-9' ('新着 '+($before+1)+' 件') 30 | Out-Null
     Wait-Class 'custom-9' 'mwi-new'
     'PASS: 留守番電話ボタンに新着の件数が出て赤くなる'
+    # Answered elsewhere, last as well: the lab's 7000 rings this phone and the
+    # third account together, the third takes it, and the PBX cancels here
+    # with a Reason header. The history says so in place of a missed call.
+    # The history is read as soon as the ring ends: the window goes to the
+    # tray ten seconds after a call in this profile.
+    $group=Start-KsipFixturePeer 'group' $base
+    try {
+        Wait-Class 'line-1' 'call-incoming' 30
+        Wait-Class 'line-1' 'call-idle' 30
+        Wait-Text 'call-history' '他で応答' | Out-Null
+    } finally {
+        if($group -and !$group.HasExited){$group.WaitForExit(30000) | Out-Null}
+        if(!$group.HasExited){Stop-Process -Id $group.Id -Force}
+    }
+    if($group.ExitCode -ne 0){throw 'The group call failed'}
+    Wait-KsipLog 'event' 'CALL_CLOSED .*cause=200' | Out-Null
+    'PASS: 他の電話が取った着信は履歴に「他で応答」と出る'
     @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true;transferToUri=$true;linkButton=$true;trayAfterCall=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-buttons-v$version.json"
     'PASS: real KSIP custom buttons: speed dial, park with BLF, pick up, blind transfer'

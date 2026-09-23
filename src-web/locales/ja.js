@@ -157,6 +157,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       HISTORY_EMPTY:'通話履歴はまだありません',
       HISTORY_INCOMING:'着信',
       HISTORY_MISSED:'不在着信',
+      HISTORY_ELSEWHERE:'他で応答',
       HISTORY_NOT_FOUND:'番号なし',
       HISTORY_NO_ANSWER:'応答なし',
       HISTORY_NO_MATCH:'フィルターに一致する通話はありません',

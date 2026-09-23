@@ -78,6 +78,26 @@ elif sys.argv[1]=='voicemail':
         talker.action('hangup',call)
         time.sleep(1)
     finally:talker.close()
+elif sys.argv[1]=='group':
+    # Rings the lab's group 7000, which is the phone and the third account
+    # together, from the peer's account. The third account takes the call
+    # after the phone has rung a moment, so the PBX cancels the phone's ring
+    # with a Reason header saying the call was completed elsewhere.
+    configured=accounts()
+    taker=Phone('ui-taker',configured[2],18570,19200)
+    caller=Phone('ui-group-caller',configured[1],18572,19300)
+    try:
+        call=caller.action('dial',value='7000')
+        ringing=taker.wait(lambda s:any(c['state']=='INCOMING' for c in s['calls']),20)
+        time.sleep(3)
+        for c in ringing['calls']:
+            if c['state']=='INCOMING':taker.action('answer',c['id'])
+        caller.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),20)
+        time.sleep(2)
+        caller.action('hangup',call)
+        time.sleep(1)
+    finally:
+        caller.close();taker.close()
 elif sys.argv[1]=='cleanup':
     delete_account(TARGET)
     try:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,KEY)

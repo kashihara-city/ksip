@@ -157,6 +157,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       HISTORY_EMPTY:'No calls yet',
       HISTORY_INCOMING:'Incoming',
       HISTORY_MISSED:'Missed',
+      HISTORY_ELSEWHERE:'Answered elsewhere',
       HISTORY_NOT_FOUND:'No such number',
       HISTORY_NO_ANSWER:'No answer',
       HISTORY_NO_MATCH:'No call matches the filter',

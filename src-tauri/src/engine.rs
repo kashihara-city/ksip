@@ -352,7 +352,13 @@ pub fn call_outcome(state: &str, incoming: bool, reason: &str, dnd: bool) -> Str
         return String::new();
     }
     if incoming {
-        return if dnd { message("HISTORY_REFUSED") } else { message("HISTORY_MISSED") };
+        return if dnd {
+            message("HISTORY_REFUSED")
+        } else if answered_elsewhere(reason) {
+            message("HISTORY_ELSEWHERE")
+        } else {
+            message("HISTORY_MISSED")
+        };
     }
     let code: u16 = reason.split_whitespace().next().and_then(|c| c.parse().ok()).unwrap_or(0);
     match code {
@@ -364,6 +370,21 @@ pub fn call_outcome(state: &str, incoming: bool, reason: &str, dnd: bool) -> Str
         0 | 487 => message("HISTORY_CANCELLED"),
         _ => message("HISTORY_FAILED"),
     }
+}
+/// Whether the closing words say another phone took the call. A PBX that
+/// cancels a group ring because someone else answered puts a `Reason`
+/// header (RFC 3326) on the CANCEL, `SIP;cause=200` or `Q.850;cause=26`,
+/// and baresip appends that header after a comma. Only the numbers count;
+/// the text is free-form.
+fn answered_elsewhere(reason: &str) -> bool {
+    reason.split(',').any(|part| {
+        let mut fields = part.split(';').map(str::trim);
+        let protocol = fields.next().unwrap_or("").to_ascii_uppercase();
+        let cause = fields
+            .map(str::to_ascii_lowercase)
+            .find_map(|f| f.strip_prefix("cause=").and_then(|c| c.trim().parse::<u16>().ok()));
+        matches!((protocol.as_str(), cause), ("SIP", Some(200)) | ("Q.850", Some(26)))
+    })
 }
 /// What a recording is called: when it started, and whom the call was with,
 /// so that the folder reads like the history. `2026-09-23_14-30-12_1002.wav`.
@@ -2883,6 +2904,14 @@ mod tests {
         assert_eq!(call_outcome("OUTGOING", false, "500 Server Internal Error", false), message("HISTORY_FAILED"));
         assert_eq!(call_outcome("INCOMING", true, "", false), message("HISTORY_MISSED"));
         assert_eq!(call_outcome("INCOMING", true, "", true), message("HISTORY_REFUSED"));
+        // A group ring that someone else took: the PBX says so on the CANCEL.
+        let elsewhere = "Connection reset by peer,SIP;cause=200;text=\"Call completed elsewhere\"";
+        assert_eq!(call_outcome("INCOMING", true, elsewhere, false), message("HISTORY_ELSEWHERE"));
+        assert_eq!(call_outcome("INCOMING", true, "Connection reset by peer,Q.850;cause=26", false), message("HISTORY_ELSEWHERE"));
+        assert_eq!(call_outcome("INCOMING", true, "Connection reset by peer,Q.850;cause=16;text=\"Normal call clearing\"", false), message("HISTORY_MISSED"));
+        assert_eq!(call_outcome("INCOMING", true, "Connection reset by peer,SIP;cause=487;text=\"Elsewhere, but not really\"", false), message("HISTORY_MISSED"));
+        assert_eq!(call_outcome("INCOMING", true, elsewhere, true), message("HISTORY_REFUSED"));
+        assert_eq!(call_outcome("INCOMING", true, "Connection reset by peer", false), message("HISTORY_MISSED"));
     }
 
     #[test]

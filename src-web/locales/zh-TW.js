@@ -157,6 +157,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       HISTORY_EMPTY:'尚無通話紀錄',
       HISTORY_INCOMING:'來電',
       HISTORY_MISSED:'未接來電',
+      HISTORY_ELSEWHERE:'他人已接聽',
       HISTORY_NOT_FOUND:'號碼不存在',
       HISTORY_NO_ANSWER:'無人接聽',
       HISTORY_NO_MATCH:'沒有符合篩選的通話',
