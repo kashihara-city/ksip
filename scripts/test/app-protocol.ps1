@@ -9,8 +9,9 @@ New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
 $exe="$Folder/ksip.exe"
 $key='HKCU:\Software\KashiharaCity\ksip\Test\test-ui-ksip'
 function Send-Link([string]$command) {
-    # A link always starts a new process, which hands the command over and exits.
-    $sender=Start-Process $exe -ArgumentList "/ksip=ksip:$command" -PassThru -WindowStyle Hidden
+    # A link always starts a new process, which hands the link over whole,
+    # scheme and all, exactly as Windows does for the browser, and exits.
+    $sender=Start-Process $exe -ArgumentList "ksip:$command" -PassThru -WindowStyle Hidden
     if(!$sender.WaitForExit(30000)){throw "The link process did not exit: $command"}
     if($sender.ExitCode -ne 0){throw "The link failed ($($sender.ExitCode)): $command"}
 }
@@ -66,14 +67,33 @@ try {
     Send-Link 'HANGUP'
     Wait-Class 'line-1' 'call-idle'
 
-    # Without the confirmation the call starts straight away, separators and all.
+    # Without the confirmation the call starts straight away. The browser
+    # escapes a space as %20, and the separators people write are dropped.
     Set-Setting 'browser_dial_confirm' $false
     Restart-Connection
-    Send-Link '90-01'
+    Send-Link '(90)%2001'
     Wait-Class 'line-1' 'call-established'
-    'PASS: 確認なしの設定では区切り文字を除いてそのまま発信した'
     Send-Link 'HANGUP'
     Wait-Class 'line-1' 'call-idle'
+    # The dial box is read once the call is over, since it is locked during one.
+    $dialled=(Value-Id 'target').Current.Value
+    if($dialled -ne '9001'){throw "The dial box shows $dialled"}
+    'PASS: 確認なしの設定では区切り文字と%20を除いてそのまま発信し、番号欄に残した'
+
+    # A number with letters is refused before anything is dialled, and the
+    # link is recorded as it came. A hang-up with no call is only noted.
+    Send-Link 'answer'
+    Wait-Text 'error' '発信先は' | Out-Null
+    Wait-KsipLog 'app' 'protocol ksip:answer' | Out-Null
+    # The error is not one the next poll clears: it is still there a moment later.
+    Start-Sleep -Seconds 2
+    Wait-Text 'error' '発信先は' 1 | Out-Null
+    $refused=(Value-Id 'target').Current.Value
+    if($refused -ne 'answer'){throw "The dial box shows $refused"}
+    'PASS: 英字の番号は発信せずにエラーにし、表示が残り、番号欄に何が来たかを出す'
+    Send-Link 'HANGUP'
+    Wait-KsipLog 'ui' 'HANGUP without a call' | Out-Null
+    'PASS: 通話が無いときのHANGUPはログに残すだけ'
 
     # An incoming call can be answered by a link.
     $extension=(Get-Content "$root/temp/build/ksip-ui/peer-extension.txt" -Raw).Trim()

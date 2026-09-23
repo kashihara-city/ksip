@@ -374,12 +374,14 @@ int action(re_printf *pf, void *arg) {
     }
     if (op=="dial" || op=="consult") {
         if (!account_ua || !ua_isregistered(account_ua)) return EAGAIN;
-        if (!original.empty() || !(sip_uri(value) ? address_ok(value) : token(value.c_str(),"*#+_.-"))) return EINVAL;
+        if (!original.empty() || !(sip_uri(value) ? address_ok(value) : token(value.c_str(),"*#+"))) return EINVAL;
         if (op=="consult" && (!c || call_state(c)!=CALL_STATE_ESTABLISHED || !call_supported(c,REPLACES))) return ENOTSUP;
-        // A number is completed with the configured registrar. A full URI comes
-        // only from a button, which the app has checked against its settings.
+        // A number is completed with the configured registrar; a URI is sent as
+        // it was written. Either way the library has to be able to read it.
         std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
         std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
+        struct uri decoded; struct pl span; pl_set_str(&span,uri.c_str());
+        if (uri_decode(&decoded,&span)) return EINVAL;
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next) {
             auto other=static_cast<call*>(l->data);
             if (call_state(other)==CALL_STATE_ESTABLISHED && !call_is_onhold(other)) { c=other;err=call_hold(other,true);if(err)return err; }

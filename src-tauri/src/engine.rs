@@ -97,18 +97,11 @@ impl CustomButton {
         let lower = Self::address(text).to_ascii_lowercase();
         lower.starts_with("sip:") || lower.starts_with("sips:")
     }
-    /// A number is what the registrar dials; a URI is passed on as it is, and
-    /// has to be one line of visible ASCII, which is all a SIP URI ever is.
+    /// A button holds its number the way the registrar dials it, so that what
+    /// the engine watches is what the button says; an empty one is unused.
     pub fn target_ok(text: &str) -> bool {
         let address = Self::address(text);
-        if Self::is_uri(text) {
-            address.len() <= 200 && address.bytes().all(|b| (0x21..=0x7e).contains(&b))
-        } else {
-            address.len() <= 30
-                && address
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"*#+".contains(&b))
-        }
+        address.is_empty() || dial_target(address).is_ok_and(|target| target == address)
     }
     /// A web address for the `open` kind: the browser gets it, nothing else does.
     pub fn link_ok(text: &str) -> bool {
@@ -366,6 +359,51 @@ struct PhoneState {
     #[serde(default)]
     audio_processing_stats: Option<AudioProcessingStats>,
 }
+/// What the registrar is asked to call. A SIP URI is taken as written, one
+/// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
+/// to what the registrar dials: the visual separators of RFC 3966 (`-`, `.`,
+/// `(`, `)`) and spaces go, and what is left has to be digits, `*` and `#`,
+/// with `+` only in front. Letters are not a number; a name is written as a URI.
+pub fn dial_target(text: &str) -> Result<String, String> {
+    let address = CustomButton::address(text);
+    if CustomButton::is_uri(address) {
+        return (address.len() <= 200 && address.bytes().all(|b| (0x21..=0x7e).contains(&b)))
+            .then(|| address.to_string())
+            .ok_or_else(|| message("DIAL_TARGET_INVALID"));
+    }
+    let number: String = address
+        .chars()
+        .filter(|c| !matches!(c, '-' | '.' | '(' | ')' | ' '))
+        .collect();
+    let digits = number.strip_prefix('+').unwrap_or(&number);
+    if digits.is_empty()
+        || number.len() > 30
+        || !digits.bytes().all(|b| b.is_ascii_digit() || b == b'*' || b == b'#')
+    {
+        return Err(message("DIAL_TARGET_INVALID"));
+    }
+    Ok(number)
+}
+
+/// The engine colours its warnings for a terminal; the log wants the words.
+fn without_colour(line: &str) -> String {
+    let mut plain = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
 fn automatic_answer_targets(
     enabled: bool,
     calls: &[CallInfo],
@@ -663,7 +701,7 @@ impl AppState {
     }
     /// Everything the banner shows also belongs in the log, so that a report
     /// made afterwards still explains what the user saw.
-    fn show_error(&self, error: String) {
+    pub fn show_error(&self, error: String) {
         self.log(LOG_APP, error.clone());
         self.view.lock().unwrap().error = error;
     }
@@ -1247,7 +1285,10 @@ impl AppState {
             threads.push(thread::spawn(move || {
                 for line in BufReader::new(pipe).split(b'\n') {
                     match line {
-                        Ok(bytes) => me.log(LOG_ENGINE, String::from_utf8_lossy(&bytes).trim().into()),
+                        Ok(bytes) => me.log(
+                            LOG_ENGINE,
+                            without_colour(&String::from_utf8_lossy(&bytes)).trim().into(),
+                        ),
                         Err(_) => break,
                     }
                 }
@@ -1695,20 +1736,8 @@ impl AppState {
             }
         }
         if name == "dial" {
-            let plain = !value.is_empty()
-                && value
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"*#+_.-".contains(&b));
-            if !plain {
-                // A URI is dialled only when a button was set up with it. What
-                // the dial box or a link carries stays a number for the registrar.
-                let v = self.snapshot();
-                let wanted = CustomButton::address(value);
-                match v.settings.buttons.iter().find_map(|b| b.dial_target().filter(|t| *t == wanted)) {
-                    Some(t) => target = t.to_string(),
-                    None => return Err(message("DIAL_TARGET_INVALID")),
-                }
-            }
+            // The dial box, a button and a link are held to the same rule.
+            target = dial_target(value)?;
         }
         let result = self.request(
             "ksip_action",
@@ -2225,6 +2254,36 @@ mod tests {
         );
         assert!(automatic_recording_target(false, &calls).is_none());
     }
+    #[test]
+    fn a_number_is_reduced_to_what_the_registrar_dials() {
+        assert_eq!(dial_target("9001"), Ok("9001".into()));
+        assert_eq!(dial_target(" (06) 1234.5678 "), Ok("0612345678".into()));
+        assert_eq!(dial_target("+81-6-1234-5678"), Ok("+81612345678".into()));
+        assert_eq!(dial_target("*21#"), Ok("*21#".into()));
+        assert_eq!(dial_target("<sip:1001@pbx.example>"), Ok("sip:1001@pbx.example".into()));
+        assert_eq!(dial_target("SIPS:1001@pbx.example"), Ok("SIPS:1001@pbx.example".into()));
+        for wrong in ["", "+", "answer", "90 0a", "１２３", "12+34", "1_2", "sip:10 01@pbx", "sip:１@pbx"] {
+            assert_eq!(dial_target(wrong), Err(message("DIAL_TARGET_INVALID")), "{wrong}");
+        }
+        assert!(dial_target(&"1".repeat(31)).is_err());
+        assert!(dial_target(&format!("sip:{}@pbx", "1".repeat(200))).is_err());
+        // A button keeps its number as dialled, so what it watches is what it says.
+        assert!(CustomButton::target_ok(""));
+        assert!(CustomButton::target_ok("*701"));
+        assert!(CustomButton::target_ok(" <sip:61@pbx.example> "));
+        assert!(!CustomButton::target_ok("70-1"));
+        assert!(!CustomButton::target_ok("voicemail"));
+    }
+
+    #[test]
+    fn the_engine_colours_are_left_out_of_the_log() {
+        assert_eq!(
+            without_colour("\x1b[m\x1b[31mctrl_tcp: error processing command\x1b[;m"),
+            "ctrl_tcp: error processing command"
+        );
+        assert_eq!(without_colour("plain [text]"), "plain [text]");
+    }
+
     #[test]
     fn automatic_answer_selects_each_incoming_call_once() {
         let calls = vec![

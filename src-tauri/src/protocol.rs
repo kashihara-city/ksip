@@ -14,20 +14,60 @@ pub fn pipe_name() -> String {
     )
 }
 
-/// The command carried by a link, in the form the other side understands.
-/// `/ksip=123456789`, `ksip:123456789` and `123456789` all mean the same.
-pub fn command_from(argument: &str) -> String {
-    let value = argument
-        .trim()
-        .trim_start_matches("/ksip=")
-        .trim_start_matches("ksip:")
-        .trim_start_matches("//")
-        .trim_end_matches('/');
-    // A number written for people can carry separators; the dialler wants none.
-    value
-        .chars()
-        .filter(|c| !matches!(c, '-' | ' ' | '(' | ')' | '.'))
-        .collect()
+const SCHEME: &str = "ksip:";
+
+/// Whether an argument is a link. Windows hands the link over whole, scheme
+/// and all, and a scheme is the same in any case.
+pub fn is_link(argument: &str) -> bool {
+    argument.len() >= SCHEME.len() && argument[..SCHEME.len()].eq_ignore_ascii_case(SCHEME)
+}
+
+/// What a link asks for.
+#[derive(Debug, PartialEq)]
+pub enum Link {
+    Answer,
+    Hangup,
+    ShowWindow,
+    Quit,
+    /// What is to be dialled, as it was written; the dial box's rule is
+    /// applied to it afterwards, so that what was refused can still be shown.
+    Dial(String),
+}
+
+/// Reads a link. The browser escapes what it passes on, so `%xx` is undone
+/// first; `+` stays `+`, since that convention belongs to forms, not links,
+/// and `+81` is a number. The four commands are matched as written; anything
+/// else is to be dialled.
+pub fn parse(link: &str) -> Result<Link, String> {
+    let malformed = || crate::message::message_with("PROTOCOL_MALFORMED", [link]);
+    if !is_link(link) {
+        return Err(malformed());
+    }
+    let escaped = link[SCHEME.len()..].as_bytes();
+    let mut bytes = Vec::with_capacity(escaped.len());
+    let mut i = 0;
+    while i < escaped.len() {
+        if escaped[i] == b'%' {
+            let hex = escaped.get(i + 1..i + 3).ok_or_else(malformed)?;
+            let text = std::str::from_utf8(hex).map_err(|_| malformed())?;
+            bytes.push(u8::from_str_radix(text, 16).map_err(|_| malformed())?);
+            i += 3;
+        } else {
+            bytes.push(escaped[i]);
+            i += 1;
+        }
+    }
+    let text = String::from_utf8(bytes).map_err(|_| malformed())?;
+    if text.chars().any(char::is_control) {
+        return Err(malformed());
+    }
+    Ok(match text.trim() {
+        "ANSWER" => Link::Answer,
+        "HANGUP" => Link::Hangup,
+        "SHOWWINDOW" => Link::ShowWindow,
+        "APP_QUIT" => Link::Quit,
+        target => Link::Dial(target.to_string()),
+    })
 }
 
 /// Sends a command to the running app. Ok(false) means nothing was listening.
@@ -202,7 +242,7 @@ pub fn register(enabled: bool) -> Result<(), String> {
         .create_subkey(r"shell\open\command")
         .map_err(|e| e.to_string())?;
     command
-        .set_value("", &format!("\"{exe}\" \"/ksip=%1\""))
+        .set_value("", &format!("\"{exe}\" \"%1\""))
         .map_err(|e| e.to_string())
 }
 
@@ -211,10 +251,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn links_are_reduced_to_the_command_they_carry() {
-        assert_eq!(command_from("/ksip=ksip:0742-22-1101"), "0742221101");
-        assert_eq!(command_from("ksip://ANSWER/"), "ANSWER");
-        assert_eq!(command_from("  (06) 1234.5678 "), "0612345678");
+    fn a_link_is_told_by_its_scheme_in_any_case() {
+        assert!(is_link("ksip:9001"));
+        assert!(is_link("KSIP:ANSWER"));
+        assert!(!is_link("/ksip=ksip:9001"));
+        assert!(!is_link("9001"));
+        assert!(!is_link(""));
+    }
+
+    #[test]
+    fn links_are_read_as_the_browser_passes_them() {
+        assert_eq!(parse("ksip:ANSWER"), Ok(Link::Answer));
+        assert_eq!(parse("KSIP:HANGUP"), Ok(Link::Hangup));
+        assert_eq!(parse("ksip:SHOWWINDOW"), Ok(Link::ShowWindow));
+        assert_eq!(parse("ksip:APP_QUIT"), Ok(Link::Quit));
+        assert_eq!(parse("ksip:0742-22-1101"), Ok(Link::Dial("0742-22-1101".into())));
+        assert_eq!(parse("ksip:(06)%201234.5678%20"), Ok(Link::Dial("(06) 1234.5678".into())));
+        assert_eq!(parse("ksip:%2B81+6"), Ok(Link::Dial("+81+6".into())));
+        assert_eq!(parse("ksip:*21%23"), Ok(Link::Dial("*21#".into())));
+        assert_eq!(parse("ksip:%EF%BC%99001"), Ok(Link::Dial("９001".into())));
+        // A command in the wrong case is not one; it is shown as what it is.
+        assert_eq!(parse("ksip:answer"), Ok(Link::Dial("answer".into())));
+        assert_eq!(parse("ksip:"), Ok(Link::Dial(String::new())));
+        assert_eq!(
+            parse("ksip:sip:1001@pbx.example;transport=tcp"),
+            Ok(Link::Dial("sip:1001@pbx.example;transport=tcp".into()))
+        );
+    }
+
+    #[test]
+    fn a_link_that_cannot_be_read_is_refused() {
+        let malformed = |link: &str| crate::message::message_with("PROTOCOL_MALFORMED", [link]);
+        assert_eq!(parse("9001"), Err(malformed("9001")));
+        assert_eq!(parse("ksip:90%2"), Err(malformed("ksip:90%2")));
+        assert_eq!(parse("ksip:90%G1"), Err(malformed("ksip:90%G1")));
+        assert_eq!(parse("ksip:%FF"), Err(malformed("ksip:%FF")));
+        assert_eq!(parse("ksip:9001%0A"), Err(malformed("ksip:9001%0A")));
     }
 
     #[test]

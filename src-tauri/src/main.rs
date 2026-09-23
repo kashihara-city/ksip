@@ -220,15 +220,13 @@ fn main() {
     if args.first().is_some_and(|s| s == "--engine") {
         std::process::exit(native::run_engine(&args[1..]));
     }
-    let mut link = String::new();
-    if let Some(first) = args.first() {
-        if first.starts_with("/ksip=") || first.starts_with("ksip:") {
-            link = protocol::command_from(first);
-        }
-        if link.is_empty() {
-            std::process::exit(2);
-        }
-    }
+    // A link is handed over as it came, so that the running app can record
+    // exactly what the browser passed before it reads anything into it.
+    let link = match args.first() {
+        None => String::new(),
+        Some(first) if protocol::is_link(first) => first.clone(),
+        Some(_) => std::process::exit(2),
+    };
     if !link.is_empty() {
         // Hand the command over if the app is running. If it is not, start it
         // and wait for the pipe, so that a link works from a cold start too.
@@ -237,7 +235,7 @@ fn main() {
             Err(_) => std::process::exit(3),
             Ok(false) => {}
         }
-        if link == "APP_QUIT" {
+        if protocol::parse(&link) == Ok(protocol::Link::Quit) {
             std::process::exit(0);
         }
         let Ok(exe) = std::env::current_exe() else {
@@ -359,23 +357,44 @@ fn main() {
                 state.log_app(e);
             }
             let served = app.handle().clone();
-            protocol::serve(move |command| {
+            protocol::serve(move |link| {
                 let state = served.state::<AppState>();
-                state.log_protocol(&command);
-                match command.as_str() {
-                    "SHOWWINDOW" => show(&served),
-                    "APP_QUIT" => served.exit(0),
-                    _ => {
-                        // Dialling asks first unless that was turned off, so the
-                        // window decides; the rest is done here. A question put
-                        // from the tray would go unseen, so the window comes out
-                        // before it is asked.
-                        if !matches!(command.as_str(), "ANSWER" | "HANGUP")
-                            && state.snapshot().settings.browser_dial_confirm
-                        {
-                            show(&served);
+                state.log_protocol(&link);
+                match protocol::parse(&link) {
+                    Ok(protocol::Link::ShowWindow) => show(&served),
+                    Ok(protocol::Link::Quit) => served.exit(0),
+                    Ok(protocol::Link::Answer) => {
+                        let _ = served.emit("ksip-link", "ANSWER");
+                    }
+                    Ok(protocol::Link::Hangup) => {
+                        let _ = served.emit("ksip-link", "HANGUP");
+                    }
+                    Ok(protocol::Link::Dial(text)) => match engine::dial_target(&text) {
+                        Ok(target) => {
+                            // Dialling asks first unless that was turned off, and
+                            // always for a URI, which a page can point anywhere.
+                            // The window asks; a question put from the tray would
+                            // go unseen, so the window comes out before it is asked.
+                            let confirm = state.snapshot().settings.browser_dial_confirm
+                                || engine::CustomButton::is_uri(&target);
+                            if confirm {
+                                show(&served);
+                            }
+                            let _ = served.emit("ksip-dial", serde_json::json!({"target": target, "confirm": confirm}));
                         }
-                        let _ = served.emit("ksip-link", command);
+                        Err(e) => {
+                            // What was refused goes into the dial box beside
+                            // the error, so that the person sees what came.
+                            show(&served);
+                            state.show_error(e);
+                            let _ = served.emit("ksip-dial", serde_json::json!({"target": text, "refused": true}));
+                        }
+                    },
+                    Err(e) => {
+                        // Not a polling error, which the next poll would clear:
+                        // it stays until the person sees it.
+                        show(&served);
+                        state.show_error(e);
                     }
                 }
             });

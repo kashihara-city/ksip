@@ -418,22 +418,38 @@ async function syncHistory(){
   if(sequence===historySequence)return;
   historyRows=await invoke('read_call_history');historySequence=sequence;renderHistory();
 }
-async function onLink(command){
-  if(command==='HANGUP'){act('hangup');return;}
-  if(command==='ANSWER'){act('answer');return;}
-  const number=command.trim();
-  if(!number)return;
-  if(state.settings.browser_dial_confirm!==false&&!await ask(fill('DIAL_CONFIRM',number)))return;
+// A link or a shortcut key answers or hangs up. Answering goes to the line
+// that rings, whichever is selected; with nothing to act on, the request is
+// noted and nothing else happens.
+function onLink(command){
+  if(command==='ANSWER'){
+    const ringing=state.calls.find(c=>c.state==='INCOMING');
+    if(!ringing){logUi('link','ANSWER without an incoming call');return;}
+    selected=ringing.line;render();act('answer',ringing.id,'',ringing.line);
+  }
+  if(command==='HANGUP'){
+    if(!current()){logUi('link','HANGUP without a call');return;}
+    act('hangup');
+  }
+}
+// The number arrives as the registrar will dial it, and the app has said
+// whether to ask first. It goes into the dial box, so that what was dialled
+// can be seen afterwards; one the app refused goes there too, beside the error.
+async function onDial({target,confirm,refused}){
+  if(refused){$('target').value=target;render();return;}
+  if(!target)return;
+  if(confirm&&!await ask(fill('DIAL_CONFIRM',target)))return;
   // A link can arrive before the account has registered, for instance when the
   // browser started the app; the call waits for that rather than failing.
   const end=Date.now()+20000;
   while(state.registration!=='REGISTER_OK'&&Date.now()<end)await new Promise(done=>setTimeout(done,250));
   if(state.registration!=='REGISTER_OK'){error=t('NOT_REGISTERED_YET');render();return;}
-  if(!callAt(selected))act('dial','',number);
-  else{const free=[1,2].find(line=>!callAt(line));if(free){selected=free;act('dial','',number);}
-    else{error=t('NO_FREE_LINE');render();}}
+  const line=!callAt(selected)?selected:[1,2].find(n=>!callAt(n));
+  if(!line){error=t('NO_FREE_LINE');render();return;}
+  selected=line;$('target').value=target;render();act('dial','',target,line);
 }
 window.__TAURI__.event.listen('ksip-link',event=>{onLink(String(event.payload||''));});
+window.__TAURI__.event.listen('ksip-dial',event=>{onDial(event.payload||{});});
 async function poll(){
   try{
     if(!busy){update(await invoke('snapshot'));await syncLogs();await syncHistory();}
