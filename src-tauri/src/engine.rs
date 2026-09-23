@@ -671,17 +671,25 @@ pub fn append_log(data: &Path, body: String) {
     let _ = std::fs::create_dir_all(data);
     let _ = append(&data.join(LOG_FILE), &bytes);
 }
-/// Where the running app keeps what it writes: beside the executable, so that
-/// a deployment is one folder that can be copied as it is. Test profiles keep
-/// theirs in the repository's temp/build. The repository is found from the
-/// executable, which the tests run from inside it (release/, temp/build/<test>/,
-/// temp/cargo-target/). Naming it at compile time would put the build machine's
-/// path into the product and make the binary depend on where it was built.
+/// Where the running app keeps what it writes: the person's own local
+/// application data, beside the settings' place in the registry. Not beside
+/// the executable: a single exe gets run from a file server sooner or later,
+/// and there the history, the log and the recordings of everyone who did so
+/// would end up in one folder, mixed and readable by all. Not the roaming
+/// part either: recordings are big and belong to the machine they were made
+/// on. Test profiles keep theirs in the repository's temp/build. The
+/// repository is found from the executable, which the tests run from inside
+/// it (release/, temp/build/<test>/, temp/cargo-target/). Naming it at compile
+/// time would put the build machine's path into the product and make the
+/// binary depend on where it was built.
 pub fn data_dir(store: &Store) -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let beside = exe.parent().map(PathBuf::from).unwrap_or_default();
     if !store.target.starts_with("KSIP/Test/") {
-        return beside;
+        return std::env::var_os("LOCALAPPDATA")
+            .filter(|dir| !dir.is_empty())
+            .map(|dir| PathBuf::from(dir).join("KashiharaCity").join("ksip"))
+            .unwrap_or(beside);
     }
     exe.ancestors()
         .find(|dir| dir.join("src-tauri/Cargo.toml").is_file())
@@ -701,26 +709,16 @@ struct History {
     file_lines: usize,
 }
 impl History {
-    /// Reads the file, or, the first time after 0.0.5, the array it used to
-    /// be, which is carried over into the new file and left where it was.
+    /// Reads the file, oldest first, into the tab's order.
     fn open(data: &Path) -> Self {
-        let path = data.join(HISTORY_FILE);
         let mut rows: Vec<CallHistory> = Vec::new();
         let mut file_lines = 0;
-        if let Ok(bytes) = std::fs::read(&path) {
+        if let Ok(bytes) = std::fs::read(data.join(HISTORY_FILE)) {
             for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
                 file_lines += 1;
                 if let Ok(row) = serde_json::from_slice::<CallHistory>(line) {
                     rows.push(row);
                 }
-            }
-        } else if let Some(old) = std::fs::read(data.join("call-history.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Vec<CallHistory>>(&bytes).ok())
-        {
-            rows = old.into_iter().rev().collect();
-            if append(&path, &lines(rows.iter())).is_ok() {
-                file_lines = rows.len();
             }
         }
         rows.reverse();
@@ -1063,7 +1061,7 @@ impl AppState {
         let name = self.store.target.rsplit('/').next().unwrap_or("default");
         std::env::temp_dir().join("ksip-profile").join(name)
     }
-    /// Throws the call history away, here and in the file beside the exe.
+    /// Throws the call history away, here and in its file.
     pub fn clear_call_history(&self) -> Result<(), String> {
         self.history.lock().unwrap().clear(&self.data)
     }
@@ -2061,6 +2059,10 @@ impl AppState {
         Command::new("notepad.exe").arg(path).spawn().map_err(err)?;
         Ok(())
     }
+    /// The folder everything the app writes goes into.
+    pub fn data(&self) -> &Path {
+        &self.data
+    }
     pub fn open_recordings(&self) -> Result<(), String> {
         let path = self.data.join("recordings");
         std::fs::create_dir_all(&path).map_err(err)?;
@@ -2590,6 +2592,22 @@ mod tests {
     }
 
     #[test]
+    fn the_data_folder_is_the_persons_own_beside_the_registry_settings() {
+        let store = Store {
+            key: String::new(),
+            target: "KSIP/SIP/default".into(),
+        };
+        let data = data_dir(&store);
+        let local = PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"));
+        assert_eq!(data, local.join("KashiharaCity").join("ksip"));
+        let test = Store {
+            key: String::new(),
+            target: "KSIP/Test/test-unit".into(),
+        };
+        assert!(data_dir(&test).ends_with("temp/build/test-unit"), "{}", data_dir(&test).display());
+    }
+
+    #[test]
     fn a_recording_is_named_after_its_start_and_the_peer() {
         assert_eq!(recording_name("2026-09-23T14:30:12+09:00", "sip:1002@pbx.example:5060;transport=udp"), "2026-09-23_14-30-12_1002.wav");
         assert_eq!(recording_name("2026-09-23T14:30:12+09:00", "<sips:+81-6-1234@pbx.example>"), "2026-09-23_14-30-12_+81-6-1234.wav");
@@ -2598,7 +2616,7 @@ mod tests {
     }
 
     #[test]
-    fn the_call_history_is_appended_to_and_carried_over_from_the_old_file() {
+    fn the_call_history_is_appended_to_and_read_back_newest_first() {
         let dir = std::env::temp_dir().join(format!("ksip-history-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2609,19 +2627,16 @@ mod tests {
             duration: 1,
             recording: String::new(),
         };
-        // 0.0.5 kept an array, newest first.
-        let old = serde_json::to_vec(&vec![call(2), call(1)]).unwrap();
-        std::fs::write(dir.join("call-history.json"), old).unwrap();
-        let mut history = History::open(&dir);
-        let ended: Vec<u64> = history.rows.iter().map(|r| r.ended_at).collect();
-        assert_eq!(ended, [2, 1], "newest first for the tab");
         let path = dir.join(HISTORY_FILE);
-        let carried = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(carried.lines().count(), 2);
-        assert!(carried.lines().next().unwrap().contains("\"ended_at\":1"), "oldest first in the file");
-        assert!(dir.join("call-history.json").is_file(), "the old file is left where it was");
+        let mut history = History::open(&dir);
+        assert!(history.rows.is_empty());
+        history.add(&dir, vec![call(1)]).unwrap();
+        history.add(&dir, vec![call(2)]).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(written.lines().count(), 2);
+        assert!(written.lines().next().unwrap().contains("\"ended_at\":1"), "oldest first in the file");
         // Calls that end are appended, in the order the tab shows them; the
-        // next start reads the new file only and shows the same order.
+        // next start reads the file and shows the same order.
         history.add(&dir, vec![call(3), call(4)]).unwrap();
         let ended: Vec<u64> = history.rows.iter().map(|r| r.ended_at).collect();
         assert_eq!(ended, [3, 4, 2, 1]);

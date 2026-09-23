@@ -127,13 +127,13 @@ pub fn notify_incoming(app: &AppHandle, peer: &str) {
     }
 }
 
-/// The icon a toast shows, kept beside the executable like everything else.
-fn notification_icon() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let path = exe.parent()?.join(ICON_NAME);
+/// The icon a toast shows, kept in the data folder like everything else.
+fn notification_icon(data: &std::path::Path) -> Option<std::path::PathBuf> {
+    let path = data.join(ICON_NAME);
     if path.is_file() {
         return Some(path);
     }
+    std::fs::create_dir_all(data).ok()?;
     std::fs::write(&path, ICON).ok().map(|_| path)
 }
 
@@ -141,7 +141,7 @@ fn notification_icon() -> Option<std::path::PathBuf> {
 ///
 /// A toast from a plain desktop program is delivered under its identifier, and
 /// Windows looks that identifier up here; without it nothing appears.
-pub fn ensure_notification_registration() -> Result<(), String> {
+pub fn ensure_notification_registration(data: &std::path::Path) -> Result<(), String> {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
     use winreg::RegKey;
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
@@ -150,7 +150,7 @@ pub fn ensure_notification_registration() -> Result<(), String> {
     key.set_value("DisplayName", &"KSIP".to_string())
         .map_err(|e| e.to_string())?;
     // The name alone is enough to be shown; without an icon Windows uses its own.
-    match notification_icon() {
+    match notification_icon(data) {
         Some(icon) => key
             .set_value("IconUri", &icon.to_string_lossy().to_string())
             .map_err(|e| e.to_string()),

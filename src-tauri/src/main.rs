@@ -289,7 +289,7 @@ fn main() {
     // A toast is delivered under the application identifier, and Windows
     // looks that identifier up in the registry. This is for the current user,
     // so it needs no administrator, and a failure must not stop the app.
-    if let Err(e) = shortcuts::ensure_notification_registration() {
+    if let Err(e) = shortcuts::ensure_notification_registration(state.data()) {
         state.log_app(message_with("NOTIFICATION_REGISTER_FAILED", [e]));
     }
     let exit_state = state.clone();

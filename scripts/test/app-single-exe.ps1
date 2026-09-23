@@ -7,10 +7,10 @@ $root=Split-Path (Split-Path $PSScriptRoot)
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
 $version=Get-KsipVersion
 $exe=Get-KsipReleaseExe $Folder
-# The folder holds the executables plus whatever the app writes while running.
-# Copies of earlier versions are kept there on purpose, for comparison.
-# call-history.json is what 0.0.5 wrote; it is carried over and left in place.
-$allowedFiles='ksip.exe','call-history.jsonl','call-history.json','ksip-log.jsonl','ksip-notification.ico'
+# The folder holds the executables and nothing the app writes: that goes to
+# the person's local application data. Copies of earlier versions are kept
+# there on purpose, for comparison, and so is what 0.0.5 wrote beside them.
+$allowedFiles='ksip.exe','call-history.json','call-history.jsonl','ksip-log.jsonl','ksip-notification.ico'
 $allowedPatterns='^ksip-v[0-9]+\.[0-9]+\.[0-9]+\.exe$'
 $allowedDirs='profile','recordings'
 function Assert-FolderContents([string]$stage){
