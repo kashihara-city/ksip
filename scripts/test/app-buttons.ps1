@@ -116,6 +116,7 @@ try {
     # with a Reason header. The history says so in place of a missed call.
     # The history is read as soon as the ring ends: the window goes to the
     # tray ten seconds after a call in this profile.
+    Remove-Item "$base/group-result.txt" -ErrorAction SilentlyContinue
     $group=Start-KsipFixturePeer 'group' $base
     try {
         Wait-Class 'line-1' 'call-incoming' 30
@@ -125,7 +126,7 @@ try {
         if($group -and !$group.HasExited){$group.WaitForExit(30000) | Out-Null}
         if(!$group.HasExited){Stop-Process -Id $group.Id -Force}
     }
-    if($group.ExitCode -ne 0){throw 'The group call failed'}
+    if(!(Test-Path "$base/group-result.txt") -or (Get-Content "$base/group-result.txt" -Raw).Trim() -ne 'TAKEN_ELSEWHERE'){throw 'The other phone did not take the group call'}
     Wait-KsipLog 'event' 'CALL_CLOSED .*cause=200' | Out-Null
     'PASS: 他の電話が取った着信は履歴に「他で応答」と出る'
     @{version=$version;order=$order;speedDial=$true;park=$true;pickup=$true;transfer=$true;transferToUri=$true;linkButton=$true;trayAfterCall=$true} |

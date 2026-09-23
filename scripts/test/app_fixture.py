@@ -83,6 +83,9 @@ elif sys.argv[1]=='group':
     # together, from the peer's account. The third account takes the call
     # after the phone has rung a moment, so the PBX cancels the phone's ring
     # with a Reason header saying the call was completed elsewhere.
+    # The result goes into a file, as the caller's does: the exit code of a
+    # process Windows PowerShell started is often not available to it.
+    result=BASE/'group-result.txt';result.unlink(missing_ok=True)
     configured=accounts()
     taker=Phone('ui-taker',configured[2],18570,19200)
     caller=Phone('ui-group-caller',configured[1],18572,19300)
@@ -96,6 +99,7 @@ elif sys.argv[1]=='group':
         time.sleep(2)
         caller.action('hangup',call)
         time.sleep(1)
+        result.write_text('TAKEN_ELSEWHERE')
     finally:
         caller.close();taker.close()
 elif sys.argv[1]=='cleanup':

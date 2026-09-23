@@ -48,12 +48,13 @@ try {
     Wait-Text 'registration' '着信しません' | Out-Null
     'PASS: 解除中はサーバーと通信方式を出さない'
 
-    # A call placed while unregistered never reaches the window.
+    # A call placed while unregistered never reaches the window. The caller
+    # itself may still be answered, by the PBX's voicemail, so its result is
+    # not looked at here.
     Start-Caller
     Start-Sleep -Seconds 8
     if(Test-Class 'line-1' 'call-incoming'){throw 'A call arrived although the phone is unregistered'}
-    $result=Stop-Caller
-    if($result -eq 'ESTABLISHED'){throw "The caller reported $result while unregistered"}
+    Stop-Caller | Out-Null
     'PASS: 解除中は着信しない'
 
     # Reconnecting registers again, and calls arrive as before.
