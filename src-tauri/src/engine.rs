@@ -133,15 +133,6 @@ impl CustomButton {
             _ => None,
         }
     }
-    /// What is called while the watched number is in use, for the kinds
-    /// that watch one.
-    pub fn pickup_target(&self) -> Option<&str> {
-        if !self.watches() {
-            return None;
-        }
-        let pickup = Self::address(&self.pickup);
-        Some(if pickup.is_empty() { Self::address(&self.number) } else { pickup })
-    }
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -2536,11 +2527,8 @@ mod tests {
             pickup: String::new(),
         };
         let with = |buttons: Vec<CustomButton>| Settings { buttons, ..Settings::default() };
-        // The pickup falls back to the number, and is checked like one.
+        // The pickup is checked like a number; the window itself falls back to the number.
         let pickup = CustomButton { pickup: "*8701".into(), ..button("dial", "701", "") };
-        assert_eq!(pickup.pickup_target(), Some("*8701"));
-        assert_eq!(button("park", "701", "*701").pickup_target(), Some("701"));
-        assert_eq!(button("transfer", "701", "").pickup_target(), None);
         assert!(AppState::validate(&with(vec![pickup])).is_ok());
         assert!(AppState::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
         // A voicemail button names the number that plays the messages.

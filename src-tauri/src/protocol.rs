@@ -43,7 +43,7 @@ pub fn parse(link: &str) -> Result<Link, String> {
     if !is_link(link) {
         return Err(malformed());
     }
-    let escaped = link[SCHEME.len()..].as_bytes();
+    let escaped = &link.as_bytes()[SCHEME.len()..];
     let mut bytes = Vec::with_capacity(escaped.len());
     let mut i = 0;
     while i < escaped.len() {
