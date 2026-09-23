@@ -438,6 +438,7 @@ const LOG_ENGINE: &str = "engine";
 const LOG_EVENT: &str = "event";
 const LOG_UI: &str = "ui";
 const HISTORY_LIMIT: usize = 1000;
+const HISTORY_FILE: &str = "call-history.jsonl";
 // Log lines and call history are served by sequence so a poll only moves what is new.
 /// One line of the log. The parts are kept apart so that the window can
 /// present them as it likes, and so that a reader can sort and search them.
@@ -524,7 +525,7 @@ impl Logs {
         let path = data.join(LOG_FILE);
         self.take_foreign(&path);
         if self.unwritten > 0 {
-            let bytes = Self::lines(self.entries.iter().skip(self.entries.len() - self.unwritten));
+            let bytes = lines(self.entries.iter().skip(self.entries.len() - self.unwritten));
             let _ = std::fs::create_dir_all(data);
             if append(&path, &bytes).is_ok() {
                 self.offset += bytes.len() as u64;
@@ -540,25 +541,9 @@ impl Logs {
     /// tab is the source: after a start the tab holds only this run, and the
     /// run before belongs in the file as much as this one.
     fn shorten(&mut self, path: &Path) {
-        let Ok(bytes) = std::fs::read(path) else {
-            return;
-        };
-        // The last line ends with the last newline; the kept lines start after
-        // the newline that ends the line before the first of them.
-        let mut newlines = 0;
-        let mut start = 0;
-        for (i, b) in bytes.iter().enumerate().rev() {
-            if *b == b'\n' {
-                newlines += 1;
-                if newlines > LOG_LIMIT {
-                    start = i + 1;
-                    break;
-                }
-            }
-        }
-        if std::fs::write(path, &bytes[start..]).is_ok() {
-            self.offset = (bytes.len() - start) as u64;
-            self.file_lines = newlines.min(LOG_LIMIT);
+        if let Ok((length, lines)) = keep_last_lines(path, LOG_LIMIT) {
+            self.offset = length;
+            self.file_lines = lines;
         }
     }
     /// Lines the file gained since it was last seen, from another process.
@@ -606,16 +591,17 @@ impl Logs {
         self.offset = 0;
         self.file_lines = 0;
     }
-    fn lines<'a>(entries: impl Iterator<Item = &'a LogLine>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        for line in entries {
-            if let Ok(json) = serde_json::to_vec(line) {
-                bytes.extend(json);
-                bytes.push(b'\n');
-            }
+}
+/// One JSON object per line, the form both files are kept in.
+fn lines<'a, T: Serialize + 'a>(entries: impl Iterator<Item = &'a T>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for entry in entries {
+        if let Ok(json) = serde_json::to_vec(entry) {
+            bytes.extend(json);
+            bytes.push(b'\n');
         }
-        bytes
     }
+    bytes
 }
 fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::OpenOptions::new()
@@ -624,11 +610,31 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .open(path)?
         .write_all(bytes)
 }
+/// Writes the file afresh with its last lines, up to the limit, and says how
+/// long it is now and how many lines it holds.
+fn keep_last_lines(path: &Path, limit: usize) -> std::io::Result<(u64, usize)> {
+    let bytes = std::fs::read(path)?;
+    // The last line ends with the last newline; the kept lines start after
+    // the newline that ends the line before the first of them.
+    let mut newlines = 0;
+    let mut start = 0;
+    for (i, b) in bytes.iter().enumerate().rev() {
+        if *b == b'\n' {
+            newlines += 1;
+            if newlines > limit {
+                start = i + 1;
+                break;
+            }
+        }
+    }
+    std::fs::write(path, &bytes[start..])?;
+    Ok(((bytes.len() - start) as u64, newlines.min(limit)))
+}
 /// One line from a process that is not the app: the link handler, when it
 /// has nothing to hand a link to. The app picks the line up from the file.
 pub fn append_log(data: &Path, body: String) {
     let clean: String = body.chars().filter(|c| !c.is_control()).take(300).collect();
-    let bytes = Logs::lines(std::iter::once(&LogLine::new(AppState::stamp(), LOG_APP, clean)));
+    let bytes = lines(std::iter::once(&LogLine::new(AppState::stamp(), LOG_APP, clean)));
     let _ = std::fs::create_dir_all(data);
     let _ = append(&data.join(LOG_FILE), &bytes);
 }
@@ -652,9 +658,72 @@ pub fn data_dir(store: &Store) -> PathBuf {
         })
         .unwrap_or(beside)
 }
+/// The call history and its file: one call per line, oldest first, appended
+/// as calls end. The tab shows it newest first. Past twice the limit the file
+/// is written afresh with its last lines. Nothing else writes it.
 struct History {
+    /// Newest first, as the tab shows it.
     rows: Vec<CallHistory>,
     sequence: u64,
+    file_lines: usize,
+}
+impl History {
+    /// Reads the file, or, the first time after 0.0.5, the array it used to
+    /// be, which is carried over into the new file and left where it was.
+    fn open(data: &Path) -> Self {
+        let path = data.join(HISTORY_FILE);
+        let mut rows: Vec<CallHistory> = Vec::new();
+        let mut file_lines = 0;
+        if let Ok(bytes) = std::fs::read(&path) {
+            for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+                file_lines += 1;
+                if let Ok(row) = serde_json::from_slice::<CallHistory>(line) {
+                    rows.push(row);
+                }
+            }
+        } else if let Some(old) = std::fs::read(data.join("call-history.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<CallHistory>>(&bytes).ok())
+        {
+            rows = old.into_iter().rev().collect();
+            if append(&path, &lines(rows.iter())).is_ok() {
+                file_lines = rows.len();
+            }
+        }
+        rows.reverse();
+        rows.truncate(HISTORY_LIMIT);
+        Self {
+            rows,
+            sequence: 0,
+            file_lines,
+        }
+    }
+    /// The calls that ended since the last look, in the order the tab shows
+    /// them; the file, being oldest first, gets them the other way round.
+    fn add(&mut self, data: &Path, ended: Vec<CallHistory>) -> Result<(), String> {
+        let path = data.join(HISTORY_FILE);
+        std::fs::create_dir_all(data).map_err(err)?;
+        append(&path, &lines(ended.iter().rev())).map_err(err)?;
+        self.file_lines += ended.len();
+        for entry in ended.into_iter().rev() {
+            self.rows.insert(0, entry);
+        }
+        self.rows.truncate(HISTORY_LIMIT);
+        self.sequence += 1;
+        if self.file_lines > 2 * HISTORY_LIMIT {
+            if let Ok((_, kept)) = keep_last_lines(&path, HISTORY_LIMIT) {
+                self.file_lines = kept;
+            }
+        }
+        Ok(())
+    }
+    fn clear(&mut self, data: &Path) -> Result<(), String> {
+        self.rows.clear();
+        self.sequence += 1;
+        self.file_lines = 0;
+        std::fs::create_dir_all(data).map_err(err)?;
+        std::fs::write(data.join(HISTORY_FILE), b"").map_err(err)
+    }
 }
 #[derive(Clone, Serialize)]
 pub struct LogPage {
@@ -742,10 +811,7 @@ impl AppState {
                 Account::default().public()
             }
         };
-        let call_history = std::fs::read(data.join("call-history.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+        let history = History::open(&data);
         let state = Self {
             inner: Arc::new(Mutex::new(None)),
             view: Arc::new(Mutex::new(Snapshot {
@@ -783,10 +849,7 @@ impl AppState {
             call_directions: Arc::new(Mutex::new(HashMap::new())),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
             logs: Arc::new(Mutex::new(logs)),
-            history: Arc::new(Mutex::new(History {
-                rows: call_history,
-                sequence: 0,
-            })),
+            history: Arc::new(Mutex::new(history)),
             polling_error: Arc::new(Mutex::new(String::new())),
             bound: Arc::new(Mutex::new(String::new())),
             closing: Arc::new(AtomicBool::new(false)),
@@ -965,11 +1028,7 @@ impl AppState {
     }
     /// Throws the call history away, here and in the file beside the exe.
     pub fn clear_call_history(&self) -> Result<(), String> {
-        let mut history = self.history.lock().unwrap();
-        history.rows.clear();
-        history.sequence += 1;
-        std::fs::create_dir_all(&self.data).map_err(err)?;
-        std::fs::write(self.data.join("call-history.json"), b"[]").map_err(err)
+        self.history.lock().unwrap().clear(&self.data)
     }
     pub fn read_call_history(&self) -> Vec<CallHistory> {
         self.history.lock().unwrap().rows.clone()
@@ -1565,18 +1624,7 @@ impl AppState {
         v.registration = phone.registration;
         drop(v);
         if !ended.is_empty() {
-            let mut history = self.history.lock().unwrap();
-            for entry in ended.into_iter().rev() {
-                history.rows.insert(0, entry);
-            }
-            history.rows.truncate(HISTORY_LIMIT);
-            history.sequence += 1;
-            std::fs::create_dir_all(&self.data).map_err(err)?;
-            std::fs::write(
-                self.data.join("call-history.json"),
-                serde_json::to_vec_pretty(&history.rows).map_err(err)?,
-            )
-            .map_err(err)?;
+            self.history.lock().unwrap().add(&self.data, ended)?;
         }
         for id in answer_targets {
             let payload =
@@ -2454,6 +2502,52 @@ mod tests {
         logs.clear(&dir);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
         assert_eq!((logs.sequence, logs.file_lines, logs.offset), (0, 0, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_call_history_is_appended_to_and_carried_over_from_the_old_file() {
+        let dir = std::env::temp_dir().join(format!("ksip-history-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let call = |n: u64| CallHistory {
+            ended_at: n,
+            direction: "OUTGOING".into(),
+            peer: format!("sip:{n}@pbx"),
+            duration: 1,
+        };
+        // 0.0.5 kept an array, newest first.
+        let old = serde_json::to_vec(&vec![call(2), call(1)]).unwrap();
+        std::fs::write(dir.join("call-history.json"), old).unwrap();
+        let mut history = History::open(&dir);
+        let ended: Vec<u64> = history.rows.iter().map(|r| r.ended_at).collect();
+        assert_eq!(ended, [2, 1], "newest first for the tab");
+        let path = dir.join(HISTORY_FILE);
+        let carried = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(carried.lines().count(), 2);
+        assert!(carried.lines().next().unwrap().contains("\"ended_at\":1"), "oldest first in the file");
+        assert!(dir.join("call-history.json").is_file(), "the old file is left where it was");
+        // Calls that end are appended, in the order the tab shows them; the
+        // next start reads the new file only and shows the same order.
+        history.add(&dir, vec![call(3), call(4)]).unwrap();
+        let ended: Vec<u64> = history.rows.iter().map(|r| r.ended_at).collect();
+        assert_eq!(ended, [3, 4, 2, 1]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 4);
+        let again = History::open(&dir);
+        assert_eq!(again.rows.iter().map(|r| r.ended_at).collect::<Vec<_>>(), [3, 4, 2, 1]);
+        assert_eq!(again.file_lines, 4);
+        // Past twice the limit the file keeps its last lines: with four lines
+        // already there, the 1997th call takes it to 2001, and three follow.
+        for n in 0..2 * HISTORY_LIMIT as u64 {
+            history.add(&dir, vec![call(100 + n)]).unwrap();
+        }
+        assert_eq!(history.file_lines, HISTORY_LIMIT + 3);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), HISTORY_LIMIT + 3);
+        assert_eq!(history.rows.len(), HISTORY_LIMIT);
+        assert_eq!(history.rows[0].ended_at, 100 + 2 * HISTORY_LIMIT as u64 - 1);
+        history.clear(&dir).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        assert!(history.rows.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
