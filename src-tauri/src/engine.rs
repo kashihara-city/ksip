@@ -74,7 +74,10 @@ pub struct CustomButton {
     pub pickup: String,
 }
 impl CustomButton {
-    pub const COUNT: usize = 6;
+    /// The first six sit on the phone; the rest fill the panel beside it,
+    /// which appears while any of them is set.
+    pub const MAIN: usize = 6;
+    pub const COUNT: usize = 30;
     pub const KINDS: [&'static str; 4] = ["transfer", "dial", "park", "open"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
@@ -180,7 +183,8 @@ impl Settings {
     /// Values a group policy can set one at a time. They live in their own
     /// registry values rather than inside the settings document. The buttons
     /// are among them, as `button_1_title`, `button_1_kind`, `button_1_number`,
-    /// `button_1_transfer` and `button_1_pickup` up to `button_6_…`.
+    /// `button_1_transfer` and `button_1_pickup` up to `button_30_…`; 1 to 6 sit on
+    /// the phone, 7 to 30 in the panel beside it.
     const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
     /// The document keys that are stored as policy values instead.
     pub const POLICY_DOCUMENT_KEYS: [&'static str; 5] =
@@ -1779,7 +1783,7 @@ impl AppState {
             .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
         account.validate()?;
         let settings = self.settings()?;
-        // The engine takes six comma-separated numbers to watch, empty ones included.
+        // The engine takes thirty comma-separated numbers to watch, empty ones included.
         let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
         watched.resize(CustomButton::COUNT, String::new());
         let watched = watched.join(",");

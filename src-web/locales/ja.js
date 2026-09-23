@@ -203,6 +203,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_BROWSER_HINT:'WebページやメールのリンクからKSIPを操作できるようにします。ONにすると、このパソコンの現在のユーザーにだけ `ksip:` を登録します。',
       SETTINGS_BROWSER_INTEGRATION:'ksip: のリンクを受け付ける',
       SETTINGS_BUTTONS:'カスタムボタン',
+      SETTINGS_EXTENDED_BUTTONS:'カスタム拡張ボタン',
+      SETTINGS_EXTENDED_BUTTONS_HINT:'画面の右側に並べるボタンを最大24個定義します。1つでも設定すると窓の幅が2倍になり、右側に2列で並びます。機能と書き方はカスタムボタンと同じです。',
       SETTINGS_BUTTONS_HINT:'画面に出すボタンを最大6つ定義します。機能を「使わない」にしたボタンは出ません。「番号」がそのボタンの基本で、「転送」は通話中の相手をそこへ転送し、「リンクを開く」はそこに書いたURL（http:// か https://）をブラウザで開きます。「ダイヤル（BLFつき）」と「パーク保留」は番号の使用状況（BLF）を表示し、使用中に押すと「ダイヤル先」へ発信します（空なら番号へ）。使用中でなければ、「ダイヤル」は番号へ発信し、「パーク保留」は通話中の相手を「転送先」へ転送します（空なら番号へ）。番号・転送先・ダイヤル先には、`sip:` で始まる完全なSIP URI（`<sip:61@pbx.example>` のように山括弧で囲んでも可）も書けます。',
       SETTINGS_BUTTON_KIND_INVALID:'ボタンの機能の指定が正しくありません',
       SETTINGS_BUTTON_NUMBER_DUPLICATE:'状態を表示する番号は重複しないように指定してください',

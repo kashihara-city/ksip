@@ -25,7 +25,9 @@ if sys.argv[1]=='setup':
                  ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number','9001'),
                  # The same player named as a full URI in angle brackets, as some PBXs want it.
                  ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>'),
-                 ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions')]
+                 ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
+                 # A button in the panel beside the phone, which makes the window twice as wide.
+                 ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.

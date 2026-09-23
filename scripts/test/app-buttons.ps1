@@ -39,6 +39,16 @@ try {
     Wait-Text 'custom-5' 'example.invalid' | Out-Null
     if(!(Wait-Id 'custom-5').Current.IsEnabled){throw 'Link button is disabled'}
     'PASS: 設定したボタンだけが順に出る'
+    # A button in the panel beside the phone: the window is twice as wide, the
+    # panel holds the button, and it dials like any other.
+    Wait-Text 'custom-7' '9001' | Out-Null
+    $panel=Wait-Id 'extended-actions'
+    if(!$panel.FindFirst([Windows.Automation.TreeScope]::Children,(New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,'custom-7')))){throw 'The panel button is not in the panel'}
+    $width=(Get-KsipRoot).Current.BoundingRectangle.Width
+    if($width -lt 900){throw "The window is only $width wide with a panel button set"}
+    Click-Id 'custom-7';Wait-Class 'line-1' 'call-established'
+    Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
+    'PASS: 拡張ボタンは右側の欄に出て、窓が2倍の幅になり、発信できる'
     # Idle: the speed dial can be pressed, the park slot is free and waits for a
     # call, the transfer has nothing to send.
     Wait-NoClass 'custom-2' 'occupied'

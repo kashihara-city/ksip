@@ -203,6 +203,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_BROWSER_HINT:'Lets a link on a web page or in an email drive KSIP. When on, `ksip:` is registered for the current user of this computer only.',
       SETTINGS_BROWSER_INTEGRATION:'Accept ksip: links',
       SETTINGS_BUTTONS:'Custom buttons',
+      SETTINGS_EXTENDED_BUTTONS:'Extended custom buttons',
+      SETTINGS_EXTENDED_BUTTONS_HINT:'Up to 24 buttons shown in a panel to the right of the phone. Once any is set, the window is twice as wide and the panel holds them in two columns. They work and are written exactly like the custom buttons.',
       SETTINGS_BUTTONS_HINT:'Up to six buttons shown on the main screen; a button whose function is “Not used” is hidden. The number is what the button is about: “Transfer” sends the current call to it, and “Open link” opens the URL written there (http:// or https://) in the browser. “Dial (with BLF)” and “Park” show whether the number is in use (BLF) and, pressed while it is in use, call the dial target (the number itself when empty). While it is not in use, “Dial” calls the number and “Park” blind-transfers the current call to the transfer target (the number itself when empty). Each of the three can also be a full SIP URI starting with `sip:`, with or without angle brackets (`<sip:61@pbx.example>`).',
       SETTINGS_BUTTON_KIND_INVALID:'The button function is not valid',
       SETTINGS_BUTTON_NUMBER_DUPLICATE:'Each watched number must be different',

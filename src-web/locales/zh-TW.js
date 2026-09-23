@@ -203,6 +203,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_BROWSER_HINT:'讓網頁或郵件中的連結可以操作 KSIP。開啟時只會為這台電腦的目前使用者註冊 `ksip:`。',
       SETTINGS_BROWSER_INTEGRATION:'接受 ksip: 連結',
       SETTINGS_BUTTONS:'自訂按鈕',
+      SETTINGS_EXTENDED_BUTTONS:'擴充自訂按鈕',
+      SETTINGS_EXTENDED_BUTTONS_HINT:'最多定義 24 個顯示在主畫面右側面板的按鈕。只要設定了任何一個，視窗寬度會變成兩倍，面板以兩欄排列這些按鈕。功能與寫法與自訂按鈕相同。',
       SETTINGS_BUTTONS_HINT:'最多定義六個顯示在主畫面的按鈕；功能為「不使用」的按鈕不會顯示。「號碼」是按鈕的基本：「轉接」把目前通話轉接到該號碼，「開啟連結」在瀏覽器開啟寫在那裡的 URL（http:// 或 https://）。「撥號（含 BLF）」與「駐留」顯示號碼的使用狀態（BLF），使用中時按下會撥打「撥號目標」（空白則撥號碼）。未使用時，「撥號」撥打號碼，「駐留」把目前通話轉接到「轉接目標」（空白則轉到號碼）。三者都可以填以 `sip:` 開頭的完整 SIP URI（可加角括號，如 `<sip:61@pbx.example>`）。',
       SETTINGS_BUTTON_KIND_INVALID:'按鈕功能設定不正確',
       SETTINGS_BUTTON_NUMBER_DUPLICATE:'顯示狀態的號碼不可重複',

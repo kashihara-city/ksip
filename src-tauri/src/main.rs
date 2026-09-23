@@ -38,6 +38,7 @@ async fn save_configuration(
     let state = state.inner().clone();
     let previous = state.snapshot().settings;
     let language = settings.language.clone();
+    let layout = settings.clone();
     if let Err(e) = shortcuts::apply(&app, &settings) {
         // Nothing was stored, so the keys go back to the ones that worked.
         let _ = shortcuts::apply(&app, &previous);
@@ -54,6 +55,7 @@ async fn save_configuration(
         // What Windows draws follows the window's language from now on.
         message::set_windows_language(&language);
         relabel_tray(&app);
+        fit_window(&app, &layout);
     }
     saved
 }
@@ -219,6 +221,29 @@ pub fn show(app: &tauri::AppHandle) {
         let _ = window.set_focus();
     }
 }
+/// The window is twice as wide while the panel beside the phone has buttons,
+/// and back to its own width once it has none. A width the person chose in
+/// between is left alone: only a change of state moves it.
+fn fit_window(app: &tauri::AppHandle, settings: &Settings) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let extended = settings
+        .buttons
+        .iter()
+        .skip(engine::CustomButton::MAIN)
+        .any(|b| b.configured());
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let Ok(size) = window.inner_size() else {
+        return;
+    };
+    let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
+    let wanted = if extended { 1040.0 } else { 520.0 };
+    if (extended && width < 840.0) || (!extended && width > 800.0) {
+        let _ = window.set_min_size(Some(tauri::LogicalSize::new(if extended { 840.0 } else { 420.0 }, 620.0)));
+        let _ = window.set_size(tauri::LogicalSize::new(wanted, height));
+    }
+}
 fn is_visible(app: &tauri::AppHandle) -> bool {
     app.get_webview_window("main")
         .and_then(|window| window.is_visible().ok())
@@ -373,6 +398,7 @@ fn main() {
             if let Err(e) = shortcuts::apply_now(app.handle(), &state.snapshot().settings) {
                 state.log_app(e);
             }
+            fit_window(app.handle(), &state.snapshot().settings);
             let served = app.handle().clone();
             protocol::serve(move |link| {
                 let state = served.state::<AppState>();

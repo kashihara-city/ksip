@@ -26,8 +26,9 @@ tmr transfer_timer;
 tmr parking_timer;
 int subscribe_parking();
 struct ParkSlot { struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN"; };
-// The numbers the buttons watch: up to six dialog subscriptions.
-std::array<ParkSlot,6> parking;
+// The numbers the buttons watch: up to thirty dialog subscriptions, six
+// for the phone and the rest for the panel beside it.
+std::array<ParkSlot,30> parking;
 bool sip_message_log=false;
 uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
@@ -444,7 +445,7 @@ int action(re_printf *pf, void *arg) {
 int configure_parking(re_printf *pf,void *arg) {
     auto a=static_cast<cmd_arg*>(arg);if(!a || !str_isset(a->prm))return EINVAL;
     // Up to six comma-separated numbers; an empty one is a slot nobody watches.
-    std::array<std::string,6> values;std::string text=a->prm;size_t start=0;size_t count=0;
+    std::array<std::string,30> values;std::string text=a->prm;size_t start=0;size_t count=0;
     for(;;) {
         if(count==values.size())return EINVAL;
         auto end=text.find(',',start);
@@ -457,7 +458,7 @@ int configure_parking(re_printf *pf,void *arg) {
     for(size_t i=0;i<values.size();++i)
         for(size_t j=i+1;j<values.size();++j)
             if(!values[i].empty() && values[i]==values[j])return EINVAL;
-    clear_parking_subscriptions();for(size_t i=0;i<values.size();++i)parking[i].number=values[i];
+    clear_parking_subscriptions();for(size_t i=0;i<values.size()&&i<parking.size();++i)parking[i].number=values[i];
     int err=subscribe_parking();if(!err)re_hprintf(pf,"Parking subscriptions configured\n");return err;
 }
 int shutdown(re_printf *pf,void*) {
