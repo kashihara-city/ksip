@@ -166,6 +166,20 @@ function ask(message){
     $('confirm-ok').focus();
   });
 }
+// A call that was recorded can be played back: the file is opened with
+// whatever Windows plays sound with. The button is only drawn while the
+// file is there, which the app checks as it hands the history over.
+function playButton(name){
+  const button=document.createElement('button');
+  button.type='button';button.className='history-play';button.textContent=t('HISTORY_PLAY');
+  button.addEventListener('click',async event=>{
+    event.stopPropagation();
+    try{await invoke('open_recording',{name});}
+    catch(e){error=String(e);logUi('play recording',e);render();}
+  });
+  button.addEventListener('dblclick',event=>event.stopPropagation());
+  return button;
+}
 function copyButton(number){
   const button=document.createElement('button');
   button.type='button';button.className='history-copy';
@@ -188,7 +202,7 @@ function renderHistory(){
   const history=historyRows;
   const panel=$('call-history');panel.replaceChildren();panel.className='history'+(history.length?'':' empty');
   if(!history.length){const empty=document.createElement('div');empty.className='history-empty';empty.textContent=t('HISTORY_EMPTY');panel.append(empty);return;}
-  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=(item.peer||'—').replace(/^sip:/,'').split('@')[0];peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));const meta=document.createElement('span');meta.className='history-meta';meta.textContent=durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
+  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=(item.peer||'—').replace(/^sip:/,'').split('@')[0];peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording));const meta=document.createElement('span');meta.className='history-meta';meta.textContent=durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
 }
 function dialHistory(peer){
   dial((peer||'').replace(/^sip:/i,'').split(/[;@]/)[0]);

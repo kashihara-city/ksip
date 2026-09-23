@@ -307,6 +307,39 @@ pub struct CallHistory {
     pub direction: String,
     pub peer: String,
     pub duration: u32,
+    /// The file in `recordings/` that holds this call, if it was recorded.
+    /// A file can hold several calls: automatic recording follows the call
+    /// in progress, through a transfer for instance.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recording: String,
+}
+/// What a recording is called: when it started, and whom the call was with,
+/// so that the folder reads like the history. `2026-09-23_14-30-12_1002.wav`.
+fn recording_name(stamp: &str, peer: &str) -> String {
+    let time: String = stamp
+        .chars()
+        .take(19)
+        .map(|c| match c {
+            'T' => '_',
+            ':' => '-',
+            c => c,
+        })
+        .collect();
+    let user = peer.trim().trim_start_matches('<');
+    let user = user
+        .strip_prefix("sip:")
+        .or_else(|| user.strip_prefix("sips:"))
+        .unwrap_or(user);
+    let user: String = user
+        .split(['@', ';', '>'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '_' | '.' | '-'))
+        .take(40)
+        .collect();
+    let user = if user.is_empty() { "call".to_string() } else { user };
+    format!("{time}_{user}.wav")
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ParkingInfo {
@@ -747,6 +780,9 @@ pub struct AppState {
     operations: Arc<Mutex<()>>,
     lines: Arc<Mutex<HashMap<String, u8>>>,
     call_directions: Arc<Mutex<HashMap<String, String>>>,
+    /// The recording file each call in progress has been put in, by call id,
+    /// so that the history can point at it once the call ends.
+    recorded: Arc<Mutex<HashMap<String, String>>>,
     auto_answered: Arc<Mutex<HashSet<String>>>,
     logs: Arc<Mutex<Logs>>,
     history: Arc<Mutex<History>>,
@@ -847,6 +883,7 @@ impl AppState {
             operations: Arc::new(Mutex::new(())),
             lines: Arc::new(Mutex::new(HashMap::new())),
             call_directions: Arc::new(Mutex::new(HashMap::new())),
+            recorded: Arc::new(Mutex::new(HashMap::new())),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
             logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(history)),
@@ -1030,8 +1067,31 @@ impl AppState {
     pub fn clear_call_history(&self) -> Result<(), String> {
         self.history.lock().unwrap().clear(&self.data)
     }
+    /// The rows as the tab shows them: a recording is named only while its
+    /// file is still there to be played.
     pub fn read_call_history(&self) -> Vec<CallHistory> {
-        self.history.lock().unwrap().rows.clone()
+        let folder = self.data.join("recordings");
+        let mut rows = self.history.lock().unwrap().rows.clone();
+        for row in &mut rows {
+            if !row.recording.is_empty() && !folder.join(&row.recording).is_file() {
+                row.recording.clear();
+            }
+        }
+        rows
+    }
+    /// Plays a recording named in the history with whatever Windows plays
+    /// sound files with. Only a file in the recordings folder can be named.
+    pub fn open_recording(&self, name: &str) -> Result<(), String> {
+        let plain = !name.is_empty()
+            && name.ends_with(".wav")
+            && !name.contains(['/', '\\', ':'])
+            && !name.starts_with('.');
+        let path = self.data.join("recordings").join(name);
+        if !plain || !path.is_file() {
+            return Err(message("RECORDING_NOT_FOUND"));
+        }
+        crate::native::open_url(&path.to_string_lossy())
+            .map_err(|e| message_with("RECORDING_OPEN_FAILED", [crate::message::split(&e).1.join(" ")]))
     }
     pub fn snapshot(&self) -> Snapshot {
         {
@@ -1580,6 +1640,7 @@ impl AppState {
                     .or_insert_with(|| message("HISTORY_OUTGOING"));
             }
         }
+        let mut recorded = self.recorded.lock().unwrap();
         let ended: Vec<CallHistory> = previous
             .iter()
             .filter(|old| !phone.calls.iter().any(|call| call.id == old.id))
@@ -1591,9 +1652,12 @@ impl AppState {
                 direction: directions.remove(&old.id).unwrap_or_else(|| message("HISTORY_CALL")),
                 peer: old.peer.clone(),
                 duration: old.duration,
+                recording: recorded.remove(&old.id).unwrap_or_default(),
             })
             .collect();
         directions.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
+        recorded.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
+        drop(recorded);
         drop(directions);
         let mut lines = self.lines.lock().unwrap();
         lines.retain(|id, _| phone.calls.iter().any(|c| c.id == *id));
@@ -1790,18 +1854,30 @@ impl AppState {
         Ok(response["data"].as_str().unwrap_or("").into())
     }
     fn start_recording(&self, id: &str) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(err)?
-            .as_millis();
         // The folder appears next to the executable the first time something is recorded.
         let folder = self.data.join("recordings");
         std::fs::create_dir_all(&folder).map_err(err)?;
-        let path = folder.join(format!("receive-{now}.wav"));
+        let peer = self
+            .snapshot()
+            .calls
+            .iter()
+            .find(|call| call.id == id)
+            .map(|call| call.peer.clone())
+            .unwrap_or_default();
+        // Two recordings within a second with the same peer are told apart by a count.
+        let wanted = recording_name(&Self::stamp(), &peer);
+        let mut name = wanted.clone();
+        let mut count = 1;
+        while folder.join(&name).exists() {
+            count += 1;
+            name = wanted.replace(".wav", &format!("-{count}.wav"));
+        }
+        let path = folder.join(&name);
         self.request(
             "lab_record",
             &format!("{id} {}", path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?),
         )?;
+        self.recorded.lock().unwrap().insert(id.into(), name);
         let mut v = self.view.lock().unwrap();
         v.recording = true;
         v.recording_call = id.into();
@@ -1826,6 +1902,14 @@ impl AppState {
         }
         if snapshot.recording && target.as_deref() != Some(snapshot.recording_call.as_str()) {
             self.request("lab_record_select", target.as_deref().unwrap_or("-"))?;
+            // The file goes on with the call it was switched to.
+            if let Some(id) = &target {
+                let name = Path::new(&snapshot.recording_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.recorded.lock().unwrap().insert(id.clone(), name);
+            }
             self.view.lock().unwrap().recording_call = target.unwrap_or_default();
         } else if !snapshot.recording {
             if let Some(id) = target {
@@ -2506,6 +2590,14 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_is_named_after_its_start_and_the_peer() {
+        assert_eq!(recording_name("2026-09-23T14:30:12+09:00", "sip:1002@pbx.example:5060;transport=udp"), "2026-09-23_14-30-12_1002.wav");
+        assert_eq!(recording_name("2026-09-23T14:30:12+09:00", "<sips:+81-6-1234@pbx.example>"), "2026-09-23_14-30-12_+81-6-1234.wav");
+        assert_eq!(recording_name("2026-09-23T14:30:12+09:00", "sip:a b*c@pbx"), "2026-09-23_14-30-12_abc.wav");
+        assert_eq!(recording_name("2026-09-23T14:30:12+09:00", ""), "2026-09-23_14-30-12_call.wav");
+    }
+
+    #[test]
     fn the_call_history_is_appended_to_and_carried_over_from_the_old_file() {
         let dir = std::env::temp_dir().join(format!("ksip-history-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2515,6 +2607,7 @@ mod tests {
             direction: "OUTGOING".into(),
             peer: format!("sip:{n}@pbx"),
             duration: 1,
+            recording: String::new(),
         };
         // 0.0.5 kept an array, newest first.
         let old = serde_json::to_vec(&vec![call(2), call(1)]).unwrap();

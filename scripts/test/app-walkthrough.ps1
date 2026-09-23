@@ -47,6 +47,14 @@ try {
     Click-Id 'transfer';Wait-Class 'transfer-status' 'transfer-done'
     # History and logs are fetched apart from the snapshot, so both must still fill in.
     Wait-Text 'call-history' '\d+/\d+ \d+:\d+' | Out-Null
+    # The recorded call can be played from its row, and the file is named after
+    # when it started and whom it was with. Playing would open another program,
+    # so only the button and the file are checked.
+    $play=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'録音を再生')
+    if(!(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$play)){throw 'The recorded call has no play button'}
+    $wav=@(Get-ChildItem "$root/temp/build/test-ui-ksip/recordings" -Filter '*.wav' | Sort-Object LastWriteTime | Select-Object -Last 1)
+    if(!$wav -or $wav[0].Name -notmatch "^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_$extension\.wav$"){throw "The recording is named $($wav[0].Name)"}
+    'PASS: 録音した通話に「録音を再生」が出て、ファイル名は日時と相手番号'
     Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
     Click-Id 'history-tab'
     # The number can be taken to another application. The button sits in the row,
