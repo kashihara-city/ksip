@@ -28,8 +28,8 @@ if sys.argv[1]=='setup':
                  ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
                  # A button in the panel beside the phone, which makes the window twice as wide.
                  ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001'),
-                 ('button_8_title','DND'),('button_8_kind','dnd'),
-                 ('button_9_title','Voicemail'),('button_9_kind','mwi'),('button_9_number','*97')]
+                 ('button_8_kind','dnd'),
+                 ('button_9_kind','mwi'),('button_9_number','*97')]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.

@@ -84,6 +84,8 @@ try {
     # unseats it, so nothing may need the peer after this. While it is on, a
     # call never reaches the phone (the lab's voicemail takes it), and the
     # header says so.
+    # Left without a title, the switch names itself in the window's language.
+    Wait-Text 'custom-8' '^着信拒否' | Out-Null
     Click-Id 'custom-8';Wait-Class 'custom-8' 'dnd';Wait-Text 'registration' '着信拒否中' | Out-Null
     $base="$root/temp/build/ksip-ui"
     Remove-Item "$base/caller-done","$base/caller-ready","$base/caller-result.txt" -ErrorAction SilentlyContinue
@@ -101,7 +103,7 @@ try {
     # so also last) makes the button count one more and turn red.
     # The call refused above went to the box as well; its count arrives a moment later.
     Start-Sleep -Seconds 4
-    Wait-Text 'custom-9' '新着' | Out-Null
+    Wait-Text 'custom-9' '^留守番電話 新着' | Out-Null
     $before=if((Text-Id 'custom-9') -match '新着 (\d+) 件'){[int]$Matches[1]}else{0}
     python -X utf8 "$PSScriptRoot/app_fixture.py" voicemail
     if($LASTEXITCODE -ne 0){throw 'Leaving a voicemail failed'}

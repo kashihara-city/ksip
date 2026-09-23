@@ -155,6 +155,10 @@ function callSummary(call){
 }
 // The buttons a site defined, with their position, leaving out the unused ones.
 const configuredButtons=()=>(state.settings.buttons||[]).map((b,i)=>({...b,index:i+1})).filter(b=>b.kind);
+// A switch on the phone itself has a name of its own in the window's language,
+// used while the title is left empty; the other kinds fall back to the number.
+const defaultTitle=kind=>kind==='dnd'?t('BUTTON_TITLE_DND'):kind==='mwi'?t('BUTTON_TITLE_MWI'):'';
+const buttonTitle=b=>b.title||defaultTitle(b.kind)||b.number;
 // A URI may be written between angle brackets; the engine reports it bare.
 const address=text=>String(text||'').trim().replace(/^<\s*/,'').replace(/\s*>$/,'');
 const watchState=number=>state.parking?.find(slot=>slot.number===address(number))?.state||'UNKNOWN';
@@ -389,10 +393,10 @@ function renderButtonBox(box,configured,c){
     else if(b.kind==='dnd'){status=t(state.dnd?'DND_ON_STATUS':'DND_OFF_STATUS');enabled=true;}
     else if(b.kind==='mwi'){const m=state.mwi||{};status=m.new>0?fill('MWI_NEW',m.new):t('MWI_NONE');enabled=freeLine;}
     else{status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=s!=='UNKNOWN'&&(active?s==='IDLE':s==='INUSE'&&freeLine);}
-    button.firstChild.textContent=b.title||b.number;
+    button.firstChild.textContent=buttonTitle(b);
     // A button's children are presentational to assistive technology, so its
     // name carries the status as well as the title.
-    button.setAttribute('aria-label',(b.title||b.number)+' '+status);
+    button.setAttribute('aria-label',buttonTitle(b)+' '+status);
     $('custom-'+b.index+'-status').textContent=status;
     button.classList.toggle('occupied',watched&&s==='INUSE');
     button.classList.toggle('dnd',b.kind==='dnd'&&!!state.dnd);
@@ -438,7 +442,7 @@ $('transport').addEventListener('change',()=>{
 // what a button does can be read off the settings.
 function syncButtonRow(n){
   const kind=$('button_'+n+'_kind').value,watches=kind==='dial'||kind==='park';
-  $('button_'+n+'_title').disabled=!kind;$('button_'+n+'_number').disabled=!kind||kind==='dnd';
+  $('button_'+n+'_title').disabled=!kind;$('button_'+n+'_title').placeholder=defaultTitle(kind);$('button_'+n+'_number').disabled=!kind||kind==='dnd';
   $('button_'+n+'_transfer').disabled=kind!=='park';$('button_'+n+'_pickup').disabled=!watches;
   const set=side=>BUTTON_INDEXES.filter(k=>(k<=BUTTON_MAIN)===side&&$('button_'+k+'_kind').value).length;
   $('button-count').textContent=set(true)?fill('BUTTON_COUNT',set(true)):'';

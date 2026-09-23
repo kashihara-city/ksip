@@ -89,6 +89,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       BUTTON_PICKUP:'ダイヤル先（使用中のとき）',
       BUTTON_SECTION:'カスタムボタン',
       BUTTON_TITLE:'タイトル',
+      BUTTON_TITLE_DND:'着信拒否',
+      BUTTON_TITLE_MWI:'留守番電話',
       BUTTON_TRANSFER:'転送先（使用中でないとき）',
       BUTTON_TRANSFER_TO:'{0} へ転送',
       CALIBRATION_NOT_ENOUGH_DATA:'マイクから十分な測定データを取得できませんでした',

@@ -89,6 +89,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       BUTTON_PICKUP:'Dial target (when in use)',
       BUTTON_SECTION:'Custom buttons',
       BUTTON_TITLE:'Title',
+      BUTTON_TITLE_DND:'Do not disturb',
+      BUTTON_TITLE_MWI:'Voicemail',
       BUTTON_TRANSFER:'Transfer target (when not in use)',
       BUTTON_TRANSFER_TO:'Transfer to {0}',
       CALIBRATION_NOT_ENOUGH_DATA:'Not enough measurements were captured from the microphone',

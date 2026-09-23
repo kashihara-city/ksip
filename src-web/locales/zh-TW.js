@@ -89,6 +89,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       BUTTON_PICKUP:'撥號目標（使用中時）',
       BUTTON_SECTION:'自訂按鈕',
       BUTTON_TITLE:'標題',
+      BUTTON_TITLE_DND:'勿擾',
+      BUTTON_TITLE_MWI:'語音信箱',
       BUTTON_TRANSFER:'轉接目標（未使用時）',
       BUTTON_TRANSFER_TO:'轉接至 {0}',
       CALIBRATION_NOT_ENOUGH_DATA:'無法從麥克風取得足夠的量測資料',
