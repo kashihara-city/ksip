@@ -81,7 +81,8 @@ const two=value=>String(value).padStart(2,'0');
 function logTime(iso){const at=new Date(iso);return isNaN(at)?iso:(at.getMonth()+1)+'/'+at.getDate()+' '+at.getHours()+':'+two(at.getMinutes())+':'+two(at.getSeconds());}
 function logText(row){const body=row.code?t(row.code&&row.args?.length?JSON.stringify({code:row.code,args:row.args}):row.code):row.text;
   return body?logTime(row.time)+' ['+row.src+'] '+body:'';}
-const logBody=()=>logRows.map(logText).join('\n');
+// Newest first, as the call history is shown.
+const logBody=()=>logRows.map(logText).reverse().join('\n');
 const durationText=seconds=>String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)+unit:'—';
 const count=value=>Number.isFinite(value)?value.toLocaleString(language):'—';

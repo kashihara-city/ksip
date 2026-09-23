@@ -230,19 +230,25 @@ fn main() {
     if !link.is_empty() {
         // Hand the command over if the app is running. If it is not, start it
         // and wait for the pipe, so that a link works from a cold start too.
+        // This process has no window; what goes wrong is put in the app's log
+        // file, which the app picks up.
+        let failed = |what: &str| -> ! {
+            engine::append_log(&engine::data_dir(&storage::Store::new()), format!("protocol {link} {what}"));
+            std::process::exit(3)
+        };
         match protocol::send(&link) {
             Ok(true) => std::process::exit(0),
-            Err(_) => std::process::exit(3),
+            Err(e) => failed(&format!("could not be handed over: {e}")),
             Ok(false) => {}
         }
         if protocol::parse(&link) == Ok(protocol::Link::Quit) {
             std::process::exit(0);
         }
         let Ok(exe) = std::env::current_exe() else {
-            std::process::exit(3);
+            failed("could not start the app");
         };
         if std::process::Command::new(exe).spawn().is_err() {
-            std::process::exit(3);
+            failed("could not start the app");
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
         while std::time::Instant::now() < deadline {
@@ -251,7 +257,7 @@ fn main() {
                 std::process::exit(0);
             }
         }
-        std::process::exit(3);
+        failed("was not taken within 25 seconds of starting the app");
     }
 
     use windows_sys::Win32::{

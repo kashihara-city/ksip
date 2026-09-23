@@ -7,6 +7,8 @@ function Start-KsipProfile([string]$mode = '') {
     # Every app test runs against a throw-away registry profile and credential.
     $script:KsipOldProfile = $env:KSIP_TEST_PROFILE
     $env:KSIP_TEST_PROFILE = 'test-ui-ksip'
+    # The log file outlives a run, so only lines from this one are looked at.
+    $script:KsipLogSince = [DateTimeOffset]::Now.AddSeconds(-1)
     python -X utf8 $script:KsipFixture setup $mode
     if ($LASTEXITCODE -ne 0) { throw 'Test profile setup failed' }
 }
@@ -23,10 +25,12 @@ function Start-KsipFixturePeer([string]$mode, [string]$logDirectory) {
         -RedirectStandardOutput "$logDirectory/$mode-output.log" -RedirectStandardError "$logDirectory/$mode-error.log"
 }
 function Get-KsipLog {
-    # The app writes its log as rows of time, source and text.
-    $file = "$PSScriptRoot/../../temp/build/test-ui-ksip/ksip-log.json"
+    # The app appends its log one JSON object per line: time, source and text.
+    $file = "$PSScriptRoot/../../temp/build/test-ui-ksip/ksip-log.jsonl"
     if (!(Test-Path $file)) { return @() }
-    @(Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json)
+    $since = if ($script:KsipLogSince) { $script:KsipLogSince } else { [DateTimeOffset]::MinValue }
+    @(Get-Content $file -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { [DateTimeOffset]::Parse($_.time) -ge $since })
 }
 function Wait-KsipLog([string]$source, [string]$pattern, [int]$seconds = 15) {
     # The file is written at most once a second, so a line takes a moment to appear.

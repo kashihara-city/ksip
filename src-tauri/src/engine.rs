@@ -5,10 +5,10 @@ use serde_json::{json, Value};
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetLocalTime};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     net::{Ipv4Addr, Shutdown, TcpStream},
     os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -430,6 +430,7 @@ fn automatic_recording_target(enabled: bool, calls: &[CallInfo]) -> Option<Strin
         .flatten()
 }
 const LOG_LIMIT: usize = 1000;
+const LOG_FILE: &str = "ksip-log.jsonl";
 // Which layer a log line came from. It is written into the line so that a
 // support log shows at a glance whether the app or the engine said it.
 const LOG_APP: &str = "app";
@@ -472,11 +473,184 @@ impl LogLine {
         }
     }
 }
+/// The log tab and its file. The tab holds this run's last lines; the file is
+/// one JSON object per line and is only ever appended to, except when it has
+/// grown to twice the limit and is written afresh with what the tab holds.
+/// Another process appends to it too: the link handler, when there is
+/// nothing to hand a link to. Those lines are picked up from the file.
 struct Logs {
     entries: VecDeque<LogLine>,
     sequence: u64,
     flushed: Instant,
-    dirty: bool,
+    /// Lines at the back of `entries` that the file does not have yet.
+    unwritten: usize,
+    /// The file as it was last seen: how many lines, and where it ended.
+    file_lines: usize,
+    offset: u64,
+}
+impl Logs {
+    /// Takes stock of the file as it is. Nothing is read back: the tab shows
+    /// this run, and the file keeps the one before as well.
+    fn open(data: &Path) -> Self {
+        let (file_lines, offset) = std::fs::read(data.join(LOG_FILE))
+            .map(|bytes| (bytes.iter().filter(|b| **b == b'\n').count(), bytes.len() as u64))
+            .unwrap_or((0, 0));
+        Self {
+            entries: VecDeque::new(),
+            sequence: 0,
+            flushed: Instant::now(),
+            unwritten: 0,
+            file_lines,
+            offset,
+        }
+    }
+    fn push(&mut self, line: LogLine) {
+        self.entries.push_back(line);
+        self.sequence += 1;
+        self.unwritten += 1;
+        self.trim();
+    }
+    fn trim(&mut self) {
+        while self.entries.len() > LOG_LIMIT {
+            self.entries.pop_front();
+        }
+        self.unwritten = self.unwritten.min(self.entries.len());
+    }
+    /// Brings the file and the tab up to date with each other: lines another
+    /// process appended come in, the lines of this one go out. Appending only
+    /// what is new, at most once a second, is what keeps SIP tracing cheap.
+    fn sync(&mut self, data: &Path) {
+        self.flushed = Instant::now();
+        let path = data.join(LOG_FILE);
+        self.take_foreign(&path);
+        if self.unwritten > 0 {
+            let bytes = Self::lines(self.entries.iter().skip(self.entries.len() - self.unwritten));
+            let _ = std::fs::create_dir_all(data);
+            if append(&path, &bytes).is_ok() {
+                self.offset += bytes.len() as u64;
+                self.file_lines += self.unwritten;
+            }
+            self.unwritten = 0;
+        }
+        if self.file_lines > 2 * LOG_LIMIT {
+            self.shorten(&path);
+        }
+    }
+    /// Keeps the file's last lines, up to the limit. The file rather than the
+    /// tab is the source: after a start the tab holds only this run, and the
+    /// run before belongs in the file as much as this one.
+    fn shorten(&mut self, path: &Path) {
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        // The last line ends with the last newline; the kept lines start after
+        // the newline that ends the line before the first of them.
+        let mut newlines = 0;
+        let mut start = 0;
+        for (i, b) in bytes.iter().enumerate().rev() {
+            if *b == b'\n' {
+                newlines += 1;
+                if newlines > LOG_LIMIT {
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
+        if std::fs::write(path, &bytes[start..]).is_ok() {
+            self.offset = (bytes.len() - start) as u64;
+            self.file_lines = newlines.min(LOG_LIMIT);
+        }
+    }
+    /// Lines the file gained since it was last seen, from another process.
+    /// A line appended between this look and this process's own append is
+    /// only missed by the tab; the file has it.
+    fn take_foreign(&mut self, path: &Path) {
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return;
+        };
+        let Ok(len) = file.metadata().map(|m| m.len()) else {
+            return;
+        };
+        if len < self.offset {
+            // Someone emptied or replaced the file; it is taken as new.
+            self.offset = 0;
+            self.file_lines = 0;
+        }
+        if len == self.offset {
+            return;
+        }
+        let mut bytes = Vec::new();
+        if file.seek(SeekFrom::Start(self.offset)).is_err() || file.read_to_end(&mut bytes).is_err() {
+            return;
+        }
+        // Only whole lines count; one still being written waits for the next look.
+        let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        for line in bytes[..end].split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+            self.file_lines += 1;
+            if let Ok(entry) = serde_json::from_slice::<LogLine>(line) {
+                // In front of the unwritten lines: the file has this one already.
+                let at = self.entries.len() - self.unwritten;
+                self.entries.insert(at, entry);
+                self.sequence += 1;
+            }
+        }
+        self.trim();
+        self.offset += end as u64;
+    }
+    fn clear(&mut self, data: &Path) {
+        self.entries.clear();
+        // Restarting the sequence tells the window that its copy is stale.
+        self.sequence = 0;
+        self.unwritten = 0;
+        let _ = std::fs::write(data.join(LOG_FILE), b"");
+        self.offset = 0;
+        self.file_lines = 0;
+    }
+    fn lines<'a>(entries: impl Iterator<Item = &'a LogLine>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for line in entries {
+            if let Ok(json) = serde_json::to_vec(line) {
+                bytes.extend(json);
+                bytes.push(b'\n');
+            }
+        }
+        bytes
+    }
+}
+fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)?
+        .write_all(bytes)
+}
+/// One line from a process that is not the app: the link handler, when it
+/// has nothing to hand a link to. The app picks the line up from the file.
+pub fn append_log(data: &Path, body: String) {
+    let clean: String = body.chars().filter(|c| !c.is_control()).take(300).collect();
+    let bytes = Logs::lines(std::iter::once(&LogLine::new(AppState::stamp(), LOG_APP, clean)));
+    let _ = std::fs::create_dir_all(data);
+    let _ = append(&data.join(LOG_FILE), &bytes);
+}
+/// Where the running app keeps what it writes: beside the executable, so that
+/// a deployment is one folder that can be copied as it is. Test profiles keep
+/// theirs in the repository's temp/build. The repository is found from the
+/// executable, which the tests run from inside it (release/, temp/build/<test>/,
+/// temp/cargo-target/). Naming it at compile time would put the build machine's
+/// path into the product and make the binary depend on where it was built.
+pub fn data_dir(store: &Store) -> PathBuf {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let beside = exe.parent().map(PathBuf::from).unwrap_or_default();
+    if !store.target.starts_with("KSIP/Test/") {
+        return beside;
+    }
+    exe.ancestors()
+        .find(|dir| dir.join("src-tauri/Cargo.toml").is_file())
+        .map(|dir| {
+            dir.join("temp/build")
+                .join(store.target.rsplit('/').next().unwrap_or("test"))
+        })
+        .unwrap_or(beside)
 }
 struct History {
     rows: Vec<CallHistory>,
@@ -551,27 +725,10 @@ fn write_netstring(w: &mut impl Write, data: &[u8]) -> Result<(), String> {
 impl AppState {
     pub fn new() -> Self {
         let store = Store::new();
-        // Everything the running app reads or writes stays beside the executable,
-        // so a deployment is one folder that can be copied as it is. Nothing here
-        // may panic: the panic hook is only installed once this state exists.
-        let exe = std::env::current_exe().unwrap_or_default();
-        let beside = exe.parent().map(PathBuf::from).unwrap_or_default();
-        let data = if store.target.starts_with("KSIP/Test/") {
-            // Test profiles keep their data in the repository's temp/build. The
-            // repository is found from the executable, which the tests run from
-            // inside it (release/, temp/build/<test>/, temp/cargo-target/).
-            // Naming it at compile time would put the build machine's path into
-            // the product and make the binary depend on where it was built.
-            exe.ancestors()
-                .find(|dir| dir.join("src-tauri/Cargo.toml").is_file())
-                .map(|dir| {
-                    dir.join("temp/build")
-                        .join(store.target.rsplit('/').next().unwrap_or("test"))
-                })
-                .unwrap_or_else(|| beside.clone())
-        } else {
-            beside
-        };
+        // Nothing here may panic: the panic hook is only installed once this
+        // state exists.
+        let data = data_dir(&store);
+        let logs = Logs::open(&data);
         let loaded = store.read_settings::<Settings>();
         let mut startup_error = loaded.as_ref().err().cloned().unwrap_or_default();
         let mut settings = loaded.unwrap_or_default();
@@ -625,12 +782,7 @@ impl AppState {
             lines: Arc::new(Mutex::new(HashMap::new())),
             call_directions: Arc::new(Mutex::new(HashMap::new())),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
-            logs: Arc::new(Mutex::new(Logs {
-                entries: VecDeque::new(),
-                sequence: 0,
-                flushed: Instant::now(),
-                dirty: false,
-            })),
+            logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(History {
                 rows: call_history,
                 sequence: 0,
@@ -732,10 +884,8 @@ impl AppState {
             return;
         };
         let line = text.replace(['\r', '\n'], " ");
-        logs.entries.push_back(LogLine::new(Self::stamp(), LOG_APP, line));
-        logs.sequence += 1;
-        logs.dirty = true;
-        Self::write_logs(&self.data, &mut logs);
+        logs.push(LogLine::new(Self::stamp(), LOG_APP, line));
+        logs.sync(&self.data);
     }
     fn log(&self, source: &str, s: String) {
         let mut v = self.view.lock().unwrap();
@@ -765,36 +915,13 @@ impl AppState {
         }
         drop(v);
         let mut logs = self.logs.lock().unwrap();
-        logs.entries.push_back(LogLine::new(Self::stamp(), source, s));
-        logs.sequence += 1;
-        while logs.entries.len() > LOG_LIMIT {
-            logs.entries.pop_front();
-        }
-        logs.dirty = true;
-        // The file mirrors the log tab. Writing at most once a second keeps SIP tracing cheap.
+        logs.push(LogLine::new(Self::stamp(), source, s));
         if logs.flushed.elapsed() >= Duration::from_secs(1) {
-            Self::write_logs(&self.data, &mut logs);
-        }
-    }
-    fn write_logs(data: &PathBuf, logs: &mut Logs) {
-        if !logs.dirty {
-            return;
-        }
-        logs.flushed = Instant::now();
-        logs.dirty = false;
-        let rows: Vec<&LogLine> = logs.entries.iter().collect();
-        if let Ok(bytes) = serde_json::to_vec_pretty(&rows) {
-            let _ = std::fs::create_dir_all(data);
-            let _ = std::fs::write(data.join("ksip-log.json"), bytes);
+            logs.sync(&self.data);
         }
     }
     pub fn clear_logs(&self) {
-        let mut logs = self.logs.lock().unwrap();
-        logs.entries.clear();
-        // Restarting the sequence tells the window that its copy is stale.
-        logs.sequence = 0;
-        logs.dirty = true;
-        Self::write_logs(&self.data, &mut logs);
+        self.logs.lock().unwrap().clear(&self.data);
     }
     pub fn read_logs(&self, after: u64) -> LogPage {
         let logs = self.logs.lock().unwrap();
@@ -850,10 +977,11 @@ impl AppState {
     pub fn snapshot(&self) -> Snapshot {
         {
             // The file is written from log(), so a quiet moment would leave the
-            // last lines only in memory. Polling pushes them out.
+            // last lines only in memory, and what another process appended
+            // unseen. Polling keeps both moving.
             let mut logs = self.logs.lock().unwrap();
             if logs.flushed.elapsed() >= Duration::from_secs(1) {
-                Self::write_logs(&self.data, &mut logs);
+                logs.sync(&self.data);
             }
         }
         if let Ok(mut guard) = self.inner.try_lock() {
@@ -1221,8 +1349,6 @@ impl AppState {
             put(format!("audio_path {}", dir.to_string_lossy().replace('\\', "/")));
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
-        self.clear_logs();
-        // The log starts afresh with each start, so these are written after that.
         for (missing, kind) in [(microphone_missing, "microphone"), (speaker_missing, "speaker")] {
             if missing {
                 self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
@@ -1788,8 +1914,7 @@ impl AppState {
         v.registration = "DISCONNECTED".into();
         v.recording_call.clear();
         drop(v);
-        let mut logs = self.logs.lock().unwrap();
-        Self::write_logs(&self.data, &mut logs);
+        self.logs.lock().unwrap().sync(&self.data);
         Ok(())
     }
     pub fn open_licenses(&self) -> Result<(), String> {
@@ -2273,6 +2398,58 @@ mod tests {
         assert!(CustomButton::target_ok(" <sip:61@pbx.example> "));
         assert!(!CustomButton::target_ok("70-1"));
         assert!(!CustomButton::target_ok("voicemail"));
+    }
+
+    #[test]
+    fn the_log_file_is_appended_to_and_shared_with_another_process() {
+        let dir = std::env::temp_dir().join(format!("ksip-log-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(LOG_FILE);
+        let mut logs = Logs::open(&dir);
+        logs.push(LogLine::new("t1".into(), LOG_APP, "one".into()));
+        logs.push(LogLine::new("t2".into(), LOG_APP, "two".into()));
+        logs.sync(&dir);
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(written.lines().count(), 2, "{written}");
+        assert!(written.lines().all(|l| l.starts_with('{') && l.ends_with('}')));
+        // Another process appends a line; the next look brings it into the tab,
+        // and this process's own new line is appended after it.
+        append_log(&dir, "protocol ksip:x could not be handed over".into());
+        logs.push(LogLine::new("t3".into(), LOG_APP, "three".into()));
+        logs.sync(&dir);
+        let texts: Vec<&str> = logs.entries.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["one", "two", "protocol ksip:x could not be handed over", "three"]);
+        assert_eq!(logs.sequence, 4);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 4);
+        // Nothing is written when nothing is new, and the file is only rewritten
+        // once it holds twice the limit, then with what the tab holds.
+        let size = std::fs::metadata(&path).unwrap().len();
+        logs.sync(&dir);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), size);
+        // Lines arrive in bursts between syncs; the file grows past twice the
+        // limit on the third burst and is then written afresh.
+        let burst = 700;
+        for i in 0..3 * burst {
+            logs.push(LogLine::new("t".into(), LOG_APP, format!("line {i}")));
+            if (i + 1) % burst == 0 {
+                logs.sync(&dir);
+                let lines = std::fs::read_to_string(&path).unwrap().lines().count();
+                assert_eq!(lines, if i + 1 < 3 * burst { 4 + i + 1 } else { LOG_LIMIT }, "after line {i}");
+            }
+        }
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        assert!(rewritten.lines().last().unwrap().contains(&format!("line {}", 3 * burst - 1)));
+        // The file's own last lines are kept, four of which came before the bursts.
+        assert!(rewritten.lines().next().unwrap().contains(&format!("\"line {}\"", 3 * burst - LOG_LIMIT)));
+        // A second look at the same file starts from where it ends.
+        let again = Logs::open(&dir);
+        assert_eq!(again.file_lines, LOG_LIMIT);
+        assert_eq!(again.offset, std::fs::metadata(&path).unwrap().len());
+        logs.clear(&dir);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        assert_eq!((logs.sequence, logs.file_lines, logs.offset), (0, 0, 0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

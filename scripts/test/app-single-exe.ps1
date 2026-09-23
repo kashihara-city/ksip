@@ -9,7 +9,7 @@ $version=Get-KsipVersion
 $exe=Get-KsipReleaseExe $Folder
 # The folder holds the executables plus whatever the app writes while running.
 # Copies of earlier versions are kept there on purpose, for comparison.
-$allowedFiles='ksip.exe','call-history.json','ksip-log.json','ksip-notification.ico'
+$allowedFiles='ksip.exe','call-history.json','ksip-log.jsonl','ksip-notification.ico'
 $allowedPatterns='^ksip-v[0-9]+\.[0-9]+\.[0-9]+\.exe$'
 $allowedDirs='profile','recordings'
 function Assert-FolderContents([string]$stage){
