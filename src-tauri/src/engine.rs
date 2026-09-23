@@ -339,6 +339,31 @@ pub struct CallHistory {
     /// in progress, through a transfer for instance.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub recording: String,
+    /// How a call that never connected ended: the name of it (busy, not
+    /// found, missed...), empty for a call that was talked on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+/// Names what happened to a call that closed without being talked on, from
+/// the state it was in and the engine's closing words (a SIP answer such
+/// as `486 Busy Here`, or a note of its own).
+pub fn call_outcome(state: &str, incoming: bool, reason: &str, dnd: bool) -> String {
+    if state == "ESTABLISHED" {
+        return String::new();
+    }
+    if incoming {
+        return if dnd { message("HISTORY_REFUSED") } else { message("HISTORY_MISSED") };
+    }
+    let code: u16 = reason.split_whitespace().next().and_then(|c| c.parse().ok()).unwrap_or(0);
+    match code {
+        486 | 600 => message("HISTORY_BUSY"),
+        404 | 484 => message("HISTORY_NOT_FOUND"),
+        480 | 502 | 503 | 604 => message("HISTORY_UNAVAILABLE"),
+        403 | 603 => message("HISTORY_DECLINED"),
+        408 => message("HISTORY_NO_ANSWER"),
+        0 | 487 => message("HISTORY_CANCELLED"),
+        _ => message("HISTORY_FAILED"),
+    }
 }
 /// What a recording is called: when it started, and whom the call was with,
 /// so that the folder reads like the history. `2026-09-23_14-30-12_1002.wav`.
@@ -452,6 +477,10 @@ struct PhoneState {
     audio_processing_stats: Option<AudioProcessingStats>,
     #[serde(default)]
     mwi_summary: String,
+    /// Callers turned away by do not disturb since the last look: they never
+    /// show as calls, so the history hears of them here.
+    #[serde(default)]
+    refused: Vec<String>,
 }
 /// What the registrar is asked to call. A SIP URI is taken as written, one
 /// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
@@ -842,6 +871,8 @@ pub struct AppState {
     /// The recording file each call in progress has been put in, by call id,
     /// so that the history can point at it once the call ends.
     recorded: Arc<Mutex<HashMap<String, String>>>,
+    /// The engine's closing words for each call, by id, until the history takes them.
+    closed: Arc<Mutex<HashMap<String, String>>>,
     converting: Arc<AtomicU64>,
     auto_answered: Arc<Mutex<HashSet<String>>>,
     logs: Arc<Mutex<Logs>>,
@@ -947,6 +978,7 @@ impl AppState {
             lines: Arc::new(Mutex::new(HashMap::new())),
             call_directions: Arc::new(Mutex::new(HashMap::new())),
             recorded: Arc::new(Mutex::new(HashMap::new())),
+            closed: Arc::new(Mutex::new(HashMap::new())),
             converting: Arc::new(AtomicU64::new(0)),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
             logs: Arc::new(Mutex::new(logs)),
@@ -1688,6 +1720,11 @@ impl AppState {
             LOG_EVENT,
             format!("{} {}", kind, e["param"].as_str().unwrap_or("")),
         );
+        if kind == "CALL_CLOSED" {
+            if let Some(id) = e["id"].as_str() {
+                self.closed.lock().unwrap().insert(id.into(), e["param"].as_str().unwrap_or("").into());
+            }
+        }
         let mut v = self.view.lock().unwrap();
         if matches!(
             kind,
@@ -1722,7 +1759,21 @@ impl AppState {
             }
         }
         let mut recorded = self.recorded.lock().unwrap();
-        let ended: Vec<CallHistory> = previous
+        let mut closed = self.closed.lock().unwrap();
+        let dnd = phone.dnd;
+        let mut ended: Vec<CallHistory> = phone
+            .refused
+            .iter()
+            .map(|peer| CallHistory {
+                ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                direction: message("HISTORY_INCOMING"),
+                peer: peer.clone(),
+                duration: 0,
+                recording: String::new(),
+                outcome: message("HISTORY_REFUSED"),
+            })
+            .collect();
+        ended.extend(previous
             .iter()
             .filter(|old| !phone.calls.iter().any(|call| call.id == old.id))
             .map(|old| CallHistory {
@@ -1734,10 +1785,12 @@ impl AppState {
                 peer: old.peer.clone(),
                 duration: old.duration,
                 recording: recorded.remove(&old.id).unwrap_or_default(),
-            })
-            .collect();
+                outcome: call_outcome(&old.state, old.state == "INCOMING", &closed.remove(&old.id).unwrap_or_default(), dnd),
+            }));
         directions.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
         recorded.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
+        closed.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
+        drop(closed);
         drop(recorded);
         drop(directions);
         let mut lines = self.lines.lock().unwrap();
@@ -1771,6 +1824,13 @@ impl AppState {
         v.dnd = phone.dnd;
         drop(v);
         if !ended.is_empty() {
+            // A call of ours that never connected is said so, with the engine's
+            // words beside the name; the history keeps the name.
+            for call in &ended {
+                if !call.outcome.is_empty() && call.direction == message("HISTORY_OUTGOING") && call.outcome != message("HISTORY_CANCELLED") {
+                    self.show_error(message_with("CALL_NOT_CONNECTED", [&call.outcome]));
+                }
+            }
             self.history.lock().unwrap().add(&self.data, ended)?;
         }
         for id in answer_targets {
@@ -2777,6 +2837,7 @@ mod tests {
             peer: format!("sip:{n}@pbx"),
             duration: 1,
             recording: String::new(),
+            outcome: String::new(),
         };
         let path = dir.join(HISTORY_FILE);
         let mut history = History::open(&dir);
@@ -2808,6 +2869,20 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
         assert!(history.rows.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn how_a_call_ended_is_named() {
+        assert_eq!(call_outcome("ESTABLISHED", false, "Connection reset", false), "");
+        assert_eq!(call_outcome("OUTGOING", false, "486 Busy Here", false), message("HISTORY_BUSY"));
+        assert_eq!(call_outcome("RINGING", false, "404 Not Found", false), message("HISTORY_NOT_FOUND"));
+        assert_eq!(call_outcome("OUTGOING", false, "480 Temporarily Unavailable", false), message("HISTORY_UNAVAILABLE"));
+        assert_eq!(call_outcome("OUTGOING", false, "603 Decline", false), message("HISTORY_DECLINED"));
+        assert_eq!(call_outcome("OUTGOING", false, "408 Request Timeout", false), message("HISTORY_NO_ANSWER"));
+        assert_eq!(call_outcome("RINGING", false, "Rejected by user", false), message("HISTORY_CANCELLED"));
+        assert_eq!(call_outcome("OUTGOING", false, "500 Server Internal Error", false), message("HISTORY_FAILED"));
+        assert_eq!(call_outcome("INCOMING", true, "", false), message("HISTORY_MISSED"));
+        assert_eq!(call_outcome("INCOMING", true, "", true), message("HISTORY_REFUSED"));
     }
 
     #[test]

@@ -98,6 +98,7 @@ try {
         if($caller -and !$caller.HasExited){$caller.WaitForExit(15000) | Out-Null}
     }
     Click-Id 'custom-8';Wait-NoClass 'custom-8' 'dnd'
+    Wait-Text 'call-history' '着信拒否' | Out-Null
     'PASS: 着信拒否ボタンでONの間は着信が鳴らず、OFFで戻る'
     # Voicemail: a message left in the box (by a phone on the peer's account,
     # so also last) makes the button count one more and turn red.
