@@ -147,6 +147,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       LINE_2:'Call 2',
       LINK_OPEN_FAILED:'The link could not be opened ({0})',
       LINK_TARGET_INVALID:'Only an http:// or https:// URL set on a button can be opened',
+      LOGS_PAUSED:'Log display paused',
       MEDIA_UNENCRYPTED:'not encrypted',
       MICROPHONE_MUTED:'Muted in Windows',
       MICROPHONE_SILENT:'No input · sending silence',

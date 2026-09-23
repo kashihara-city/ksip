@@ -1,6 +1,7 @@
 ﻿# Drive the real app: registration, two lines, transfer, recording, tray, exit.
 param([string]$Folder = "$PSScriptRoot/../../temp/build/gui-ksip")
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms
 . "$PSScriptRoot/app-fixture.ps1"
 $root=Split-Path (Split-Path $PSScriptRoot)
 Use-KsipBuild $Folder $PSBoundParameters.ContainsKey('Folder')
@@ -59,6 +60,29 @@ try {
     $end=[DateTime]::UtcNow.AddSeconds(5)
     while((Get-Clipboard) -ne $number -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
     if((Get-Clipboard) -ne $number){throw "Clipboard has $(Get-Clipboard) instead of $number"}
+    # Selecting lines to copy holds the log still: the display says so, new
+    # lines wait, Ctrl+A then Ctrl+C takes the log, and a click elsewhere lets
+    # the lines in.
+    Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
+    Focus-Id 'logs'
+    Wait-Id 'logs-paused' | Out-Null
+    $held=Text-Id 'logs'
+    Set-Clipboard -Value 'まだコピーしていません'
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait('^c')
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \[' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \['){throw "Clipboard has $(Get-Clipboard) instead of log lines"}
+    Click-Id 'reconnect';Start-Sleep -Seconds 3;Wait-Class 'registration' 'reg-register_ok'
+    if(!(Find-Id 'logs-paused')){throw 'The log display resumed while the selection was still there'}
+    if((Text-Id 'logs') -ne $held){throw 'The log display changed while it was held'}
+    Click-At 'target'
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while((Find-Id 'logs-paused') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if(Find-Id 'logs-paused'){throw 'The log display is still held after clicking elsewhere'}
+    if((Text-Id 'logs') -eq $held){throw 'The lines that arrived meanwhile did not show'}
+    'PASS: ログを選択している間は表示が止まり、コピーでき、離れると追いつく'
     # Clearing asks first, and names the list that is in front.
     Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
     Click-Id 'clear-panel';Wait-Text 'confirm' 'ログをクリアします' | Out-Null

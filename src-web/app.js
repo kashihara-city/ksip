@@ -83,6 +83,29 @@ function logText(row){const body=row.code?t(row.code&&row.args?.length?JSON.stri
   return body?logTime(row.time)+' ['+row.src+'] '+body:'';}
 // Newest first, as the call history is shown.
 const logBody=()=>logRows.map(logText).reverse().join('\n');
+// The log tab is left alone while the person is in it, selecting lines to
+// copy: rewriting the text would drop the selection. Lines keep arriving
+// meanwhile and are shown the moment the tab is left.
+let logShown='';
+function logPaused(){
+  const logs=$('logs'),selection=document.getSelection();
+  return document.activeElement===logs||(!!selection&&!selection.isCollapsed&&logs.contains(selection.anchorNode));
+}
+function renderLogs(){
+  const paused=activePanel==='logs'&&logPaused();
+  $('logs-paused').hidden=!paused;
+  if(activePanel!=='logs'||paused)return;
+  const body=logBody();
+  if(body!==logShown){logShown=body;$('logs').textContent=body;}
+}
+$('logs').addEventListener('blur',renderLogs);
+document.addEventListener('selectionchange',renderLogs);
+// Ctrl+A in the log selects the log, not the whole window.
+$('logs').addEventListener('keydown',e=>{
+  if(e.key.toLowerCase()!=='a'||!(e.ctrlKey||e.metaKey))return;
+  e.preventDefault();const range=document.createRange();range.selectNodeContents($('logs'));
+  const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);
+});
 const durationText=seconds=>String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)+unit:'—';
 const count=value=>Number.isFinite(value)?value.toLocaleString(language):'—';
@@ -251,7 +274,7 @@ function render(){
     for(const id of ['aec-core','aec-delay','aec-levels','aec-flow'])$(id).textContent='';
   }
   $('error').textContent=t(error)||t(state.error)||'';$('error').hidden=!$('error').textContent;
-  $('call-history').hidden=activePanel!=='history';$('logs').hidden=activePanel!=='logs';$('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');$('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));if(activePanel==='logs')$('logs').textContent=logBody();
+  $('call-history').hidden=activePanel!=='history';$('logs').hidden=activePanel!=='logs';$('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');$('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));renderLogs();
   for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||state.calls.length>0||!state.account.has_password;}
   $('refresh-devices').disabled=busy||state.calls.length>0;
   $('save-settings').disabled=busy;$('close-settings').disabled=busy;for(const id of ['calibrate-aec','calibrate-aec-careful'])$(id).disabled=busy||state.calls.length>0;
@@ -404,7 +427,7 @@ $('clear-panel').addEventListener('click',async()=>{
   try{
     await invoke(history?'clear_call_history':'clear_logs');
     if(history){historyRows=[];historySequence=-1;renderHistory();}
-    else{logRows=[];logCursor=0;$('logs').textContent='';}
+    else{logRows=[];logCursor=0;logShown='';$('logs').textContent='';}
   }catch(e){error=String(e);logUi('clear panel',e);render();}
 });
 $('quit').addEventListener('click',async()=>{if(!state.calls.length||await ask(t('QUIT_CONFIRM')))invoke('quit_app');});
@@ -430,7 +453,7 @@ async function syncLogs(){
   logRows=page.from>logCursor?page.entries:logRows.concat(page.entries);
   if(logRows.length>1000)logRows=logRows.slice(-1000);
   logCursor=page.from+page.entries.length;
-  if(activePanel==='logs')$('logs').textContent=logBody();
+  renderLogs();
 }
 async function syncHistory(){
   const sequence=state.history_sequence??0;

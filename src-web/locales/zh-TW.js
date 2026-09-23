@@ -147,6 +147,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       LINE_2:'通話 2',
       LINK_OPEN_FAILED:'無法開啟連結（{0}）',
       LINK_TARGET_INVALID:'只能開啟按鈕中設定的 http:// 或 https:// 網址',
+      LOGS_PAUSED:'記錄顯示已暫停更新',
       MEDIA_UNENCRYPTED:'未加密',
       MICROPHONE_MUTED:'已在 Windows 靜音',
       MICROPHONE_SILENT:'沒有輸入 · 傳送靜音中',
