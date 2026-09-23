@@ -1876,6 +1876,11 @@ impl AppState {
                 .insert(result.trim().into(), line);
         }
         self.update_phone()?;
+        // An operation that went through supersedes whatever the banner said;
+        // choosing a line is not an operation on the phone.
+        if name != "select" {
+            self.view.lock().unwrap().error.clear();
+        }
         Ok(result)
     }
     pub fn stop(&self) -> Result<(), String> {

@@ -103,6 +103,11 @@ try {
         Send-Link 'ANSWER'
         Wait-Class 'line-1' 'call-established'
         'PASS: リンクから着信に応答した'
+        # The banner from the refused link goes once an operation has gone through.
+        $end=[DateTime]::UtcNow.AddSeconds(5)
+        while((Find-Id 'error') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 150}
+        if(Find-Id 'error'){throw "The error banner is still shown: $(Text-Id 'error')"}
+        'PASS: 次の操作が通るとエラー表示が消える'
         Send-Link 'HANGUP'
         Wait-Class 'line-1' 'call-idle'
     } finally {
