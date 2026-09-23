@@ -1096,6 +1096,11 @@ impl AppState {
         }
         rows
     }
+    /// Shows a recording named in the history in Explorer, selected.
+    pub fn open_recording_location(&self, name: &str) -> Result<(), String> {
+        let path = self.recording_file(name).ok_or_else(|| message("RECORDING_NOT_FOUND"))?;
+        crate::native::show_in_folder(&path)
+    }
     /// Plays a recording named in the history with whatever Windows plays
     /// sound files with. Only a file in the recordings folder can be named.
     pub fn open_recording(&self, name: &str) -> Result<(), String> {

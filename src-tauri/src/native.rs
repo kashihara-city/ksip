@@ -126,6 +126,36 @@ pub fn run_engine(args: &[String]) -> i32 {
     }
     result
 }
+/// Shows a file in Explorer, selected, in the window already showing its
+/// folder if there is one: what Explorer's own "open file location" does.
+pub fn show_in_folder(path: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: the path is null-terminated, the item list is freed here, and
+    // COM is left as it was found (an already initialised thread says so).
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let item = ILCreateFromPathW(wide.as_ptr());
+        let result = if item.is_null() {
+            Err(message("RECORDING_NOT_FOUND"))
+        } else {
+            let shown = SHOpenFolderAndSelectItems(item, 0, std::ptr::null(), 0);
+            ILFree(item);
+            if shown < 0 {
+                Err(message_with("RECORDING_OPEN_FAILED", [shown]))
+            } else {
+                Ok(())
+            }
+        };
+        if com.is_ok() {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
 /// Hands a web address to whatever the person reads the web with.
 pub fn open_url(url: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;

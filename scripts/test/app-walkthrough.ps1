@@ -51,8 +51,10 @@ try {
     # The recorded call can be played from its row, and the file is named after
     # when it started and whom it was with. Playing would open another program,
     # so only the button and the file are checked.
-    $play=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'録音を再生')
-    if(!(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$play)){throw 'The recorded call has no play button'}
+    foreach($label in '録音を再生','ファイルの場所を開く'){
+        $wanted=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,$label)
+        if(!(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$wanted)){throw "The recorded call has no $label button"}
+    }
     # Once the recording closed it is turned into an MP3 and the WAV goes.
     $end=[DateTime]::UtcNow.AddSeconds(20)
     do {

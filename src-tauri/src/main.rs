@@ -93,6 +93,10 @@ fn open_recording(name: String, state: State<AppState>) -> Result<(), String> {
     state.open_recording(&name)
 }
 #[tauri::command]
+fn open_recording_location(name: String, state: State<AppState>) -> Result<(), String> {
+    state.open_recording_location(&name)
+}
+#[tauri::command]
 async fn choose_sound_file(kind: Option<String>) -> Result<String, String> {
     let kind = kind.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || native::choose_file(&kind).unwrap_or_default())
@@ -305,6 +309,7 @@ fn main() {
             action,
             open_recordings,
             open_recording,
+            open_recording_location,
             choose_sound_file,
             read_logs,
             clear_call_history,
