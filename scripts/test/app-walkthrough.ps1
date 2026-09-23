@@ -19,6 +19,10 @@ try {
     Wait-Class 'registration' 'reg-register_ok'
     Wait-Id 'refresh-devices' | Out-Null
     Wait-Id 'open-sound-control' | Out-Null
+    # The icon beside the slider toggles Windows' own mute, and says so in red.
+    Click-Id 'microphone-mute';Wait-Class 'microphone-mute' 'muted';Wait-Text 'microphone-volume-status' 'ミュート中' | Out-Null
+    Click-Id 'microphone-mute';Wait-NoClass 'microphone-mute' 'muted'
+    'PASS: スライダー横のアイコンでWindowsのミュートを切り替えられる'
     foreach($id in @('microphone-volume','speaker-volume')){
         $range=(Wait-Id $id).GetCurrentPattern([Windows.Automation.RangeValuePattern]::Pattern)
         if($range.Current.Maximum -ne 200){throw "$id maximum is $($range.Current.Maximum)"}

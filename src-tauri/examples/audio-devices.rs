@@ -13,7 +13,7 @@ fn main() {
         let level = args.get(3).map(|v| v.parse::<u8>()).transpose();
         level
             .map_err(|e| e.to_string())
-            .and_then(|level| audio::volume(&args[1], &args[2], level))
+            .and_then(|level| audio::volume(&args[1], &args[2], level, None))
             .and_then(|v| serde_json::to_string(&v).map_err(|e| e.to_string()))
     } else if args.len() == 3 && args[0] == "peak" {
         audio::peak(&args[1], &args[2])

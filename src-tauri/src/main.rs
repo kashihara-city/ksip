@@ -147,10 +147,11 @@ async fn audio_volume(
     kind: String,
     device: String,
     level: Option<u16>,
+    mute: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<engine::Volume, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.volume(&kind, &device, level))
+    tauri::async_runtime::spawn_blocking(move || state.volume(&kind, &device, level, mute))
         .await
         .map_err(|e| e.to_string())?
 }

@@ -241,7 +241,11 @@ pub fn devices() -> Result<Vec<Device>, String> {
     }
     run().map_err(error)
 }
-pub fn volume(kind: &str, device_id: &str, level: Option<u8>) -> Result<Volume, String> {
+/// Reads the endpoint's level and mute, setting either first when asked. The
+/// mute is Windows' own, the one the tray flyout shows: what a headset's mute
+/// key or another program does is seen here, and what is done here is seen
+/// there.
+pub fn volume(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>) -> Result<Volume, String> {
     if !matches!(kind, "microphone" | "speaker")
         || device_id.is_empty()
         || device_id.len() > 500
@@ -250,7 +254,7 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>) -> Result<Volume, 
     {
         return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
     }
-    fn run(kind: &str, device_id: &str, level: Option<u8>) -> windows::core::Result<Volume> {
+    fn run(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>) -> windows::core::Result<Volume> {
         let _com = Com::new()?;
         unsafe {
             let enumerator: IMMDeviceEnumerator =
@@ -288,6 +292,9 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>) -> Result<Volume, 
                     }
                 }
             }
+            if let Some(mute) = mute {
+                control.SetMute(mute, std::ptr::null())?;
+            }
             Ok(Volume {
                 id: take_string(device.GetId()?)?,
                 level: (control.GetMasterVolumeLevelScalar()? * 100.0).round() as u16,
@@ -295,7 +302,7 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>) -> Result<Volume, 
             })
         }
     }
-    run(kind, device_id, level).map_err(error)
+    run(kind, device_id, level, mute).map_err(error)
 }
 
 pub fn peak(kind: &str, device_id: &str) -> Result<Peak, String> {

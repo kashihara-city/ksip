@@ -80,7 +80,7 @@ let state={running:false,calls:[],devices:[],transfer:{},account:{},settings:{}}
 let deviceKey='',activePanel='history';
 let logRows=[],logCursor=0,historyRows=[],historySequence=-1;
 const peakPending={microphone:false,speaker:false};
-const volumes=Object.fromEntries(kinds.map(k=>[k,{pending:false,dragging:false,available:false,sequence:0,queued:null}]));
+const volumes=Object.fromEntries(kinds.map(k=>[k,{pending:false,dragging:false,available:false,muted:false,sequence:0,queued:null}]));
 const callAt=n=>state.calls.find(c=>c.line===n);
 const current=()=>callAt(selected);
 const peerLabel=c=>c?.peer?.replace(/^sip:/,'').split('@')[0] || '—';
@@ -314,7 +314,7 @@ function render(){
   }
   $('error').textContent=t(error)||t(state.error)||'';$('error').hidden=!$('error').textContent;
   $('call-history').hidden=activePanel!=='history';$('logs').hidden=activePanel!=='logs';$('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');$('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));renderLogs();
-  for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||state.calls.length>0||!state.account.has_password;}
+  for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind+'-mute').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||state.calls.length>0||!state.account.has_password;}
   $('refresh-devices').disabled=busy||state.calls.length>0;
   $('save-settings').disabled=busy;$('close-settings').disabled=busy;for(const id of ['calibrate-aec','calibrate-aec-careful'])$(id).disabled=busy||state.calls.length>0;
 }
@@ -490,18 +490,26 @@ $('clear-panel').addEventListener('click',async()=>{
 });
 $('quit').addEventListener('click',async()=>{if(!state.calls.length||await ask(t('QUIT_CONFIRM')))invoke('quit_app');});
 function volumeDevice(kind){return state.running?state[kind+'_id']:state.settings[kind]||'default';}
-async function refreshVolume(kind,level=null){
+// The level and the mute are Windows' own for the device; either is set when
+// given, and both are read back, so the icons follow what a headset key or
+// another program did within a second.
+async function refreshVolume(kind,level=null,mute=null){
   const control=volumes[kind];if(!ready||busy||control.pending||control.dragging||control.pointer)return;
   const device=volumeDevice(kind),sequence=++control.sequence;control.pending=true;
-  try{const result=await invoke('audio_volume',{kind,device,level});if(sequence!==control.sequence||device!==volumeDevice(kind)||control.dragging)return;$(kind+'-volume').value=result.level;control.available=true;$(kind+'-level').textContent=result.level+'%';const notices=[];if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));if(state[kind+'_missing'])notices.push(t('AUDIO_DEVICE_FALLBACK'));if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));if(result.muted)notices.push(t('MICROPHONE_MUTED'));$(kind+'-volume-status').textContent=notices.join(' / ');}
+  try{const result=await invoke('audio_volume',{kind,device,level,mute});if(sequence!==control.sequence||device!==volumeDevice(kind)||control.dragging)return;$(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';const notices=[];if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));if(state[kind+'_missing'])notices.push(t('AUDIO_DEVICE_FALLBACK'));if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));if(result.muted)notices.push(t('MICROPHONE_MUTED'));$(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);}
   catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logUi('volume '+kind,e);}
-  finally{control.pending=false;const next=control.queued;control.queued=null;render();if(next&&next.device===volumeDevice(kind))refreshVolume(kind,next.level);}
+  finally{control.pending=false;const next=control.queued;control.queued=null;render();if(next&&next.device===volumeDevice(kind))refreshVolume(kind,next.level,next.mute);}
+}
+function showMute(kind,muted){
+  const control=volumes[kind],button=$(kind+'-mute'),label=t(muted?'AUDIO_UNMUTE':'AUDIO_MUTE');
+  control.muted=muted;button.classList.toggle('muted',muted);button.setAttribute('aria-pressed',String(muted));button.title=label;button.setAttribute('aria-label',label);
 }
 for(const kind of kinds){
   $(kind+'-volume').addEventListener('pointerdown',()=>{volumes[kind].pointer=true;});
   for(const type of ['pointerup','pointercancel'])window.addEventListener(type,()=>{volumes[kind].pointer=false;});
   $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;$(kind+'-level').textContent=slider.value+'%';});
-  $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;if(c.pending){++c.sequence;c.queued={device:volumeDevice(kind),level};}else refreshVolume(kind,level);});
+  $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;if(c.pending){++c.sequence;c.queued={device:volumeDevice(kind),level,mute:null};}else refreshVolume(kind,level);});
+  $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],mute=!c.muted;if(c.pending){++c.sequence;c.queued={device:volumeDevice(kind),level:null,mute};}else refreshVolume(kind,null,mute);});
 }
 async function syncLogs(){
   const sequence=state.log_sequence||0;

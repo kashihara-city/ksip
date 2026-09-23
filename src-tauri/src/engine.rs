@@ -1176,13 +1176,13 @@ impl AppState {
     pub fn set_window_visible(&self, visible: bool) {
         self.view.lock().unwrap().window_visible = visible;
     }
-    pub fn volume(&self, kind: &str, device: &str, level: Option<u16>) -> Result<Volume, String> {
+    pub fn volume(&self, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
         if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
             return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
         }
-        let _operation = level.map(|_| self.operations.lock().unwrap());
+        let _operation = (level.is_some() || mute.is_some()).then(|| self.operations.lock().unwrap());
         let mut result =
-            crate::audio::volume(kind, device, level.map(|value| value.min(100) as u8))?;
+            crate::audio::volume(kind, device, level.map(|value| value.min(100) as u8), mute)?;
         if let Some(level) = level {
             let gain = level.max(100);
             if self.snapshot().running {
@@ -1368,7 +1368,7 @@ impl AppState {
         // nothing is written back: the choice stands, and it is used again
         // once the device is back and the engine is started afresh.
         let mut microphone_missing = false;
-        let microphone = match self.volume("microphone", &s.microphone, None) {
+        let microphone = match self.volume("microphone", &s.microphone, None, None) {
             Ok(volume) => volume.id,
             Err(_) => {
                 microphone_missing = s.microphone != "default";
@@ -1379,11 +1379,11 @@ impl AppState {
             }
         };
         let mut speaker_missing = false;
-        let speaker = match self.volume("speaker", &s.speaker, None) {
+        let speaker = match self.volume("speaker", &s.speaker, None, None) {
             Ok(volume) => volume.id,
             Err(_) if s.speaker != "default" => {
                 speaker_missing = true;
-                self.volume("speaker", "default", None)?.id
+                self.volume("speaker", "default", None, None)?.id
             }
             Err(error) => return Err(error),
         };
@@ -2457,9 +2457,9 @@ mod tests {
     #[test]
     fn reject_invalid_volume_without_launching_helper() {
         let app = AppState::new();
-        assert!(app.volume("other", "default", None).is_err());
-        assert!(app.volume("speaker", "default", Some(201)).is_err());
-        assert!(app.volume("microphone", "bad\0id", None).is_err());
+        assert!(app.volume("other", "default", None, None).is_err());
+        assert!(app.volume("speaker", "default", Some(201), None).is_err());
+        assert!(app.volume("microphone", "bad\0id", None, None).is_err());
         assert!(app.peak("other", "default").is_err());
         assert!(app.peak("microphone", "bad\0id").is_err());
     }
