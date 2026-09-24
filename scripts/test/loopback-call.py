@@ -98,9 +98,10 @@ module_app account.dll
         self.sock.close();self.log.close()
 
 def stats(path):
+    # Stereo: the far end on the left is what these figures are about.
     with wave.open(str(path),'rb') as f:
-        assert f.getnchannels()==1 and f.getsampwidth()==2
-        rate=f.getframerate();s=array.array('h',f.readframes(f.getnframes()))
+        assert f.getnchannels()==2 and f.getsampwidth()==2
+        rate=f.getframerate();s=array.array('h',f.readframes(f.getnframes()))[0::2]
     assert len(s)>rate*2,(path,len(s),rate)
     return dict(rate=rate,samples=len(s),rms=math.sqrt(sum(x*x for x in s)/len(s)))
 

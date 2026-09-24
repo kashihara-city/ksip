@@ -35,11 +35,12 @@ def main():
     finally:
         phone.close()
 
+    # The recording is stereo: the far end on the left, this side on the right.
     with wave.open(str(received), "rb") as wav:
-        assert wav.getnchannels() == 1
+        assert wav.getnchannels() == 2
         assert wav.getsampwidth() == 2
         assert wav.getframerate() == 48000
-        samples = array("h", wav.readframes(wav.getnframes()))
+        samples = array("h", wav.readframes(wav.getnframes()))[0::2]
     assert len(samples) >= 48000 * 6, len(samples)
     rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
     peak = max(abs(sample) for sample in samples)

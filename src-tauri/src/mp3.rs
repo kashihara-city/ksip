@@ -16,8 +16,12 @@ use windows::Win32::Media::MediaFoundation::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
-/// Call audio at 64 kbit/s: a twelfth of the WAV, and every word intact.
+/// Call audio at 64 kbit/s: a twelfth of the WAV, and every word intact. The
+/// stereo recording (far end left, this side right) takes 128 kbit/s: the
+/// encoder Windows ships has no 64 kbit/s stereo mode, and this is its lowest
+/// that keeps both channels apart.
 const BITRATE: u32 = 64_000;
+const STEREO_BITRATE: u32 = 128_000;
 
 /// Writes `mp3` from `wav`. The caller decides what happens to the WAV.
 pub fn transcode(wav: &Path, mp3: &Path) -> Result<(), String> {
@@ -65,7 +69,8 @@ unsafe fn encode(
     out.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_MP3).map_err(|e| failed("type", e))?;
     out.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, out_rate).map_err(|e| failed("type", e))?;
     out.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, channels.min(2)).map_err(|e| failed("type", e))?;
-    out.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, BITRATE / 8).map_err(|e| failed("type", e))?;
+    let bitrate = if channels >= 2 { STEREO_BITRATE } else { BITRATE };
+    out.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bitrate / 8).map_err(|e| failed("type", e))?;
     let index = writer.AddStream(&out).map_err(|e| failed("encoder", e))?;
     writer.SetInputMediaType(index, &input, None).map_err(|e| failed("input", e))?;
     writer.BeginWriting().map_err(|e| failed("begin", e))?;
@@ -89,11 +94,15 @@ unsafe fn encode(
 mod tests {
     use super::*;
 
-    /// A second of a tone, as the engine would have written it.
-    fn wav(path: &Path, rate: u32) {
+    /// A second of a tone, as the engine would have written it; two channels
+    /// carry the same tone on both sides.
+    fn wav(path: &Path, rate: u32, channels: u16) {
         let mut bytes = Vec::new();
         let samples: Vec<i16> = (0..rate)
-            .map(|i| ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 12000.0) as i16)
+            .flat_map(|i| {
+                let value = ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 12000.0) as i16;
+                std::iter::repeat_n(value, channels as usize)
+            })
             .collect();
         let data = samples.len() as u32 * 2;
         bytes.extend(b"RIFF");
@@ -101,10 +110,10 @@ mod tests {
         bytes.extend(b"WAVEfmt ");
         bytes.extend(16u32.to_le_bytes());
         bytes.extend(1u16.to_le_bytes());
-        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(channels.to_le_bytes());
         bytes.extend(rate.to_le_bytes());
-        bytes.extend((rate * 2).to_le_bytes());
-        bytes.extend(2u16.to_le_bytes());
+        bytes.extend((rate * 2 * channels as u32).to_le_bytes());
+        bytes.extend((2 * channels).to_le_bytes());
         bytes.extend(16u16.to_le_bytes());
         bytes.extend(b"data");
         bytes.extend(data.to_le_bytes());
@@ -122,12 +131,19 @@ mod tests {
         for rate in [48_000u32, 16_000, 8_000] {
             let source = dir.join(format!("{rate}.wav"));
             let target = dir.join(format!("{rate}.mp3"));
-            wav(&source, rate);
+            wav(&source, rate, 1);
             transcode(&source, &target).unwrap_or_else(|e| panic!("{rate} Hz: {e}"));
             // A second at 64 kbit/s is 8000 bytes, plus a little framing.
             let mp3 = std::fs::metadata(&target).unwrap().len();
             assert!((6_000..12_000).contains(&mp3), "{rate} Hz gave {mp3} bytes");
         }
+        // The stereo call recording, at twice the rate.
+        let source = dir.join("stereo.wav");
+        let target = dir.join("stereo.mp3");
+        wav(&source, 48_000, 2);
+        transcode(&source, &target).unwrap_or_else(|e| panic!("stereo: {e}"));
+        let mp3 = std::fs::metadata(&target).unwrap().len();
+        assert!((12_000..24_000).contains(&mp3), "stereo gave {mp3} bytes");
         assert!(transcode(&dir.join("missing.wav"), &dir.join("missing.mp3")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

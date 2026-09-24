@@ -1,4 +1,5 @@
-// Post-SIP test tools: bounded asynchronous receive-only WAV recording.
+// Post-SIP test tools: bounded asynchronous WAV recording of a call, the far
+// end on the left and this side on the right.
 #include <cmath>
 #include <re.h>
 #include <rem.h>
@@ -20,9 +21,17 @@ namespace {
 struct Recorder {
     std::mutex mutex;
     std::condition_variable wake;
-    std::array<int16_t, 48000 * 10> ring{};
-    size_t rd=0, wr=0, count=0;
-    uint32_t rate=0, channels=0;
+    // Left: what the far end sent. Right: what this side sent it, after the
+    // echo canceller and the microphone gain, so the file shows what each
+    // party heard. The two come from different threads; the far side paces
+    // the file, the near side is taken as far as it has come, with zeros
+    // filling in, and is thinned when it runs more than this far ahead.
+    static constexpr size_t kNearSlack = 48000 / 5;
+    // ("far" and "near" are macros in the Windows headers.)
+    std::array<int16_t, 48000 * 10> remote{}, local{};
+    size_t far_rd=0, far_wr=0, far_count=0, near_rd=0, near_wr=0, near_count=0;
+    uint32_t rate=0;
+    static constexpr uint32_t channels=2;
     uint64_t bytes=0, dropped=0;
     bool done=false, failed=false;
     FILE *file=nullptr;
@@ -35,23 +44,28 @@ struct Recorder {
         le32(file,rate); le32(file,rate*channels*2); le16(file,(uint16_t)(channels*2)); le16(file,16);
         fwrite("data",1,4,file); le32(file,(uint32_t)bytes);
     }
-    explicit Recorder(const char *path, uint32_t sr, uint32_t ch):rate(sr),channels(ch) {
+    explicit Recorder(const char *path, uint32_t sr):rate(sr) {
         file=_wfopen(std::filesystem::u8path(path).c_str(),L"wb");
         if (!file) return;
         header();
         worker=std::thread([this] {
-            std::array<int16_t,8192> buf;
+            std::array<int16_t,8192> buf; // 4096 frames of two channels
             for (;;) {
                 size_t n;
                 { std::unique_lock<std::mutex> lock(mutex);
-                  wake.wait(lock,[this]{return done || count;});
-                  if (!count && done) break;
-                  n=std::min(count,buf.size());
-                  for(size_t i=0;i<n;++i) {buf[i]=ring[rd];rd=(rd+1)%ring.size();}
-                  count-=n;
+                  wake.wait(lock,[this]{return done || far_count;});
+                  if (!far_count && done) break;
+                  n=std::min(far_count,buf.size()/2);
+                  if(near_count>n+kNearSlack) {size_t excess=near_count-n-kNearSlack;near_rd=(near_rd+excess)%local.size();near_count-=excess;}
+                  for(size_t i=0;i<n;++i) {
+                      buf[2*i]=remote[far_rd];far_rd=(far_rd+1)%remote.size();
+                      if(near_count) {buf[2*i+1]=local[near_rd];near_rd=(near_rd+1)%local.size();--near_count;}
+                      else buf[2*i+1]=0;
+                  }
+                  far_count-=n;
                 }
-                if(bytes+n*2>0xffff0000ULL || fwrite(buf.data(),2,n,file)!=n) {failed=true;break;}
-                bytes+=n*2;
+                if(bytes+n*4>0xffff0000ULL || fwrite(buf.data(),2,2*n,file)!=2*n) {failed=true;break;}
+                bytes+=n*4;
             }
             header(); if(ferror(file) || fflush(file)!=0) failed=true;
         });
@@ -64,38 +78,59 @@ struct Recorder {
         return !failed && !dropped;
     }
     ~Recorder() {finish();}
-    void push(const auframe *f) {
+    static bool readable(const auframe *f) { return f->fmt==AUFMT_S16LE || f->fmt==AUFMT_FLOAT; }
+    // One sample of one channel; a frame with more channels gives its first.
+    static int16_t sample(const auframe *f,size_t frame) {
+        size_t at=frame*std::max<size_t>(f->ch,1);
+        if(f->fmt==AUFMT_S16LE) return ((int16_t*)f->sampv)[at];
+        return (int16_t)std::clamp(((float*)f->sampv)[at]*32768.f,-32768.f,32767.f);
+    }
+    static size_t frames(const auframe *f) { return f->sampc/std::max<size_t>(f->ch,1); }
+    void push_far(const auframe *f) {
         std::lock_guard<std::mutex> lock(mutex);
-        if(!file || done)return;
-        for(size_t i=0;i<f->sampc;++i) {
-            if(count==ring.size()) {dropped+=f->sampc-i;break;}
-            int16_t sample;
-            if(f->fmt==AUFMT_S16LE) sample=((int16_t*)f->sampv)[i];
-            else if(f->fmt==AUFMT_FLOAT) sample=(int16_t)std::clamp(((float*)f->sampv)[i]*32768.f,-32768.f,32767.f);
-            else return;
-            ring[wr]=sample;wr=(wr+1)%ring.size();++count;
+        if(!file || done || !readable(f))return;
+        const size_t n=frames(f);
+        for(size_t i=0;i<n;++i) {
+            if(far_count==remote.size()) {dropped+=n-i;break;}
+            remote[far_wr]=sample(f,i);far_wr=(far_wr+1)%remote.size();++far_count;
         }
         wake.notify_one();
+    }
+    void push_near(const auframe *f) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if(!file || done || !readable(f))return;
+        const size_t n=frames(f);
+        // The near side never fails the recording: what does not fit is left out.
+        for(size_t i=0;i<n && near_count<local.size();++i) {
+            local[near_wr]=sample(f,i);near_wr=(near_wr+1)%local.size();++near_count;
+        }
     }
 };
 std::mutex gate;
 std::unique_ptr<Recorder> recording;
 std::atomic<float> microphone_gain{1.f};
 std::atomic<float> speaker_gain{1.f};
-struct Encode {aufilt_enc_st base;};
+struct Encode {aufilt_enc_st base; const audio *stream;};
 struct Decode {aufilt_dec_st base; const audio *stream; uint32_t rate,channels;};
 std::unordered_map<const audio*,Decode*> decoders;
 const audio *recording_audio=nullptr;
+// The call whose decode filter was last taken away while it was being
+// recorded. baresip flushes and remakes the receive filters of a call when
+// the far end changes codec in the middle of it (a PBX that answers with
+// PCMU and then sends Opus does that on every call); the same audio object
+// comes straight back, and the recording must go on with it. A call that
+// ended does not come back, and Rust stops or moves the recording then.
+const audio *detached_audio=nullptr;
 // A call reports ESTABLISHED before its decode filter exists, so a requested
 // target is held here and bound as soon as the filter appears.
 std::string reserved_call, reserved_path;
-bool begin_recording(const std::string &path,uint32_t rate,uint32_t channels,const audio *stream) {
+bool begin_recording(const std::string &path,uint32_t rate,const audio *stream) {
     try {
-        auto r=std::make_unique<Recorder>(path.c_str(),rate,channels);
+        auto r=std::make_unique<Recorder>(path.c_str(),rate);
         if(!r->file)return false;
         recording=std::move(r);
     } catch(...) {return false;}
-    recording_audio=stream;return true;
+    recording_audio=stream;detached_audio=nullptr;return true;
 }
 void destroy(void *p) {
     auto d=static_cast<Decode*>(p);list_unlink(&d->base.le);
@@ -103,13 +138,14 @@ void destroy(void *p) {
     decoders.erase(d->stream);
     // Keep the WAV session alive when a call ends. Rust may select the other
     // line next, so destroying one decoder must not split the recording.
-    if(recording_audio==d->stream)recording_audio=nullptr;
+    if(recording_audio==d->stream) {recording_audio=nullptr;detached_audio=d->stream;}
 }
 void destroy_encode(void *p) {auto e=static_cast<Encode*>(p);list_unlink(&e->base.le);}
-int update_encode(aufilt_enc_st **st, void**, const aufilt*, aufilt_prm*, const audio*) {
+int update_encode(aufilt_enc_st **st, void**, const aufilt*, aufilt_prm*, const audio *stream) {
     if(*st)return 0;
     auto e=(Encode*)mem_zalloc(sizeof(Encode),destroy_encode);
     if(!e)return ENOMEM;
+    e->stream=stream;
     *st=&e->base;return 0;
 }
 void amplify(auframe *f,float gain) {
@@ -123,7 +159,11 @@ void amplify(auframe *f,float gain) {
         for(size_t i=0;i<f->sampc;++i)samples[i]=std::clamp(samples[i]*gain,-1.f,1.f);
     }
 }
-int process_encode(aufilt_enc_st*,auframe *f) {amplify(f,microphone_gain.load(std::memory_order_relaxed));return 0;}
+int process_encode(aufilt_enc_st *st,auframe *f) {
+    amplify(f,microphone_gain.load(std::memory_order_relaxed));
+    {std::lock_guard<std::mutex> lock(gate);if(recording && recording_audio==reinterpret_cast<Encode*>(st)->stream)recording->push_near(f);}
+    return 0;
+}
 int update_decode(aufilt_dec_st **st, void**, const aufilt*, aufilt_prm *p, const audio *stream) {
     if(*st)return 0;
     auto d=(Decode*)mem_zalloc(sizeof(Decode),destroy);
@@ -131,11 +171,15 @@ int update_decode(aufilt_dec_st **st, void**, const aufilt*, aufilt_prm *p, cons
     {
         std::lock_guard<std::mutex> lock(gate);
         d->stream=stream;d->rate=p->srate;d->channels=p->ch;decoders[stream]=d;
+        if(recording && !recording_audio && detached_audio==stream) {
+            recording_audio=stream;detached_audio=nullptr;
+            info("postlab: receive recording goes on with the call's new decoder\n");
+        }
         if(!reserved_call.empty()) {
             auto c=uag_call_find(reserved_call.c_str());
             if(c && call_audio(c)==stream) {
                 bool ok=reserved_path.empty() ? (recording_audio=stream,true)
-                                              : begin_recording(reserved_path,p->srate,p->ch,stream);
+                                              : begin_recording(reserved_path,p->srate,stream);
                 if(ok)info("postlab: receive recording bound to the reserved call\n");
                 else warning("postlab: cannot open the reserved WAV file\n");
                 reserved_call.clear();reserved_path.clear();
@@ -145,7 +189,7 @@ int update_decode(aufilt_dec_st **st, void**, const aufilt*, aufilt_prm *p, cons
     *st=&d->base; return 0;
 }
 int process_decode(aufilt_dec_st *st,auframe *f) {
-    {std::lock_guard<std::mutex> lock(gate);if(recording && recording_audio==reinterpret_cast<Decode*>(st)->stream)recording->push(f);}
+    {std::lock_guard<std::mutex> lock(gate);if(recording && recording_audio==reinterpret_cast<Decode*>(st)->stream)recording->push_far(f);}
     amplify(f,speaker_gain.load(std::memory_order_relaxed));return 0;
 }
 int start(re_printf *pf, void *arg) {
@@ -168,13 +212,13 @@ int start(re_printf *pf, void *arg) {
         reserved_call=id;reserved_path=path;
         return re_hprintf(pf,"Receive-only recording reserved\n");
     }
-    if(!begin_recording(path,found->second->rate,found->second->channels,target))
+    if(!begin_recording(path,found->second->rate,target))
         return re_hprintf(pf,"Cannot open WAV file\n"), EIO;
-    return re_hprintf(pf,"Receive-only recording started\n");
+    return re_hprintf(pf,"Recording started\n");
 }
 int stop(re_printf *pf,void*) {
     std::lock_guard<std::mutex> lock(gate);
-    reserved_call.clear();reserved_path.clear();
+    reserved_call.clear();reserved_path.clear();detached_audio=nullptr;
     if(recording && !recording->finish()) {
         recording.reset();re_hprintf(pf,"WAV write failed or samples were dropped; recording is incomplete\n");return EIO;
     }
@@ -185,6 +229,7 @@ int select_recording(re_printf *pf,void *arg) {
     if(!a || !str_isset(a->prm))return EINVAL;
     std::lock_guard<std::mutex> lock(gate);
     if(!recording && reserved_path.empty())return ENOENT;
+    detached_audio=nullptr;
     if(strcmp(a->prm,"-")==0) {
         recording_audio=nullptr;reserved_call.clear();
         return re_hprintf(pf,"Receive recording input paused\n");
@@ -199,7 +244,7 @@ int select_recording(re_printf *pf,void *arg) {
         return re_hprintf(pf,"Receive recording input reserved\n");
     }
     if(!reserved_path.empty()) {
-        if(!begin_recording(reserved_path,found->second->rate,found->second->channels,target))
+        if(!begin_recording(reserved_path,found->second->rate,target))
             return re_hprintf(pf,"Cannot open WAV file\n"), EIO;
         reserved_path.clear();
     }
