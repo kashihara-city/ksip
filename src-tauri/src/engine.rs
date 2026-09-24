@@ -1653,7 +1653,10 @@ impl AppState {
         for line in [
             "sip_cuser_random no",
             "call_max_calls 2",
-            "call_hold_other_calls yes",
+            // The engine module holds the other calls itself: baresip's own
+            // rule would also hold the call being talked on when a second
+            // call is answered by the far end, which took the person away.
+            "call_hold_other_calls no",
             "call_accept no",
             "call_local_timeout 120",
         ] {

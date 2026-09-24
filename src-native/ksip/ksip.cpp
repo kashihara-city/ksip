@@ -35,6 +35,28 @@ bool sip_message_log=false;
 uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
 call *find(const std::string &id) { return id.empty() ? nullptr : uag_call_find(id.c_str()); }
+// Puts every call being talked on, other than the given one, on hold. The
+// module does this itself (call_hold_other_calls is off): baresip would also
+// do it when a second call is answered by the far end, and that took the
+// person away from the call they had gone back to.
+int hold_others(call *except) {
+    int err=0;
+    for (le *u=list_head(uag_list());u;u=u->next)
+        for (le *l=list_head(ua_calls(static_cast<ua*>(u->data)));l;l=l->next) {
+            auto other=static_cast<call*>(l->data);
+            if (other!=except && call_state(other)==CALL_STATE_ESTABLISHED && !call_is_onhold(other)) err|=call_hold(other,true);
+        }
+    return err;
+}
+// Whether some other call is being talked on right now.
+bool talking_elsewhere(call *except) {
+    for (le *u=list_head(uag_list());u;u=u->next)
+        for (le *l=list_head(ua_calls(static_cast<ua*>(u->data)));l;l=l->next) {
+            auto other=static_cast<call*>(l->data);
+            if (other!=except && call_state(other)==CALL_STATE_ESTABLISHED && !call_is_onhold(other)) return true;
+        }
+    return false;
+}
 bool transfer_reversed=false;
 // Set when this phone was taken off the server on purpose. The 200 OK for a
 // de-registration arrives as a register event, which must not undo it.
@@ -305,6 +327,13 @@ void event(bevent_ev ev, bevent *e, void*) {
     auto c=bevent_get_call(e);
     if (!c || !call_id(c)) return;
     std::string id=call_id(c);
+    if (ev==BEVENT_CALL_ESTABLISHED && talking_elsewhere(c)) {
+        // The far end answered a call while the person was talking on another
+        // one (they had gone back to it while this one rang). The person stays
+        // where they are; this call waits on hold until they switch to it.
+        info("ksip: call answered while another is active, holding it\n");
+        call_hold(c,true);
+    }
     if (ev==BEVENT_CALL_INCOMING && dnd) {
         info("ksip: dnd, incoming call refused as busy\n");
         refused.push_back(call_peeruri(c) ? call_peeruri(c) : "");
@@ -466,12 +495,7 @@ int action(re_printf *pf, void *arg) {
         // hold resumes whichever other call is, which swapped the two calls
         // when the person clicked the line they were already talking on.
         if (c && call_state(c)==CALL_STATE_ESTABLISHED) return call_is_onhold(c) ? uag_hold_resume(c) : 0;
-        for (le *u=list_head(uag_list());u;u=u->next)
-            for (le *l=list_head(ua_calls(static_cast<ua*>(u->data)));l;l=l->next) {
-                auto other=static_cast<call*>(l->data);
-                if (other!=c && call_state(other)==CALL_STATE_ESTABLISHED && !call_is_onhold(other)) err|=call_hold(other,true);
-            }
-        return err;
+        return hold_others(c);
     }
     if (op=="dial" || op=="consult") {
         if (!account_ua || !ua_isregistered(account_ua)) return EAGAIN;
@@ -535,7 +559,7 @@ int action(re_printf *pf, void *arg) {
         return 0;
     }
     if (!c) return ENOENT;
-    if (op=="answer") { err=uag_hold_others(c);return err ? err : ua_answer(call_get_ua(c),c,VIDMODE_OFF); }
+    if (op=="answer") { err=hold_others(c);return err ? err : ua_answer(call_get_ua(c),c,VIDMODE_OFF); }
     if (op=="hangup") {ua_hangup(call_get_ua(c),c,0,nullptr);return 0;}
     if (op=="hold") return call_state(c)==CALL_STATE_ESTABLISHED ? call_hold(c,true) : EINVAL;
     if (op=="resume") return call_state(c)==CALL_STATE_ESTABLISHED ? uag_hold_resume(c) : EINVAL;
