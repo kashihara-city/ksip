@@ -339,6 +339,10 @@ struct ksip_audio final : public webrtc::AudioTransport {
   std::string recording_id;
   std::string playout_name;
   std::string playout_id;
+  // What the last start asked for, as it asked ("default" included), so that
+  // a start for the same endpoint can take over the running stream.
+  std::string recording_request;
+  std::string playout_request;
   ksip_audio_render_cb render_callback = nullptr;
   void *render_arg = nullptr;
   ksip_audio_capture_cb capture_callback = nullptr;
@@ -416,10 +420,30 @@ extern "C" void ksip_audio_destroy(ksip_audio *audio) {
 }
 extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
     ksip_audio_render_cb callback, void *arg) {
-  if (!audio || !callback || audio->adm->Playing()) return -1;
+  if (!audio || !callback) return -1;
+  const std::string request = id && id[0] ? id : "default";
+  if (audio->adm->Playing()) {
+    // A stream kept running on the same endpoint is taken over as it is; a
+    // different endpoint means the device really changes.
+    bool same;
+    {
+      std::lock_guard<std::mutex> lock(audio->device_mutex);
+      same = audio->playout_request == request;
+    }
+    if (same) {
+      std::lock_guard<std::mutex> lock(audio->callback_mutex);
+      audio->render_callback = callback; audio->render_arg = arg;
+      return 0;
+    }
+    ksip_audio_stop_playout(audio);
+  }
   if (!audio->adm->Recording() && audio->ResetDiagnostics()) return -4;
   if (audio->SetDevice(id, true)) return -5;
   if (audio->adm->InitPlayout()) return -2;
+  {
+    std::lock_guard<std::mutex> lock(audio->device_mutex);
+    audio->playout_request = request;
+  }
   {
     std::lock_guard<std::mutex> lock(audio->callback_mutex);
     audio->render_callback = callback; audio->render_arg = arg;
@@ -437,12 +461,39 @@ extern "C" void ksip_audio_stop_playout(ksip_audio *audio) {
   std::lock_guard<std::mutex> lock(audio->callback_mutex);
   audio->render_callback = nullptr; audio->render_arg = nullptr;
 }
+extern "C" void ksip_audio_detach_playout(ksip_audio *audio) {
+  if (!audio) return;
+  // Without a callback the stream renders silence until the next start.
+  std::lock_guard<std::mutex> lock(audio->callback_mutex);
+  audio->render_callback = nullptr; audio->render_arg = nullptr;
+}
+extern "C" int ksip_audio_playout_running(ksip_audio *audio) {
+  return audio && audio->adm->Playing();
+}
 extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
     ksip_audio_capture_cb callback, void *arg) {
-  if (!audio || !callback || audio->adm->Recording()) return -1;
+  if (!audio || !callback) return -1;
+  const std::string request = id && id[0] ? id : "default";
+  if (audio->adm->Recording()) {
+    bool same;
+    {
+      std::lock_guard<std::mutex> lock(audio->device_mutex);
+      same = audio->recording_request == request;
+    }
+    if (same) {
+      std::lock_guard<std::mutex> lock(audio->callback_mutex);
+      audio->capture_callback = callback; audio->capture_arg = arg;
+      return 0;
+    }
+    ksip_audio_stop_recording(audio);
+  }
   if (!audio->adm->Playing() && audio->ResetDiagnostics()) return -4;
   if (audio->SetDevice(id, false)) return -5;
   if (audio->adm->InitRecording()) return -2;
+  {
+    std::lock_guard<std::mutex> lock(audio->device_mutex);
+    audio->recording_request = request;
+  }
   {
     std::lock_guard<std::mutex> lock(audio->callback_mutex);
     audio->capture_callback = callback; audio->capture_arg = arg;
@@ -459,6 +510,15 @@ extern "C" void ksip_audio_stop_recording(ksip_audio *audio) {
   if (audio->adm->Recording()) audio->adm->StopRecording();
   std::lock_guard<std::mutex> lock(audio->callback_mutex);
   audio->capture_callback = nullptr; audio->capture_arg = nullptr;
+}
+extern "C" void ksip_audio_detach_recording(ksip_audio *audio) {
+  if (!audio) return;
+  // Without a callback the captured frames are dropped until the next start.
+  std::lock_guard<std::mutex> lock(audio->callback_mutex);
+  audio->capture_callback = nullptr; audio->capture_arg = nullptr;
+}
+extern "C" int ksip_audio_recording_running(ksip_audio *audio) {
+  return audio && audio->adm->Recording();
 }
 extern "C" int ksip_audio_get_stats(ksip_audio *audio,
                                      ksip_audio_stats *stats) {

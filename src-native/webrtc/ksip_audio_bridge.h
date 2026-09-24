@@ -73,9 +73,17 @@ void ksip_audio_destroy(ksip_audio *audio);
 int ksip_audio_start_playout(ksip_audio *audio, const char *endpoint_id,
                              ksip_audio_render_cb callback, void *arg);
 void ksip_audio_stop_playout(ksip_audio *audio);
+/* Lets go of the callback but keeps the stream running, so that the next
+   start on the same endpoint takes it over without opening the device again.
+   Opening a device takes a second or more on some hardware, and a call waits
+   for it (the ACK goes out after the audio is up). */
+void ksip_audio_detach_playout(ksip_audio *audio);
+int ksip_audio_playout_running(ksip_audio *audio);
 int ksip_audio_start_recording(ksip_audio *audio, const char *endpoint_id,
                                ksip_audio_capture_cb callback, void *arg);
 void ksip_audio_stop_recording(ksip_audio *audio);
+void ksip_audio_detach_recording(ksip_audio *audio);
+int ksip_audio_recording_running(ksip_audio *audio);
 int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
 int ksip_audio_get_device_info(ksip_audio *audio,
                                ksip_audio_device_info *info);
