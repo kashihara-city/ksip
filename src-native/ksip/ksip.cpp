@@ -349,14 +349,18 @@ void event(bevent_ev ev, bevent *e, void*) {
         outcome="TRANSFER_DONE";
     }
     else if (ev==BEVENT_CALL_CLOSED && account_ua) {
-        // Calling a second person holds the first call, and baresip brings that
-        // call back when the second one ends. Only one call is ever active, so
-        // a single remaining call means the window went back to it.
-        int others=0;
+        // Calling a second person holds the first call. When the second one
+        // ends, whether it was answered or still ringing, the first is brought
+        // back here: baresip does not do that by itself, and the window says
+        // the call was returned to.
+        int others=0; call *remaining=nullptr;
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next)
-            if (static_cast<call*>(l->data)!=c) ++others;
+            if (static_cast<call*>(l->data)!=c) { ++others; remaining=static_cast<call*>(l->data); }
         if (id==transfer_hangup) { transfer_hangup.clear(); tmr_cancel(&transfer_timer); }
-        else if (others==1) outcome="TRANSFER_OTHER_CLOSED";
+        else if (others==1) {
+            outcome="TRANSFER_OTHER_CLOSED";
+            if (call_state(remaining)==CALL_STATE_ESTABLISHED && call_is_onhold(remaining)) uag_hold_resume(remaining);
+        }
     }
     if(ev==BEVENT_CALL_CLOSED)connected_identity.erase(id);
 }
@@ -457,7 +461,11 @@ int action(re_printf *pf, void *arg) {
     // Hanging up and calling the transfer off are the two ways out of a pending transfer.
     if (pending && op!="hangup" && op!="cancel_transfer") return EBUSY;
     if (op=="select") {
-        if (c && call_state(c)==CALL_STATE_ESTABLISHED) return uag_hold_resume(c);
+        // A held call comes back and the active one goes on hold. The active
+        // call itself is left alone: uag_hold_resume on a call that is not on
+        // hold resumes whichever other call is, which swapped the two calls
+        // when the person clicked the line they were already talking on.
+        if (c && call_state(c)==CALL_STATE_ESTABLISHED) return call_is_onhold(c) ? uag_hold_resume(c) : 0;
         for (le *u=list_head(uag_list());u;u=u->next)
             for (le *l=list_head(ua_calls(static_cast<ua*>(u->data)));l;l=l->next) {
                 auto other=static_cast<call*>(l->data);
