@@ -326,6 +326,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_NEEDS_TWO_CALLS:'請確認通話 1 與通話 2 都已接通',
       TRANSFER_ORIGINAL_CLOSED:'原本的通話已結束',
       TRANSFER_OTHER_CLOSED:'該通話已結束，已回到保留中的通話。',
+      CALL_ENDED_SWITCHED:'該通話已結束，已切換到另一通通話。',
       TRANSFER_PENDING:'正在完成轉接…',
       TRANSFER_UNKNOWN:'無法確認轉接結果，請確認通話狀態。',
       TRUST_STORE_EMPTY:'Windows 憑證存放區中沒有信任的憑證授權單位',

@@ -35,6 +35,11 @@ bool sip_message_log=false;
 uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
 call *find(const std::string &id) { return id.empty() ? nullptr : uag_call_find(id.c_str()); }
+// The outcome is counted as well as named: the window shows a notice each
+// time one is set, and the same outcome twice in a row (returning to the held
+// call after each of two second calls) would otherwise look unchanged to it.
+unsigned outcome_seq=0;
+void set_outcome(const char *code) { outcome=code; ++outcome_seq; }
 // Puts every call being talked on, other than the given one, on hold. The
 // module does this itself (call_hold_other_calls is off): baresip would also
 // do it when a second call is answered by the far end, and that took the
@@ -304,7 +309,7 @@ int login(re_printf *pf, void*) {
     return err;
 }
 void transfer_timeout(void*) {
-    pending=false; outcome="TRANSFER_UNKNOWN";
+    pending=false; set_outcome("TRANSFER_UNKNOWN");
     if (auto c=find(original)) uag_hold_resume(c);
 }
 // The server takes the other call over with the transfer and ends it itself.
@@ -352,7 +357,7 @@ void event(bevent_ev ev, bevent *e, void*) {
             if (!again) { tmr_start(&transfer_timer,60000,transfer_timeout,nullptr); return; }
             std::swap(original,consultation);
         }
-        pending=false; tmr_cancel(&transfer_timer); outcome="TRANSFER_FAILED";
+        pending=false; tmr_cancel(&transfer_timer); set_outcome("TRANSFER_FAILED");
         uag_hold_resume(c);
     }
     if (ev==BEVENT_CALL_CLOSED && (id==original || id==consultation)) {
@@ -360,7 +365,7 @@ void event(bevent_ev ev, bevent *e, void*) {
         bool completed=id==original && !str_cmp(bevent_get_text(e),"Call transfered");
         bool was_original=id==original;
         clear_transfer();
-        outcome=completed ? "TRANSFER_DONE" : was_original ? "TRANSFER_ORIGINAL_CLOSED" : "TRANSFER_OTHER_CLOSED";
+        set_outcome(completed ? "TRANSFER_DONE" : was_original ? "TRANSFER_ORIGINAL_CLOSED" : "TRANSFER_OTHER_CLOSED");
         if (auto remaining=find(other)) {
             if (completed) {
                 transfer_hangup=other;
@@ -375,7 +380,7 @@ void event(bevent_ev ev, bevent *e, void*) {
         // other one sometimes reports a reset before this arrives, and that
         // must not stand as the result.
         clear_transfer();
-        outcome="TRANSFER_DONE";
+        set_outcome("TRANSFER_DONE");
     }
     else if (ev==BEVENT_CALL_CLOSED && account_ua) {
         // Calling a second person holds the first call. When the second one
@@ -386,9 +391,14 @@ void event(bevent_ev ev, bevent *e, void*) {
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next)
             if (static_cast<call*>(l->data)!=c) { ++others; remaining=static_cast<call*>(l->data); }
         if (id==transfer_hangup) { transfer_hangup.clear(); tmr_cancel(&transfer_timer); }
+        else if (others==1 && call_state(remaining)==CALL_STATE_ESTABLISHED) {
+            set_outcome("TRANSFER_OTHER_CLOSED");
+            if (call_is_onhold(remaining)) uag_hold_resume(remaining);
+        }
         else if (others==1) {
-            outcome="TRANSFER_OTHER_CLOSED";
-            if (call_state(remaining)==CALL_STATE_ESTABLISHED && call_is_onhold(remaining)) uag_hold_resume(remaining);
+            // The remaining call is still ringing (either way); the window moves
+            // to it, and says so with words that do not claim it was on hold.
+            set_outcome("CALL_ENDED_SWITCHED");
         }
     }
     if(ev==BEVENT_CALL_CLOSED)connected_identity.erase(id);
@@ -447,6 +457,7 @@ int state(re_printf *pf, void*) {
     odict_entry_add(xfer,"consultation",ODICT_STRING,consultation.c_str());
     odict_entry_add(xfer,"pending",ODICT_BOOL,pending);
     odict_entry_add(xfer,"outcome",ODICT_STRING,outcome.c_str());
+    odict_entry_add(xfer,"outcome_seq",ODICT_INT,static_cast<int64_t>(outcome_seq));
     ksip_audio_stats stats{};
     if(index && !ksip_audio_get_current_stats(&stats) && stats.flags) {
         odict *aec=nullptr;
@@ -529,11 +540,11 @@ int action(re_printf *pf, void *arg) {
             err=call_replace_transfer(to,from);
             if (err) { std::swap(original,consultation); uag_hold_resume(to); return err; }
         }
-        pending=true;outcome="TRANSFER_PENDING";tmr_start(&transfer_timer,60000,transfer_timeout,nullptr);return 0;
+        pending=true;set_outcome("TRANSFER_PENDING");tmr_start(&transfer_timer,60000,transfer_timeout,nullptr);return 0;
     }
     if (op=="cancel_transfer") {
         auto from=find(original);auto to=find(consultation);
-        clear_transfer();outcome="TRANSFER_CANCELLED";
+        clear_transfer();set_outcome("TRANSFER_CANCELLED");
         if(to)ua_hangup(call_get_ua(to),to,0,nullptr);
         return from ? uag_hold_resume(from) : 0;
     }

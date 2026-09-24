@@ -326,6 +326,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_NEEDS_TWO_CALLS:'通話1と通話2の接続を確認してください',
       TRANSFER_ORIGINAL_CLOSED:'元の通話が終了しました',
       TRANSFER_OTHER_CLOSED:'通話を終了し、保留中の通話に戻りました。',
+      CALL_ENDED_SWITCHED:'通話を終了し、もう一方の通話に切り替えました。',
       TRANSFER_PENDING:'転送を確定しています…',
       TRANSFER_UNKNOWN:'転送結果を確認できません。通話状態を確認してください。',
       TRUST_STORE_EMPTY:'Windowsの証明書ストアに信頼する認証局がありません',

@@ -326,6 +326,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       TRANSFER_NEEDS_TWO_CALLS:'Check that call 1 and call 2 are both connected',
       TRANSFER_ORIGINAL_CLOSED:'The original call ended',
       TRANSFER_OTHER_CLOSED:'That call ended, and you are back on the call that was on hold.',
+      CALL_ENDED_SWITCHED:'That call ended, and you are on the other call now.',
       TRANSFER_PENDING:'Completing the transfer…',
       TRANSFER_UNKNOWN:'The result of the transfer is unknown. Check the state of the calls.',
       TRUST_STORE_EMPTY:'The Windows certificate store holds no trusted authority',

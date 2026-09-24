@@ -80,11 +80,13 @@ function t(value){
   return sentence.replace(/\{(\d+)\}/g,(_,index)=>t(args[index]??''));
 }
 let state={running:false,calls:[],devices:[],transfer:{},account:{},settings:{}}, ready=false,busy=false,selected=1,error='',first=true;
-// A notice (the transfer's outcome, the banner) is shown for a while after its
-// text changes, then goes; an operation takes it away at once. A transfer still
-// in progress keeps its notice. Without this a notice stayed through unrelated work.
+// A notice (the transfer's outcome, the banner) is shown for a while after it
+// is set, then goes; an operation takes it away at once. A transfer still in
+// progress keeps its notice. Without this a notice stayed through unrelated work.
+// The outcome is told apart by its count as well as its words, so the same
+// outcome set again (back to the held call, twice) shows again.
 const NOTICE_MS=5000;
-let noticeText='',noticeSince=0,bannerText='',bannerSince=0;
+let noticeKey='',noticeSince=0,bannerText='',bannerSince=0;
 let deviceKey='',activePanel='history';
 let logRows=[],logCursor=0,historyRows=[],historySequence=-1;
 const peakPending={microphone:false,speaker:false};
@@ -294,8 +296,8 @@ function render(){
   $('hold').textContent=t(c?.held?'HOLD_RESUME':'HOLD');
   renderButtons(c);
   $('transfer').disabled=busy||!!state.transfer.pending||![callAt(1),callAt(2)].every(c=>c?.state==='ESTABLISHED');
-  const outcome=state.transfer.outcome||'',outcomeText=t(outcome);
-  if(outcomeText!==noticeText){noticeText=outcomeText;noticeSince=Date.now();}
+  const outcome=state.transfer.outcome||'',outcomeText=t(outcome),outcomeKey=outcome+'#'+(state.transfer.outcome_seq||0);
+  if(outcomeKey!==noticeKey){noticeKey=outcomeKey;noticeSince=Date.now();}
   const showOutcome=!!outcomeText&&(!!state.transfer.pending||Date.now()-noticeSince<NOTICE_MS);
   $('transfer-status').className='hint'+(showOutcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
   $('transfer-status').textContent=showOutcome?outcomeText:'';

@@ -502,6 +502,9 @@ pub struct Transfer {
     pub consultation: String,
     pub pending: bool,
     pub outcome: String,
+    /// Counts the outcomes set, so the window can show the same one again.
+    #[serde(default)]
+    pub outcome_seq: u64,
 }
 #[derive(Deserialize)]
 struct PhoneState {
