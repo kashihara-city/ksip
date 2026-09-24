@@ -569,6 +569,10 @@ fn automatic_recording_target(enabled: bool, calls: &[CallInfo]) -> Option<Strin
         .flatten()
 }
 const LOG_LIMIT: usize = 1000;
+/// What the file keeps after a rewrite while the detail log is on. SIP traces
+/// and WebRTC's lines fill the ordinary thousand in seconds, and a report
+/// needs the minutes around a failure. The tab keeps LOG_LIMIT either way.
+const DETAIL_LOG_FILE_LIMIT: usize = 10000;
 const LOG_FILE: &str = "ksip-log.jsonl";
 // Which layer a log line came from. It is written into the line so that a
 // support log shows at a glance whether the app or the engine said it.
@@ -627,6 +631,9 @@ struct Logs {
     /// The file as it was last seen: how many lines, and where it ended.
     file_lines: usize,
     offset: u64,
+    /// How many lines the file keeps after a rewrite, which happens once it
+    /// holds twice as many.
+    file_limit: usize,
 }
 impl Logs {
     /// Takes stock of the file as it is. Nothing is read back: the tab shows
@@ -642,7 +649,12 @@ impl Logs {
             unwritten: 0,
             file_lines,
             offset,
+            file_limit: LOG_LIMIT,
         }
+    }
+    /// The detail log keeps ten times as many lines in the file.
+    fn set_detail(&mut self, detail: bool) {
+        self.file_limit = if detail { DETAIL_LOG_FILE_LIMIT } else { LOG_LIMIT };
     }
     fn push(&mut self, line: LogLine) {
         self.entries.push_back(line);
@@ -672,7 +684,7 @@ impl Logs {
             }
             self.unwritten = 0;
         }
-        if self.file_lines > 2 * LOG_LIMIT {
+        if self.file_lines > 2 * self.file_limit {
             self.shorten(&path);
         }
     }
@@ -680,7 +692,7 @@ impl Logs {
     /// tab is the source: after a start the tab holds only this run, and the
     /// run before belongs in the file as much as this one.
     fn shorten(&mut self, path: &Path) {
-        if let Ok((length, lines)) = keep_last_lines(path, LOG_LIMIT) {
+        if let Ok((length, lines)) = keep_last_lines(path, self.file_limit) {
             self.offset = length;
             self.file_lines = lines;
         }
@@ -940,12 +952,13 @@ impl AppState {
         // Nothing here may panic: the panic hook is only installed once this
         // state exists.
         let data = data_dir(&store);
-        let logs = Logs::open(&data);
+        let mut logs = Logs::open(&data);
         let loaded = store.read_settings::<Settings>();
         let mut startup_error = loaded.as_ref().err().cloned().unwrap_or_default();
         let mut settings = loaded.unwrap_or_default();
         // The policy values live outside the document, also on the first snapshot.
         settings.read_policy(|key| store.read_text(key));
+        logs.set_detail(settings.detail_log);
         let account = match store.read_account() {
             Ok(Some(a)) => a.public(),
             Ok(None) => Account::default().public(),
@@ -1552,6 +1565,7 @@ impl AppState {
     }
     pub fn start(&self, s: Settings, account: &Account) -> Result<(), String> {
         Self::validate(&s)?;
+        self.logs.lock().unwrap().set_detail(s.detail_log);
         let mut guard = self.inner.lock().unwrap();
         if let Some(e) = guard.as_mut() {
             if e.child.try_wait().map_err(err)?.is_none() {
@@ -2926,6 +2940,19 @@ mod tests {
         let again = Logs::open(&dir);
         assert_eq!(again.file_lines, LOG_LIMIT);
         assert_eq!(again.offset, std::fs::metadata(&path).unwrap().len());
+        // With the detail log on the file keeps ten times as much: the same
+        // bursts bring no rewrite, and turning detail off brings one.
+        logs.set_detail(true);
+        for i in 0..3 * burst {
+            logs.push(LogLine::new("t".into(), LOG_APP, format!("more {i}")));
+            if (i + 1) % burst == 0 {
+                logs.sync(&dir);
+            }
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), LOG_LIMIT + 3 * burst);
+        logs.set_detail(false);
+        logs.sync(&dir);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), LOG_LIMIT);
         logs.clear(&dir);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
         assert_eq!((logs.sequence, logs.file_lines, logs.offset), (0, 0, 0));
