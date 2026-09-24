@@ -15,7 +15,7 @@ def restore(archive_name: str, base: Path, relative_paths: list[str]):
 
 
 re_base = ROOT / "temp/vendor/re"
-restore("re", re_base, ["cmake/re-config.cmake"])
+restore("re", re_base, ["cmake/re-config.cmake", "src/sipevent/subscribe.c"])
 config = re_base / "cmake/re-config.cmake"
 text = config.read_text()
 anchor = "option(USE_UNIXSOCK"
@@ -29,6 +29,29 @@ if(NOT USE_OPENSSL AND NOT USE_MBEDTLS)
 endif()
 ''' + text[index:]
 config.write_text(text)
+
+# After an un-SUBSCRIBE is answered 2xx, libre keeps the subscription, and with
+# it a reference to the SIP stack, for up to ten seconds waiting for the
+# terminating NOTIFY. A PBX that never sends one (MOIPEX does not) therefore
+# kept the engine from quitting until the app ended it, and the window waited
+# with it. A subscription the application has already let go needs no final
+# state: the 2xx to its un-SUBSCRIBE is the end of it. A NOTIFY that arrives
+# later is answered 481 by libre, which is what the notifier expects then.
+subscribe = re_base / "src/sipevent/subscribe.c"
+text = subscribe.read_text()
+wait = '''		if (!sub->expires && !sub->termconf) {
+
+			tmr_start(&sub->tmr, NOTIFY_TIMEOUT,
+				  notify_timeout_handler, sub);'''
+if text.count(wait) != 1:
+    raise SystemExit("patch-baresip: the NOTIFY wait in subscribe.c has changed")
+text = text.replace(wait, '''		/* KSIP: a subscription the application dropped is over
+		 * with the 2xx; the terminating NOTIFY is not waited for. */
+		if (!sub->expires && !sub->termconf && !sub->terminated) {
+
+			tmr_start(&sub->tmr, NOTIFY_TIMEOUT,
+				  notify_timeout_handler, sub);''')
+subscribe.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
 restore("baresip", baresip, ["src/main.c", "CMakeLists.txt"])
