@@ -1598,6 +1598,22 @@ impl AppState {
                 self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
             }
         }
+        // The endpoints the engine is told to open, by name and id, so that a
+        // device it then cannot open can be told apart from a wrong choice.
+        for (kind, id, chosen) in [
+            ("microphone", &microphone, &s.microphone),
+            ("speaker", &speaker, &s.speaker),
+        ] {
+            let name = self
+                .snapshot()
+                .devices
+                .iter()
+                .find(|d| d.kind == kind && d.id == *id)
+                .map(|d| format!("{} ", d.name))
+                .unwrap_or_default();
+            let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
+            self.log(LOG_APP, format!("ksip: {kind} {name}{id}{role}"));
+        }
         if let Some((included, left_out)) = trust_note {
             self.log(
                 LOG_APP,
@@ -2233,18 +2249,35 @@ impl AppState {
         if let Some(mut e) = guard.take() {
             let payload = serde_json::to_vec(&json!({"command":"quit","token":"quit"})).unwrap();
             let _ = write_netstring(&mut e.writer, &payload);
-            let end = Instant::now() + Duration::from_secs(3);
+            let asked = Instant::now();
+            let end = asked + Duration::from_secs(3);
+            let mut ended = false;
             while e.child.try_wait().map_err(err)?.is_none() {
                 if Instant::now() > end {
                     let _ = e.child.kill();
+                    ended = true;
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
             }
-            let _ = e.child.wait();
+            let took = asked.elapsed();
+            let status = e.child.wait();
             let _ = e.writer.shutdown(Shutdown::Both);
             for t in e.threads {
                 let _ = t.join();
+            }
+            // How the engine went is part of the record: one that had to be
+            // ended was still waiting on something, usually a SIP request the
+            // server has not answered, and the window waited with it.
+            if ended {
+                self.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
+            } else {
+                let code = status
+                    .ok()
+                    .and_then(|s| s.code())
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into());
+                self.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", took.as_millis()));
             }
         }
         let mut v = self.view.lock().unwrap();

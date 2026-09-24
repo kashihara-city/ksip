@@ -140,20 +140,30 @@ void parking_retry(void*) {
     if(subscribe_mwi())err=EAGAIN;
     if(err)tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
-void parking_closed(int,const struct sip_msg*,const struct sipevent_substate*,void *arg) {
+// A subscription the server ends or refuses is written down with its answer:
+// it explains buttons that stay unknown, and a quit that waits on the server.
+void subscription_closed(const char *what,int err,const struct sip_msg *msg) {
+    if(msg)info("ksip: %s subscription closed by %u %r\n",what,static_cast<unsigned>(msg->scode),&msg->reason);
+    else info("ksip: %s subscription closed (%m)\n",what,err);
+}
+void parking_closed(int err,const struct sip_msg *msg,const struct sipevent_substate*,void *arg) {
     // The subscription is over, so its reference goes here, as baresip's own
     // presence module does. The server is asked again after a while rather
     // than only at the next registration, or the buttons would stay unknown
     // for minutes.
-    auto slot=static_cast<ParkSlot*>(arg);slot->sub=static_cast<sipsub*>(mem_deref(slot->sub));slot->state="UNKNOWN";
+    auto slot=static_cast<ParkSlot*>(arg);subscription_closed(("parking "+slot->number).c_str(),err,msg);
+    slot->sub=static_cast<sipsub*>(mem_deref(slot->sub));slot->state="UNKNOWN";
     tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
 void mwi_notify(struct sip *sip,const struct sip_msg *msg,void *) {
     mwi_summary=std::string(reinterpret_cast<const char*>(mbuf_buf(msg->mb)),mbuf_get_left(msg->mb));
+    // The first notify is the proof that the server took the subscription.
+    info("ksip: mwi notify, %zu bytes\n",mwi_summary.size());
     (void)sip_treply(nullptr,sip,msg,200,"OK");
 }
 void parking_retry(void*);
-void mwi_closed(int,const struct sip_msg*,const struct sipevent_substate*,void*) {
+void mwi_closed(int err,const struct sip_msg *msg,const struct sipevent_substate*,void*) {
+    subscription_closed("mwi",err,msg);
     mwi_sub=static_cast<sipsub*>(mem_deref(mwi_sub));mwi_summary.clear();
     tmr_start(&parking_timer,30000,parking_retry,nullptr);
 }
@@ -516,6 +526,10 @@ int configure_parking(re_printf *pf,void *arg) {
     int err=subscribe_parking();if(!err)re_hprintf(pf,"Parking subscriptions configured\n");return err;
 }
 int shutdown(re_printf *pf,void*) {
+    // Each subscription ended here is a request the server still has to
+    // answer before baresip can quit; the count says what a slow quit waits on.
+    size_t watched=0;for(auto &slot:parking)if(slot.sub)++watched;
+    info("ksip: shutdown, ending %zu parking subscriptions%s\n",watched,mwi_sub ? " and the mwi subscription" : "");
     clear_parking_subscriptions();
     return re_hprintf(pf,"KSIP subscriptions closed\n");
 }

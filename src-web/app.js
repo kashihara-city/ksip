@@ -7,7 +7,8 @@ const kinds=['microphone','speaker'];
 // a second and must not fill the log.
 const loggedUi={};
 function logUi(where,detail){
-  const text=where+': '+nameOf(detail&&detail.message?detail.message:detail??'').code,now=Date.now(),last=loggedUi[where];
+  // The values of a message go too: the Windows error behind AUDIO_DEVICE_FAILED is what a report needs.
+  const named=nameOf(detail&&detail.message?detail.message:detail??''),text=where+': '+named.code+named.args.map(a=>' '+nameOf(a).code).join(''),now=Date.now(),last=loggedUi[where];
   if(last&&last.text===text&&now-last.at<60000)return;
   loggedUi[where]={text,at:now};
   invoke('log_ui',{text}).catch(()=>{});
