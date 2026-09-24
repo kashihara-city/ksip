@@ -525,6 +525,29 @@ int configure_parking(re_printf *pf,void *arg) {
     clear_parking_subscriptions();for(size_t i=0;i<values.size()&&i<parking.size();++i)parking[i].number=values[i];
     int err=subscribe_parking();if(!err)re_hprintf(pf,"Parking subscriptions configured\n");return err;
 }
+// The microphone and speaker for the calls from now on, as endpoint ids, so
+// that a change of device does not need the engine restarted. baresip reads
+// the devices out of its configuration when a call's audio starts, so the
+// configuration is what changes here; a call that is up keeps the devices it
+// opened, and the app does not switch while one is up. baresip's own auplay
+// command would also move the alert sounds onto the call's player, which
+// only takes the call's 48 kHz, so the alert stays with its own module and
+// just follows the speaker.
+int audio_devices(re_printf *pf,void *arg) {
+    auto a=static_cast<cmd_arg*>(arg);if(!a || !str_isset(a->prm))return EINVAL;
+    std::string text=a->prm;auto comma=text.find(',');if(comma==std::string::npos)return EINVAL;
+    std::string microphone=text.substr(0,comma),speaker=text.substr(comma+1);
+    config *cfg=conf_config();if(!cfg)return ENOENT;
+    for(const auto &device:{microphone,speaker}) {
+        if(device.empty() || device.size()>=sizeof(cfg->audio.play_dev))return EINVAL;
+        for(unsigned char ch:device)if(ch<0x20 || ch==0x7f || ch==',')return EINVAL;
+    }
+    str_ncpy(cfg->audio.src_dev,microphone.c_str(),sizeof(cfg->audio.src_dev));
+    str_ncpy(cfg->audio.play_dev,speaker.c_str(),sizeof(cfg->audio.play_dev));
+    str_ncpy(cfg->audio.alert_dev,speaker.c_str(),sizeof(cfg->audio.alert_dev));
+    info("ksip: audio devices from the next call on, microphone %s, speaker %s\n",microphone.c_str(),speaker.c_str());
+    return re_hprintf(pf,"Audio devices set\n");
+}
 int shutdown(re_printf *pf,void*) {
     // Each subscription ended here is a request the server still has to
     // answer before baresip can quit; the count says what a slow quit waits on.
@@ -539,6 +562,7 @@ const cmd commands[]={
     {"ksip_action",0,CMD_PRM,"Operate a specific call",action},
     {"ksip_parking",0,CMD_PRM,"Watch up to six numbers through dialog-state subscriptions",configure_parking},
     {"ksip_shutdown",0,0,"Release KSIP subscriptions before quit",shutdown},
+    {"ksip_audio_devices",0,CMD_PRM,"Use these microphone and speaker endpoint ids from the next call on",audio_devices},
 };
 int init(){
     uint32_t interval=register_interval;

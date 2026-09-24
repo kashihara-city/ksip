@@ -35,14 +35,20 @@ try {
     # Once the saved device exists again, refreshing brings the engine back to it.
     # The button sits on the main screen; the settings dialog is modal and would
     # take the main screen out of the accessibility tree.
+    # The running engine takes the device for its next call, without a restart;
+    # the app writes down what it handed over.
     Set-SavedMicrophone $real.id
+    $appLog=Join-Path $root 'temp/build/test-ui-ksip/ksip-log.jsonl'
+    $before=@(Get-Content $appLog -ErrorAction SilentlyContinue).Count
     Click-Id 'refresh-devices'
     $end=[DateTime]::UtcNow.AddSeconds(25)
     do {
         Start-Sleep -Milliseconds 300
-        $config=Get-Content $configPath -Raw -ErrorAction SilentlyContinue
-    } while(($config -notmatch [regex]::Escape("audio_source ksip_audio,$($real.id)")) -and [DateTime]::UtcNow -lt $end)
-    if($config -notmatch [regex]::Escape("audio_source ksip_audio,$($real.id)")){throw 'Refresh did not restart the engine on the saved microphone'}
+        $since=@(Get-Content $appLog -ErrorAction SilentlyContinue | Select-Object -Skip $before)
+        $taken=$since | Where-Object { $_ -match 'ksip: microphone ' -and $_ -match [regex]::Escape($real.id) }
+    } while(!$taken -and [DateTime]::UtcNow -lt $end)
+    if(!$taken){throw 'Refresh did not hand the saved microphone to the engine'}
+    if($since | Where-Object { $_ -match 'ua: stop all' }){throw 'Refresh restarted the engine instead of handing the device over'}
     Wait-Class 'registration' 'reg-register_ok'
     # An empty status element leaves the accessibility tree, so "not there" is "no notice".
     function Get-FallbackNotice { $node=Find-Id 'microphone-volume-status'; if($node){$node.Current.Name}else{''} }

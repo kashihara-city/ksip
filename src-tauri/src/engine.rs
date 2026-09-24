@@ -18,6 +18,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// The endpoints the engine is given for a saved choice, see
+/// `resolve_audio_endpoints`.
+struct AudioEndpoints {
+    microphone: String,
+    speaker: String,
+    microphone_missing: bool,
+    speaker_missing: bool,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -1248,7 +1256,30 @@ impl AppState {
     /// a new Windows default, is only picked up by a fresh start.
     pub fn refresh_devices(&self) -> Result<(), String> {
         self.view.lock().unwrap().devices = crate::audio::devices()?;
-        if self.snapshot().running && self.ensure_idle().is_ok() {
+        if !self.snapshot().running {
+            return Ok(());
+        }
+        // A saved device that has come back is taken into use, and one that
+        // has gone gives way to the default; the engine is only restarted
+        // when it does not take the change.
+        let taken = {
+            let _operation = self.operations.lock().unwrap();
+            if self.ensure_idle().is_err() {
+                return Ok(());
+            }
+            let settings = self.settings()?;
+            match self.apply_audio_endpoints(&settings) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.log(
+                        LOG_APP,
+                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
+                    );
+                    false
+                }
+            }
+        };
+        if !taken {
             self.connect()?;
         }
         Ok(())
@@ -1327,7 +1358,16 @@ impl AppState {
             }
             Self::validate(&settings)?;
             self.save_settings(&settings)?;
-            self.view.lock().unwrap().settings = settings;
+            self.view.lock().unwrap().settings = settings.clone();
+            if self.snapshot().running {
+                match self.apply_audio_endpoints(&settings) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => self.log(
+                        LOG_APP,
+                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
+                    ),
+                }
+            }
         }
         self.connect()
     }
@@ -1431,26 +1471,11 @@ impl AppState {
         }
         Ok((crate::native::adapter_address(chosen)?, chosen.to_string()))
     }
-    pub fn start(&self, s: Settings, account: &Account) -> Result<(), String> {
-        Self::validate(&s)?;
-        let mut guard = self.inner.lock().unwrap();
-        if let Some(e) = guard.as_mut() {
-            if e.child.try_wait().map_err(err)?.is_none() {
-                return Err(message("ENGINE_ALREADY_RUNNING"));
-            }
-        }
-        if let Some(e) = guard.take() {
-            let _ = e.writer.shutdown(Shutdown::Both);
-            for t in e.threads {
-                let _ = t.join();
-            }
-        }
-        let exe = crate::native::engine_exe()?;
-        // Resolve the communications defaults once: the volume controls must
-        // target the same endpoints that the running engine actually opens.
-        // A saved device that is not there gets the default in its place, and
-        // nothing is written back: the choice stands, and it is used again
-        // once the device is back and the engine is started afresh.
+    /// The endpoints the engine is given for the saved choice: the device
+    /// itself when Windows has it, the default in its place otherwise. Nothing
+    /// is written back: the choice stands, and it is used again once the
+    /// device is back.
+    fn resolve_audio_endpoints(&self, s: &Settings) -> Result<AudioEndpoints, String> {
         let mut microphone_missing = false;
         let microphone = match self.volume("microphone", &s.microphone, None, None) {
             Ok(volume) => volume.id,
@@ -1471,6 +1496,80 @@ impl AppState {
             }
             Err(error) => return Err(error),
         };
+        Ok(AudioEndpoints {
+            microphone,
+            speaker,
+            microphone_missing,
+            speaker_missing,
+        })
+    }
+    /// Writes down which endpoints the engine got, by name and id, and when a
+    /// saved one was not there; the window shows the same.
+    fn note_audio_endpoints(&self, s: &Settings, endpoints: &AudioEndpoints) {
+        for (missing, kind) in [
+            (endpoints.microphone_missing, "microphone"),
+            (endpoints.speaker_missing, "speaker"),
+        ] {
+            if missing {
+                self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
+            }
+        }
+        // By name and id, so that a device the engine then cannot open can be
+        // told apart from a wrong choice.
+        for (kind, id, chosen) in [
+            ("microphone", &endpoints.microphone, &s.microphone),
+            ("speaker", &endpoints.speaker, &s.speaker),
+        ] {
+            let name = self
+                .snapshot()
+                .devices
+                .iter()
+                .find(|d| d.kind == kind && d.id == *id)
+                .map(|d| format!("{} ", d.name))
+                .unwrap_or_default();
+            let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
+            self.log(LOG_APP, format!("ksip: {kind} {name}{id}{role}"));
+        }
+        let mut v = self.view.lock().unwrap();
+        v.microphone_id = endpoints.microphone.clone();
+        v.speaker_id = endpoints.speaker.clone();
+        v.microphone_missing = endpoints.microphone_missing;
+        v.speaker_missing = endpoints.speaker_missing;
+    }
+    /// Hands the saved microphone and speaker to the running engine for the
+    /// calls from now on. The engine used to be restarted for a change of
+    /// device, which meant a new registration and a second or more without a
+    /// phone. The caller holds the operations lock and has seen that no call
+    /// is up, so the change reaches the next call and no running one.
+    fn apply_audio_endpoints(&self, s: &Settings) -> Result<(), String> {
+        let endpoints = self.resolve_audio_endpoints(s)?;
+        self.request(
+            "ksip_audio_devices",
+            &format!("{},{}", endpoints.microphone, endpoints.speaker),
+        )?;
+        self.note_audio_endpoints(s, &endpoints);
+        Ok(())
+    }
+    pub fn start(&self, s: Settings, account: &Account) -> Result<(), String> {
+        Self::validate(&s)?;
+        let mut guard = self.inner.lock().unwrap();
+        if let Some(e) = guard.as_mut() {
+            if e.child.try_wait().map_err(err)?.is_none() {
+                return Err(message("ENGINE_ALREADY_RUNNING"));
+            }
+        }
+        if let Some(e) = guard.take() {
+            let _ = e.writer.shutdown(Shutdown::Both);
+            for t in e.threads {
+                let _ = t.join();
+            }
+        }
+        let exe = crate::native::engine_exe()?;
+        // Resolve the communications defaults once: the volume controls must
+        // target the same endpoints that the running engine actually opens.
+        let endpoints = self.resolve_audio_endpoints(&s)?;
+        let microphone = endpoints.microphone.clone();
+        let speaker = endpoints.speaker.clone();
         let profile = self.profile_dir();
         std::fs::create_dir_all(&profile).map_err(err)?;
         // Reserve an ephemeral control port until immediately before spawn.
@@ -1593,27 +1692,7 @@ impl AppState {
             put(format!("audio_path {}", dir.to_string_lossy().replace('\\', "/")));
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
-        for (missing, kind) in [(microphone_missing, "microphone"), (speaker_missing, "speaker")] {
-            if missing {
-                self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
-            }
-        }
-        // The endpoints the engine is told to open, by name and id, so that a
-        // device it then cannot open can be told apart from a wrong choice.
-        for (kind, id, chosen) in [
-            ("microphone", &microphone, &s.microphone),
-            ("speaker", &speaker, &s.speaker),
-        ] {
-            let name = self
-                .snapshot()
-                .devices
-                .iter()
-                .find(|d| d.kind == kind && d.id == *id)
-                .map(|d| format!("{} ", d.name))
-                .unwrap_or_default();
-            let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
-            self.log(LOG_APP, format!("ksip: {kind} {name}{id}{role}"));
-        }
+        self.note_audio_endpoints(&s, &endpoints);
         if let Some((included, left_out)) = trust_note {
             self.log(
                 LOG_APP,
@@ -1624,10 +1703,6 @@ impl AppState {
             let mut v = self.view.lock().unwrap();
             v.settings = s;
             v.error.clear();
-            v.microphone_id = microphone.clone();
-            v.speaker_id = speaker.clone();
-            v.microphone_missing = microphone_missing;
-            v.speaker_missing = speaker_missing;
             v.aec_active = false;
             v.microphone_fallback = false;
             v.recording = false;
