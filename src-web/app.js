@@ -80,6 +80,11 @@ function t(value){
   return sentence.replace(/\{(\d+)\}/g,(_,index)=>t(args[index]??''));
 }
 let state={running:false,calls:[],devices:[],transfer:{},account:{},settings:{}}, ready=false,busy=false,selected=1,error='',first=true;
+// A notice (the transfer's outcome, the banner) is shown for a while after its
+// text changes, then goes; an operation takes it away at once. A transfer still
+// in progress keeps its notice. Without this a notice stayed through unrelated work.
+const NOTICE_MS=5000;
+let noticeText='',noticeSince=0,bannerText='',bannerSince=0;
 let deviceKey='',activePanel='history';
 let logRows=[],logCursor=0,historyRows=[],historySequence=-1;
 const peakPending={microphone:false,speaker:false};
@@ -289,9 +294,11 @@ function render(){
   $('hold').textContent=t(c?.held?'HOLD_RESUME':'HOLD');
   renderButtons(c);
   $('transfer').disabled=busy||!!state.transfer.pending||![callAt(1),callAt(2)].every(c=>c?.state==='ESTABLISHED');
-  const outcome=state.transfer.outcome||'';
-  $('transfer-status').className='hint'+(outcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
-  $('transfer-status').textContent=t(outcome);
+  const outcome=state.transfer.outcome||'',outcomeText=t(outcome);
+  if(outcomeText!==noticeText){noticeText=outcomeText;noticeSince=Date.now();}
+  const showOutcome=!!outcomeText&&(!!state.transfer.pending||Date.now()-noticeSince<NOTICE_MS);
+  $('transfer-status').className='hint'+(showOutcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
+  $('transfer-status').textContent=showOutcome?outcomeText:'';
   $('record').disabled=!ready||busy;$('record').textContent=t(state.settings.auto_record?'RECORD_ON':'RECORD_OFF');$('record').classList.toggle('active',!!state.settings.auto_record);$('record').setAttribute('aria-pressed',String(!!state.settings.auto_record));
   $('record-status').classList.toggle('recording',!!state.recording);$('record-status').textContent=t(state.recording?'RECORD_RECORDING':state.converting?'RECORDING_CONVERTING':state.settings.auto_record?'RECORD_AUTO_ON':'RECORD_AUTO_OFF');
   $('aec-label').textContent=state.settings.aec?'ON':'OFF';
@@ -319,7 +326,10 @@ function render(){
   }else{
     for(const id of ['aec-core','aec-delay','aec-levels','aec-flow'])$(id).textContent='';
   }
-  $('error').textContent=t(error)||t(state.error)||'';$('error').hidden=!$('error').textContent;
+  const banner=t(error)||t(state.error)||'';
+  if(banner!==bannerText){bannerText=banner;bannerSince=Date.now();}
+  const showBanner=!!banner&&Date.now()-bannerSince<NOTICE_MS;
+  $('error').textContent=showBanner?banner:'';$('error').hidden=!showBanner;
   $('call-history').hidden=activePanel!=='history';$('logs').hidden=activePanel!=='logs';$('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');$('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));renderLogs();
   for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind+'-mute').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||state.calls.length>0||!state.account.has_password;}
   $('refresh-devices').disabled=busy||state.calls.length>0;
@@ -362,7 +372,7 @@ function openSettings(){
   $('settings-error').hidden=true;$('configuration').showModal();
 }
 async function run(fn){
-  if(busy)return;busy=true;error='';render();
+  if(busy)return;busy=true;error='';noticeSince=0;bannerSince=0;render();
   try{await fn();update(await invoke('snapshot'));}
   catch(e){error=String(e);logUi('command',e);throw e;}
   finally{busy=false;render();}
