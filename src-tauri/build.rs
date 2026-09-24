@@ -35,12 +35,20 @@ fn main() {
     println!("cargo:rustc-link-lib=bcrypt");
     // Only the sounds baresip plays for us. The rest of its set is for its own
     // console menu, which KSIP never uses.
-    let played = ["busy.wav", "callwaiting.wav", "error.wav", "notfound.wav", "ring.wav", "ringback.wav"];
+    let played = ["busy.wav", "error.wav", "notfound.wav", "ring.wav", "ringback.wav"];
     let dir = root.join("temp/build/native/share/baresip");
     println!("cargo:rerun-if-changed={}", dir.display());
     let mut sounds = String::from("pub const SOUNDS: &[(&str, &[u8])] = &[\n");
     for name in played {
-        let path = dir.join(name);
+        // The ringback tone goes through the call's player, which takes 48 kHz
+        // mono only, so it ships converted. The rest go through the alert
+        // device, which takes baresip's own 8 kHz files as they are.
+        let path = if name == "ringback.wav" {
+            root.join("src-tauri/sounds/ringback.wav")
+        } else {
+            dir.join(name)
+        };
+        println!("cargo:rerun-if-changed={}", path.display());
         assert!(path.is_file(), "missing sound: {}", path.display());
         sounds.push_str(&format!("({name:?}, include_bytes!({path:?})),\n"));
     }

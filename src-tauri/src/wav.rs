@@ -93,6 +93,12 @@ fn samples(format: &Format, data: &[u8]) -> Result<Vec<i16>, String> {
     Ok(out)
 }
 
+/// The sample rate and channel count a WAV declares.
+pub fn layout(bytes: &[u8]) -> Result<(u32, u16), String> {
+    let (format, _) = parse(bytes)?;
+    Ok((format.rate, format.channels))
+}
+
 /// Converts any supported WAV into 16-bit PCM with the original rate and channels.
 pub fn to_pcm16(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() > MAX_INPUT {

@@ -50,7 +50,6 @@ pub struct Settings {
     pub language: String,
     pub sound_ring: String,
     pub sound_ringback: String,
-    pub sound_callwaiting: String,
     pub sound_busy: String,
     pub sound_notfound: String,
     pub sound_error: String,
@@ -160,7 +159,6 @@ impl Default for Settings {
             language: String::new(),
             sound_ring: String::new(),
             sound_ringback: String::new(),
-            sound_callwaiting: String::new(),
             sound_busy: String::new(),
             sound_notfound: String::new(),
             sound_error: String::new(),
@@ -248,14 +246,12 @@ impl Settings {
             _ => None,
         }
     }
-    pub const SOUND_KEYS: [&'static str; 6] =
-        ["ring", "ringback", "callwaiting", "busy", "notfound", "error"];
+    pub const SOUND_KEYS: [&'static str; 5] = ["ring", "ringback", "busy", "notfound", "error"];
     /// The chosen replacement for each built-in sound, in SOUND_KEYS order.
-    pub fn sounds(&self) -> [&str; 6] {
+    pub fn sounds(&self) -> [&str; 5] {
         [
             &self.sound_ring,
             &self.sound_ringback,
-            &self.sound_callwaiting,
             &self.sound_busy,
             &self.sound_notfound,
             &self.sound_error,
@@ -1517,6 +1513,10 @@ impl AppState {
         put(format!("audio_player ksip_audio,{speaker}"));
         put(format!("audio_source ksip_audio,{microphone}"));
         put(format!("audio_alert wasapi,{speaker}"));
+        // A second call during a call is shown, not sounded. baresip would send
+        // that tone through the call's player, and ksip_audio cannot play a
+        // tone and the call at the same time.
+        put("callwaiting_aufile none".into());
         for line in [
             "ausrc_srate 48000",
             "auplay_srate 48000",
@@ -1963,6 +1963,18 @@ impl AppState {
             let ca = settings.ca_file.trim();
             if !ca.is_empty() && !std::path::Path::new(ca).is_file() {
                 return Err(message("SETTINGS_CA_FILE_MISSING"));
+            }
+            // The ringback tone plays through the call's player, which takes
+            // 48 kHz mono only, so a chosen file is refused here rather than
+            // found silent later. A file that is not there falls back to the
+            // built-in tone, as every sound does.
+            let ringback = settings.sound_ringback.trim();
+            if !ringback.is_empty() {
+                if let Ok(bytes) = std::fs::read(ringback) {
+                    if crate::wav::layout(&bytes)? != (48000, 1) {
+                        return Err(message("SETTINGS_SOUND_RINGBACK_FORMAT"));
+                    }
+                }
             }
             let old = self.store.read_account()?;
             // An empty extension registers under the authentication user.
@@ -2488,6 +2500,7 @@ mod tests {
             )));
             assert!(config.contains(&format!("audio_player ksip_audio,{}", snapshot.speaker_id)));
             assert!(config.contains("webrtc_aec_delay_ms 20"));
+            assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_aec_enabled yes"));
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
