@@ -26,6 +26,10 @@ namespace {
 constexpr uint32_t kSampleRate = 48000;
 constexpr size_t kFrames10Ms = kSampleRate / 100;
 constexpr double kLevelSmoothing = 0.99;
+// The two entries WebRTC's Windows ADM puts in front of the endpoints when it
+// names them: index 0 is the default device, index 1 the default
+// communications device, each with the endpoint id of whatever holds that role.
+constexpr int kRoleEntries = 2;
 
 double FramePower(std::span<const int16_t> samples) {
   if (samples.empty()) return 0;
@@ -95,22 +99,61 @@ struct ksip_audio final : public webrtc::AudioTransport {
       if (!name_result) StoreDevice(playout, name, guid);
       return 0;
     }
+    // PlayoutDevices() and RecordingDevices() count the endpoints, but the
+    // list that PlayoutDeviceName() and RecordingDeviceName() index has the
+    // two role entries in front of them. A loop over the count alone never
+    // reached the last two endpoints, so a chosen device that was neither a
+    // Windows default nor early in the list counted as not there, and the
+    // call failed with no device. The endpoints themselves are matched first,
+    // so that a chosen device stays chosen when Windows moves its defaults;
+    // a role entry only serves as a fallback.
     const int count = playout ? adm->PlayoutDevices() : adm->RecordingDevices();
-    for (int i = 0; i < count; ++i) {
+    const int enumerated = count > 0 ? count + kRoleEntries : 0;
+    int role_index = -1;
+    std::string listing;
+    for (int i = 0; i < enumerated; ++i) {
       char name[webrtc::kAdmMaxDeviceNameSize] = {};
       char guid[webrtc::kAdmMaxGuidSize] = {};
       const int result = playout
           ? adm->PlayoutDeviceName(static_cast<uint16_t>(i), name, guid)
           : adm->RecordingDeviceName(static_cast<uint16_t>(i), name, guid);
-      if (!result && std::strcmp(id, guid) == 0) {
-        const int set_result = playout
-            ? adm->SetPlayoutDevice(static_cast<uint16_t>(i))
-            : adm->SetRecordingDevice(static_cast<uint16_t>(i));
-        if (!set_result) StoreDevice(playout, name, guid);
-        return set_result;
+      if (result) continue;
+      listing += " [" + std::to_string(i) + "] " + name + " " + guid;
+      if (std::strcmp(id, guid) != 0) continue;
+      if (i < kRoleEntries) {
+        if (role_index < 0) role_index = i;
+        continue;
       }
+      return Select(playout, i, name, guid);
     }
+    if (role_index >= 0) {
+      char name[webrtc::kAdmMaxDeviceNameSize] = {};
+      char guid[webrtc::kAdmMaxGuidSize] = {};
+      const int result = playout
+          ? adm->PlayoutDeviceName(static_cast<uint16_t>(role_index), name, guid)
+          : adm->RecordingDeviceName(static_cast<uint16_t>(role_index), name, guid);
+      if (!result) return Select(playout, role_index, name, guid);
+    }
+    // Written at warning level, which the app's log always carries, so that a
+    // device the engine cannot find is explained next to the failure.
+    RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording")
+                        << " device " << id << " is not among the " << count
+                        << " endpoints WebRTC lists:" << listing;
     return -5;
+  }
+
+  int Select(bool playout, int index, const char *name, const char *guid) {
+    const int result = playout
+        ? adm->SetPlayoutDevice(static_cast<uint16_t>(index))
+        : adm->SetRecordingDevice(static_cast<uint16_t>(index));
+    if (result) {
+      RTC_LOG(LS_WARNING) << "ksip_audio: selecting "
+                          << (playout ? "playout" : "recording") << " device ["
+                          << index << "] " << name << " failed (" << result << ")";
+      return result;
+    }
+    StoreDevice(playout, name, guid);
+    return 0;
   }
 
   void StoreDevice(bool playout, const char *name, const char *id) {
@@ -375,7 +418,8 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
     ksip_audio_render_cb callback, void *arg) {
   if (!audio || !callback || audio->adm->Playing()) return -1;
   if (!audio->adm->Recording() && audio->ResetDiagnostics()) return -4;
-  if (audio->SetDevice(id, true) || audio->adm->InitPlayout()) return -2;
+  if (audio->SetDevice(id, true)) return -5;
+  if (audio->adm->InitPlayout()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->callback_mutex);
     audio->render_callback = callback; audio->render_arg = arg;
@@ -397,7 +441,8 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
     ksip_audio_capture_cb callback, void *arg) {
   if (!audio || !callback || audio->adm->Recording()) return -1;
   if (!audio->adm->Playing() && audio->ResetDiagnostics()) return -4;
-  if (audio->SetDevice(id, false) || audio->adm->InitRecording()) return -2;
+  if (audio->SetDevice(id, false)) return -5;
+  if (audio->adm->InitRecording()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->callback_mutex);
     audio->capture_callback = callback; audio->capture_arg = arg;

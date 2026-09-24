@@ -67,6 +67,9 @@ void ksip_audio_set_log_level(int detail);
 int ksip_audio_create(uint32_t fallback_delay_ms, int processing_enabled,
                       ksip_audio **out);
 void ksip_audio_destroy(ksip_audio *audio);
+/* 0 on success; -1 busy or a bad argument, -2 the device could not be set
+   up, -3 it could not be started, -4 the processing could not be reset, -5
+   the endpoint is not among the devices WebRTC lists (the log names them). */
 int ksip_audio_start_playout(ksip_audio *audio, const char *endpoint_id,
                              ksip_audio_render_cb callback, void *arg);
 void ksip_audio_stop_playout(ksip_audio *audio);

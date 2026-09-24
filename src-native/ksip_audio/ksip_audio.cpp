@@ -87,7 +87,8 @@ int AllocatePlayout(struct auplay_st **out, const struct auplay *,
   const int result = ksip_audio_start_playout(g_audio,
       device && device[0] ? device : "default", Render, state);
   if (result) {
-    warning("ksip_audio: start playout failed (%d)\n", result);
+    warning("ksip_audio: start playout failed (%d) for %s\n", result,
+            device && device[0] ? device : "default");
     mem_deref(state); return ENODEV;
   }
   state->started = true; g_active_playout = state; *out = state;
@@ -113,7 +114,8 @@ int AllocateSource(struct ausrc_st **out, const struct ausrc *,
   const int result = ksip_audio_start_recording(g_audio,
       device && device[0] ? device : "default", Capture, state);
   if (result) {
-    warning("ksip_audio: start recording failed (%d); using silence\n", result);
+    warning("ksip_audio: start recording failed (%d) for %s; using silence\n",
+            result, device && device[0] ? device : "default");
     state->fallback_run.store(true);
     state->fallback_thread = std::thread([state] {
       int16_t samples[kFrames] = {};
