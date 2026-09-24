@@ -285,6 +285,16 @@ void transfer_timeout(void*) {
     pending=false; outcome="TRANSFER_UNKNOWN";
     if (auto c=find(original)) uag_hold_resume(c);
 }
+// The server takes the other call over with the transfer and ends it itself.
+// A BYE from here could reach it before it has done so and undo the transfer
+// (a PBX that reports the transfer done the instant it accepts the REFER
+// behaves that way), so the call is left to the server for a while.
+void transfer_leftover(void*) {
+    auto c=find(transfer_hangup);
+    if (!c) { transfer_hangup.clear(); return; }
+    info("ksip: the server left the transferred call up, ending it\n");
+    ua_hangup(call_get_ua(c),c,0,nullptr);
+}
 void event(bevent_ev ev, bevent *e, void*) {
     if (bevent_get_ua(e)==account_ua) {
         if (ev==BEVENT_REGISTER_OK && !unregistered) {registration="REGISTER_OK";(void)subscribe_parking();(void)subscribe_mwi();}
@@ -323,7 +333,11 @@ void event(bevent_ev ev, bevent *e, void*) {
         clear_transfer();
         outcome=completed ? "TRANSFER_DONE" : was_original ? "TRANSFER_ORIGINAL_CLOSED" : "TRANSFER_OTHER_CLOSED";
         if (auto remaining=find(other)) {
-            if (completed) { transfer_hangup=other; ua_hangup(call_get_ua(remaining),remaining,0,nullptr); }
+            if (completed) {
+                transfer_hangup=other;
+                info("ksip: transfer accepted, leaving the call with %s to the server\n",call_peeruri(remaining));
+                tmr_start(&transfer_timer,5000,transfer_leftover,nullptr);
+            }
             else uag_hold_resume(remaining);
         }
     }
@@ -341,7 +355,7 @@ void event(bevent_ev ev, bevent *e, void*) {
         int others=0;
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next)
             if (static_cast<call*>(l->data)!=c) ++others;
-        if (id==transfer_hangup) transfer_hangup.clear();
+        if (id==transfer_hangup) { transfer_hangup.clear(); tmr_cancel(&transfer_timer); }
         else if (others==1) outcome="TRANSFER_OTHER_CLOSED";
     }
     if(ev==BEVENT_CALL_CLOSED)connected_identity.erase(id);
