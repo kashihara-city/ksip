@@ -54,7 +54,7 @@ text = text.replace(wait, '''		/* KSIP: a subscription the application dropped i
 subscribe.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
-restore("baresip", baresip, ["src/main.c", "CMakeLists.txt"])
+restore("baresip", baresip, ["src/main.c", "CMakeLists.txt", "modules/menu/menu.c"])
 main = baresip / "src/main.c"
 text = main.read_text()
 text = text.replace("err = conf_configure();", '''#ifndef HAVE_GETOPT
@@ -71,6 +71,31 @@ text = text.replace("err = conf_configure();", '''#ifndef HAVE_GETOPT
 #endif
     err = conf_configure();''')
 main.write_text(text)
+
+# The ringback tone is a notification like the ring tone, not call audio, so
+# it goes out the same way: through audio_alert (wasapi on the chosen speaker)
+# rather than through the call's player. baresip's menu sends it to the
+# player, and ksip_audio only takes the call's 48 kHz mono, so the 8 kHz tone
+# was refused (not supported [129]) and the caller heard nothing while a
+# server answered 180 Ringing without early media.
+menu = baresip / "modules/menu/menu.c"
+text = menu.read_text()
+ringback = '''		menu_play(call, "ringback_aufile", "ringback.wav", -1,
+			  DEVICE_PLAYER);'''
+if text.count(ringback) != 1:
+    raise SystemExit("patch-baresip: the ringback call in menu.c has changed")
+text = text.replace(ringback, '''		menu_play(call, "ringback_aufile", "ringback.wav", -1,
+			  DEVICE_ALERT); /* KSIP: alert device, like the ring tone */''')
+# The call-waiting tone, played when a second call arrives during a call, went
+# the same way and was refused for the same reason. It goes out through the
+# alert device too; it sounds beside the call rather than inside it.
+callwaiting = '''		menu_play(call, "callwaiting_aufile", "callwaiting.wav", 3,
+			  DEVICE_PLAYER);'''
+if text.count(callwaiting) != 1:
+    raise SystemExit("patch-baresip: the call-waiting call in menu.c has changed")
+text = text.replace(callwaiting, '''		menu_play(call, "callwaiting_aufile", "callwaiting.wav", 3,
+			  DEVICE_ALERT); /* KSIP: alert device, like the ring tone */''')
+menu.write_text(text)
 
 shutil.copytree(ROOT / "src-native/ksip_audio",
                 baresip / "modules/ksip_audio", dirs_exist_ok=True)
