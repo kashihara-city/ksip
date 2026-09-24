@@ -244,7 +244,23 @@ int login(re_printf *pf, void*) {
         authority=std::string(server)+":"+std::to_string(port);
         // The transport belongs in the URI, the media encryption in the parameters.
         sip_scheme=(transport && !str_casecmp(transport,"TLS")) ? "tls" : "udp";
-        std::string aor="<sip:"+user+"@"+authority+";transport="+sip_scheme+">;regint=0;audio_codecs=opus/48000/1,G722/16000/1,PCMU/8000/1,PCMA/8000/1;answermode=manual;call_transfer=yes";
+        // The codecs the app chose, in its order; a name this build does not
+        // know is skipped, and none at all means every codec in the usual order.
+        std::string codecs;
+        {
+            pl list=PL_INIT;std::string names;
+            if(!conf_get(conf_cur(),"ksip_audio_codecs",&list) && pl_isset(&list))names.assign(list.p,list.l);
+            static const std::pair<const char*,const char*> known[]={{"opus","opus/48000/1"},{"G722","G722/16000/1"},{"PCMU","PCMU/8000/1"},{"PCMA","PCMA/8000/1"}};
+            for(size_t start=0;start<=names.size();) {
+                auto end=names.find(',',start);
+                std::string name=names.substr(start,end==std::string::npos ? std::string::npos : end-start);
+                for(auto &entry:known)if(name==entry.first && codecs.find(entry.second)==std::string::npos)codecs+=(codecs.empty() ? "" : ",")+std::string(entry.second);
+                if(end==std::string::npos)break;
+                start=end+1;
+            }
+            if(codecs.empty())codecs="opus/48000/1,G722/16000/1,PCMU/8000/1,PCMA/8000/1";
+        }
+        std::string aor="<sip:"+user+"@"+authority+";transport="+sip_scheme+">;regint=0;audio_codecs="+codecs+";answermode=manual;call_transfer=yes";
         media_encryption=(mediaenc && *mediaenc) ? mediaenc : "";
         if (mediaenc && *mediaenc) aor+=";mediaenc="+std::string(mediaenc);
         ua *created=nullptr;

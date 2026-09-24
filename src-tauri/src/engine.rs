@@ -42,6 +42,8 @@ pub struct Settings {
     pub transport: String,
     pub ca_file: String,
     pub media_encryption: String,
+    /// The audio codecs to offer, by name, in order; empty offers all of them.
+    pub codecs: String,
     pub auto_answer: bool,
     pub aec: bool,
     pub aec_delay_ms: u16,
@@ -173,6 +175,7 @@ impl Default for Settings {
             transport: String::new(),
             ca_file: String::new(),
             media_encryption: String::new(),
+            codecs: String::new(),
         }
     }
 }
@@ -184,13 +187,14 @@ impl Settings {
     /// the phone, 7 to 30 in the panel beside it.
     const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
     /// The document keys that are stored as policy values instead.
-    pub const POLICY_DOCUMENT_KEYS: [&'static str; 5] =
-        ["transport", "ca_file", "media_encryption", "browser_integration", "buttons"];
+    pub const POLICY_DOCUMENT_KEYS: [&'static str; 6] =
+        ["transport", "ca_file", "media_encryption", "codecs", "browser_integration", "buttons"];
     pub fn policy_values(&self) -> Vec<(String, String)> {
         let mut values = vec![
             ("transport".to_string(), self.transport.clone()),
             ("ca_file".to_string(), self.ca_file.clone()),
             ("media_encryption".to_string(), self.media_encryption.clone()),
+            ("codecs".to_string(), self.codecs.clone()),
             (
                 "browser_integration".to_string(),
                 if self.browser_integration { "true" } else { "false" }.to_string(),
@@ -213,6 +217,7 @@ impl Settings {
         self.transport = read("transport");
         self.ca_file = read("ca_file");
         self.media_encryption = read("media_encryption");
+        self.codecs = read("codecs");
         // A policy writes text, and the ways of saying yes are worth accepting.
         self.browser_integration = matches!(
             read("browser_integration").trim().to_ascii_lowercase().as_str(),
@@ -244,6 +249,28 @@ impl Settings {
             "TLS"
         } else {
             "UDP"
+        }
+    }
+    /// The codecs the app can offer, by the names the setting uses, in the
+    /// order they are offered when the setting names none.
+    pub const CODECS: [&'static str; 4] = ["opus", "G722", "PCMU", "PCMA"];
+    /// The codecs to offer, in order: the setting's names, each once, or all
+    /// of them when it names none. A PBX that answers one codec and sends
+    /// another garbles what the far end hears; the order is how a site steers
+    /// around that.
+    pub fn codec_list(&self) -> Vec<&'static str> {
+        let mut list: Vec<&'static str> = Vec::new();
+        for name in self.codecs.split(',').map(str::trim) {
+            if let Some(known) = Self::CODECS.iter().find(|c| c.eq_ignore_ascii_case(name)) {
+                if !list.contains(known) {
+                    list.push(known);
+                }
+            }
+        }
+        if list.is_empty() {
+            Self::CODECS.to_vec()
+        } else {
+            list
         }
     }
     /// baresip's media encryption name, or None when calls stay in the clear.
@@ -1429,6 +1456,15 @@ impl AppState {
         {
             return Err(message("SETTINGS_LANGUAGE_INVALID"));
         }
+        // Codec names from the known set, each at most once; none means all.
+        let mut named: Vec<String> = Vec::new();
+        for name in s.codecs.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            let lower = name.to_ascii_lowercase();
+            if !Settings::CODECS.iter().any(|c| c.eq_ignore_ascii_case(name)) || named.contains(&lower) {
+                return Err(message("SETTINGS_CODECS_INVALID"));
+            }
+            named.push(lower);
+        }
         for sound in s.sounds() {
             if sound.len() > 400 || sound.chars().any(char::is_control) {
                 return Err(message("SETTINGS_SOUND_PATH_INVALID"));
@@ -1648,6 +1684,7 @@ impl AppState {
         put(format!("webrtc_aec_delay_ms {}", s.aec_delay_ms));
         put(format!("ksip_aec_enabled {}", yes_no(s.aec)));
         put(format!("ksip_register_interval {}", s.register_interval));
+        put(format!("ksip_audio_codecs {}", s.codec_list().join(",")));
         put(format!("ksip_detail_log {}", yes_no(s.detail_log)));
         put(format!("ksip_sip_transport {}", s.sip_transport()));
         put(format!("ksip_mediaenc {}", s.mediaenc().unwrap_or("")));
@@ -2590,6 +2627,7 @@ mod tests {
             assert!(config.contains(&format!("audio_player ksip_audio,{}", snapshot.speaker_id)));
             assert!(config.contains("webrtc_aec_delay_ms 20"));
             assert!(config.contains("callwaiting_aufile none"));
+            assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
             assert!(config.contains("ksip_aec_enabled yes"));
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
@@ -2784,6 +2822,18 @@ mod tests {
         app.view.lock().unwrap().error = message("AUDIO_DEVICE_INIT_FAILED");
         app.clear_polling_error();
         assert_eq!(app.snapshot().error, "AUDIO_DEVICE_INIT_FAILED");
+    }
+    #[test]
+    fn codecs_are_offered_in_the_chosen_order_and_all_by_default() {
+        let mut s = Settings::default();
+        assert_eq!(s.codec_list(), ["opus", "G722", "PCMU", "PCMA"]);
+        s.codecs = "PCMU, opus".into();
+        assert_eq!(s.codec_list(), ["PCMU", "opus"]);
+        assert!(AppState::validate(&s).is_ok());
+        s.codecs = "PCMU,PCMU".into();
+        assert!(AppState::validate(&s).is_err(), "a codec named twice is refused");
+        s.codecs = "G729".into();
+        assert!(AppState::validate(&s).is_err(), "a codec the app does not have is refused");
     }
     #[test]
     fn a_chosen_sound_replaces_the_built_in_one() {
