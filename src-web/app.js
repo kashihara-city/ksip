@@ -336,7 +336,12 @@ function update(snapshot){
   // settings takes effect at once.
   const wanted=snapshot.settings?.language||navigator.language;
   if(languageFor(wanted)!==language)useLanguage(wanted);
+  // When the call on the selected line has just ended and the other line still
+  // has one, the controls follow it: the engine brings that call back, and the
+  // buttons should be about it. A line chosen for a new call is left alone.
+  const hadCall=!!callAt(selected);
   state=snapshot;ready=true;
+  if(hadCall&&!callAt(selected)){const other=[1,2].find(n=>callAt(n));if(other)selected=other;}
   const key=JSON.stringify(state.devices);
   if(deviceKey!==key){for(const kind of kinds)deviceOptions(kind,state.settings[kind]||'default');deviceKey=key;}
   for(const kind of kinds)if($(kind).value!==state.settings[kind])$(kind).value=state.settings[kind];

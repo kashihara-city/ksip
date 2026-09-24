@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <new>
 #include <thread>
+#include <vector>
 
 #include <re.h>
 #include <rem.h>
@@ -13,6 +14,8 @@
 
 struct auplay_st {
   auplay_write_h *handler; void *arg; bool started;
+  // The endpoint this player asked for, so that it can take the stream back.
+  char device[160];
 };
 struct ausrc_st {
   ausrc_read_h *handler; void *arg; bool started;
@@ -34,6 +37,13 @@ ksip_audio *g_audio;
 auplay_st *g_active_playout;
 ausrc_st *g_active_source;
 struct tmr g_linger;
+struct tmr g_handback;
+// Every player alive, oldest first. Only one at a time gets the stream, the
+// newest; when it goes, the one before it gets the stream back. That is how
+// the ringback tone of a call that is still ringing comes back when the call
+// it was pushed aside by (one the person went back to for a moment) is put on
+// hold again.
+std::vector<auplay_st *> g_players;
 
 int Render(void *arg, int16_t *samples, size_t frames) {
   auto *state = static_cast<auplay_st *>(arg);
@@ -64,13 +74,30 @@ void StopIdleStreams(void *) {
   info("ksip_audio: idle audio streams closed\n");
 }
 void KeepWarm() { tmr_start(&g_linger, kLingerMs, StopIdleStreams, nullptr); }
+// Runs once the event that took the active player away has been dealt with:
+// a tone the menu stops in the same breath must not get the stream for an
+// instant on its way out.
+void HandBack(void *) {
+  if (!g_audio || g_active_playout) return;
+  if (!g_players.empty()) {
+    auto *previous = g_players.back();
+    if (ksip_audio_start_playout(g_audio, previous->device, Render, previous) == 0) {
+      previous->started = true;
+      g_active_playout = previous;
+      info("ksip_audio: WebRTC ADM playout handed back\n");
+      return;
+    }
+  }
+  KeepWarm();
+}
 void PlayoutDestructor(void *arg) {
   auto *state = static_cast<auplay_st *>(arg);
-  if (state == g_active_playout) {
-    if (state->started && g_audio) ksip_audio_detach_playout(g_audio);
-    g_active_playout = nullptr;
-    KeepWarm();
-  }
+  g_players.erase(std::remove(g_players.begin(), g_players.end(), state), g_players.end());
+  if (state != g_active_playout) return;
+  g_active_playout = nullptr;
+  if (!g_audio) return;
+  if (state->started) ksip_audio_detach_playout(g_audio);
+  tmr_start(&g_handback, 0, HandBack, nullptr);
 }
 void SourceDestructor(void *arg) {
   auto *state = static_cast<ausrc_st *>(arg);
@@ -106,6 +133,7 @@ int AllocatePlayout(struct auplay_st **out, const struct auplay *,
   if (!out || !p || !handler || !g_audio) return EINVAL;
   if (!Valid(p)) return ENOTSUP;
   tmr_cancel(&g_linger);
+  tmr_cancel(&g_handback);
   if (g_active_playout) {
     ksip_audio_detach_playout(g_audio);
     g_active_playout->started = false;
@@ -114,14 +142,14 @@ int AllocatePlayout(struct auplay_st **out, const struct auplay *,
   auto *state = static_cast<auplay_st *>(mem_zalloc(sizeof(auplay_st), PlayoutDestructor));
   if (!state) return ENOMEM;
   state->handler = handler; state->arg = arg;
+  str_ncpy(state->device, device && device[0] ? device : "default", sizeof(state->device));
   const bool running = ksip_audio_playout_running(g_audio);
-  const int result = ksip_audio_start_playout(g_audio,
-      device && device[0] ? device : "default", Render, state);
+  const int result = ksip_audio_start_playout(g_audio, state->device, Render, state);
   if (result) {
-    warning("ksip_audio: start playout failed (%d) for %s\n", result,
-            device && device[0] ? device : "default");
+    warning("ksip_audio: start playout failed (%d) for %s\n", result, state->device);
     mem_deref(state); return ENODEV;
   }
+  g_players.push_back(state);
   state->started = true; g_active_playout = state; *out = state;
   info(running && ksip_audio_playout_running(g_audio)
            ? "ksip_audio: WebRTC ADM playout taken over\n"
@@ -189,6 +217,7 @@ static int module_init() {
   const int result = ksip_audio_create(std::min(delay, 500u), enabled, &g_audio);
   if (result) return ENODEV;
   tmr_init(&g_linger);
+  tmr_init(&g_handback);
   int error = ausrc_register(&g_source, baresip_ausrcl(), "ksip_audio", AllocateSource);
   error |= auplay_register(&g_player, baresip_auplayl(), "ksip_audio", AllocatePlayout);
   if (error) {
@@ -202,6 +231,7 @@ static int module_init() {
 }
 static int module_close() {
   tmr_cancel(&g_linger);
+  tmr_cancel(&g_handback);
   g_source = static_cast<struct ausrc *>(mem_deref(g_source));
   g_player = static_cast<struct auplay *>(mem_deref(g_player));
   ksip_audio_destroy(g_audio); g_audio = nullptr; return 0;
