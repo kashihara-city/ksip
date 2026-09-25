@@ -3,7 +3,7 @@ import pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# 公開してよいのは手順だけ。接続先と秘密は local-asterisk/ に置く。
+# 公開してよいのは手順だけ。接続先と秘密は test-pbx/ に置く。
 PATTERNS = [
     ("私有IPアドレス", re.compile(r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}|192\.168\.\d{1,3})\.\d{1,3}\b")),
     ("社内ホスト名", re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|internal|intra)\b")),

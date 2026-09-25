@@ -30,7 +30,7 @@ audio_alert aufile,{'NUL' if discard_playback else (self.dir/'alert.wav').as_pos
 ausrc_srate 48000
 auplay_srate 48000
 ausrc_channels 1
-auplay_channels 1
+auplay_channels 2
 ausrc_format s16
 auplay_format s16
 auenc_format s16
@@ -98,8 +98,8 @@ module_app account.dll
         self.sock.close();self.log.close()
 
 def stats(path):
-    # A call recording is stereo with the far end on the left, which is what
-    # these figures are about; what the player fixture writes is mono.
+    # Stereo like a call recording (far end on the left); the player fixture
+    # is set to two channels as well, so the first channel is read either way.
     with wave.open(str(path),'rb') as f:
         assert f.getnchannels() in (1,2) and f.getsampwidth()==2
         rate=f.getframerate();s=array.array('h',f.readframes(f.getnframes()))[0::f.getnchannels()]

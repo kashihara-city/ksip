@@ -15,7 +15,7 @@ if sys.argv[1]=='setup':
     policy=[('server',address[0]),('port',address[1]),('extension',configured[0]['extension'])]
     if secure:
         policy+=[('transport','tls'),('media_encryption','sdes'),
-                 ('ca_file',str(ROOT/'local-asterisk/LocalCA.crt'))]
+                 ('ca_file',str(ROOT/'test-pbx/local-asterisk/LocalCA.crt'))]
     # 'setup buttons' defines three custom buttons: a speed dial to the peer, a
     # park slot the lab parks on *701 and picks up on 701, and a transfer to 9001.
     if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':

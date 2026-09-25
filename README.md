@@ -276,7 +276,7 @@ Windowsの通知は、アプリの識別子（AUMID）をたどって表示名�
 - `src-web/` はHTML・CSS・最小限のvanilla JavaScriptのままにし、npm依存を追加しません。
 - テスト・ビルドスクリプトはPowerShellとPythonだけです。冒頭に必ず用途を記載します。PowerShellはMSVC環境が要るものとUIAutomationを使うものに限り、それ以外はPython標準ライブラリで書きます。テスト用にthird-party依存を追加しません。
 - 生成物はGit管理しません。テスト生成物は `temp/build/`、テストと監査の結果は `temp/reports/` に置きます。
-- 開発用にSIPサーバーを配置する場合は、接続先と資格情報を `local-asterisk/` に置きます。表示もログ出力もGit追加も配布もしません。
+- 開発用にSIPサーバーを配置する場合は、接続先と資格情報を `test-pbx/` の下にPBXごとのフォルダーを作って置きます（開発用のAsteriskは `test-pbx/local-asterisk/`）。表示もログ出力もGit追加も配布もしません。
 
 ## リポジトリの構成
 
@@ -373,7 +373,7 @@ python -X utf8 scripts/test/line-endings.py
 
 `test/audio-devices.py` にはWindowsの実音声デバイスが必要です。
 
-`test/no-secrets.py` は、Gitが追跡しているファイルに私有IPアドレス・社内ホスト名・秘密らしき文字列・鍵や証明書の中身が混ざっていないかを調べます。開発用サーバーの接続先はリポジトリに置かず `local-asterisk/` から読む決まりで、この検査がそれを守ります。
+`test/no-secrets.py` は、Gitが追跡しているファイルに私有IPアドレス・社内ホスト名・秘密らしき文字列・鍵や証明書の中身が混ざっていないかを調べます。開発用サーバーの接続先はリポジトリに置かず `test-pbx/local-asterisk/` から読む決まりで、この検査がそれを守ります。
 
 `test/build-paths.py` は、ビルドした `release/ksip.exe` に組んだ機械の絶対パス（利用者のフォルダ、リポジトリの場所、cargoのレジストリ）が残っていないかを調べ、結果を `temp/reports/build-paths.json` に残します。`test/line-endings.py` は、`src-web/` の追跡ファイルが作業ツリーでCRLFであることを確かめます。改行がexeへ届くのはここだけです。どちらも数秒で終わります。
 
@@ -383,7 +383,7 @@ python -X utf8 scripts/test/line-endings.py
 
 ### 開発用SIPサーバーが要るテスト
 
-`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `local-asterisk/lab.json` から読みます。`local-asterisk/` はGit管理外なので、公開されるのは手順だけです。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
+`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `test-pbx/local-asterisk/lab.json` から読みます。`test-pbx/` はGit管理外なので、公開されるのは手順だけです。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
 
 ```json
 {
@@ -391,7 +391,7 @@ python -X utf8 scripts/test/line-endings.py
   "port": 5060,
   "tls_host": "<TLSで使うホスト名>",
   "tls_port": 5061,
-  "server_certificate": "local-asterisk/<サーバー証明書>.crt",
+  "server_certificate": "test-pbx/local-asterisk/<サーバー証明書>.crt",
   "accounts": [
     { "extension": "1001", "password": "<パスワード>" },
     { "extension": "1002", "password": "<パスワード>" },
@@ -401,7 +401,7 @@ python -X utf8 scripts/test/line-endings.py
 }
 ```
 
-`accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`asterisk-record-switch` は3件目も使い、`asterisk-tls` は `"dtls": true` を付けた内線でDTLS-SRTPの通話をします。TLSのテストは `local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。
+`accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`asterisk-record-switch` は3件目も使い、`asterisk-tls` は `"dtls": true` を付けた内線でDTLS-SRTPの通話をします。TLSのテストは `test-pbx/local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。
 
 開発にはAsterisk 22.11.0（codec_opus 1.3.0）を使いました。サーバー側には、自動応答して音を流す `9001`、`*701` で保留し `701` で取り出せるパークロット（res_parking）、各内線の `hint`、DTLSの内線に `use_avpf=yes` が要ります。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
 

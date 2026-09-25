@@ -2,7 +2,7 @@
 import json,re,time
 from sip_fixture import ROOT,Phone,accounts,connect,dtls_account,lab,version
 
-CA=ROOT/'local-asterisk/LocalCA.crt'
+CA=ROOT/'test-pbx/local-asterisk/LocalCA.crt'
 SERVER=lab()['tls_host']
 
 def engine_log(phone):
@@ -11,7 +11,7 @@ def engine_log(phone):
 
 def main():
     (ROOT/'temp/reports').mkdir(parents=True,exist_ok=True)
-    assert CA.is_file(), 'local-asterisk/LocalCA.crt が必要です'
+    assert CA.is_file(), 'test-pbx/local-asterisk/LocalCA.crt が必要です'
     configured=accounts()
     # The certificate carries the name, so the account must use it too.
     secure=[dict(item,server=SERVER,port=5061) for item in configured]

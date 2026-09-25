@@ -6,7 +6,7 @@
 **/__pycache__/
 
 # Local Asterisk host details and credentials
-/local-asterisk/
+/test-pbx/
 
 # メモ類（手元だけ）
 /AGENTS.md

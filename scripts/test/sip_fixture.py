@@ -19,14 +19,14 @@ def lab():
     """Where the development Asterisk is. It is described on the machine that
     has one, never in this repository, so that publishing the tests publishes
     the procedure and not the network."""
-    path = ROOT / 'local-asterisk/lab.json'
-    assert path.exists(), 'local-asterisk/lab.json がありません。開発用Asteriskの接続先を書いてください'
+    path = ROOT / 'test-pbx/local-asterisk/lab.json'
+    assert path.exists(), 'test-pbx/local-asterisk/lab.json がありません。開発用Asteriskの接続先を書いてください'
     settings = json.loads(path.read_text(encoding='utf-8-sig'))
     for name in ('server', 'port', 'tls_host', 'tls_port', 'server_certificate', 'accounts'):
-        assert name in settings, f'local-asterisk/lab.json に {name} がありません'
+        assert name in settings, f'test-pbx/local-asterisk/lab.json に {name} がありません'
     for item in settings['accounts']:
-        assert item.get('extension') and item.get('password'), 'local-asterisk/lab.json の accounts には extension と password が要ります'
-    assert len(settings['accounts']) >= 2, 'local-asterisk/lab.json の accounts は2件以上要ります'
+        assert item.get('extension') and item.get('password'), 'test-pbx/local-asterisk/lab.json の accounts には extension と password が要ります'
+    assert len(settings['accounts']) >= 2, 'test-pbx/local-asterisk/lab.json の accounts は2件以上要ります'
     return settings
 def accounts():
     """The test extensions of lab.json, in the order written there: the first
@@ -38,11 +38,11 @@ def accounts():
 def account(index, purpose):
     """The account at that position, or a clear word on what lab.json lacks."""
     configured=accounts()
-    assert len(configured)>index, f'local-asterisk/lab.json の accounts に{index+1}件目がありません（{purpose}）'
+    assert len(configured)>index, f'test-pbx/local-asterisk/lab.json の accounts に{index+1}件目がありません（{purpose}）'
     return configured[index]
 def dtls_account():
     match=[a for a in accounts() if a['dtls']]
-    assert match, 'local-asterisk/lab.json の accounts に "dtls": true の内線がありません（DTLS-SRTPのテストに使う）'
+    assert match, 'test-pbx/local-asterisk/lab.json の accounts に "dtls": true の内線がありません（DTLS-SRTPのテストに使う）'
     return match[0]
 def put_account(target,account):
     """Only the sign-in secret goes to the vault; the address is engine config."""
@@ -89,6 +89,8 @@ class Phone:
         codec_modules=chr(10).join(f'module {name}.dll' for name in codecs)
         if mediaenc:codec_modules+=chr(10)+'module srtp.dll'+chr(10)+'module dtls_srtp.dll'
         trust=f'sip_cafile {Path(ca_file).as_posix()}'+chr(10)+'sip_verify_server yes'+chr(10) if ca_file else ''
+        # The file player writes stereo like a call recording; the real device path (ksip_audio) takes 48 kHz mono only.
+        play_channels=2 if audio_player.startswith('aufile') else 1
         (self.dir/'config').write_text(f'''ksip_sip_server {account['server']}
 ksip_sip_port {account['port']}
 ksip_extension {account['extension']}
@@ -105,7 +107,7 @@ audio_alert aufile,NUL
 ausrc_srate 48000
 auplay_srate 48000
 ausrc_channels 1
-auplay_channels 1
+auplay_channels {play_channels}
 ausrc_format s16
 auplay_format s16
 auenc_format s16

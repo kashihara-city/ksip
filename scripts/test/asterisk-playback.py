@@ -35,8 +35,8 @@ def main():
     finally:
         phone.close()
 
-    # What the player fixture wrote is mono; a call recording would be stereo
-    # with the far end on the left. Either way the first channel is read.
+    # The player fixture writes stereo like a call recording (far end on the
+    # left); the first channel is read either way.
     with wave.open(str(received), "rb") as wav:
         assert wav.getnchannels() in (1, 2)
         assert wav.getsampwidth() == 2

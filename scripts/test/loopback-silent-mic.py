@@ -32,7 +32,7 @@ audio_alert aufile,NUL
 ausrc_srate 48000
 auplay_srate 48000
 ausrc_channels 1
-auplay_channels 1
+auplay_channels 2
 ausrc_format s16
 auplay_format s16
 auenc_format s16
@@ -152,7 +152,7 @@ def main():
 
     with wave.open(str(receiver.directory / "received.wav"), "rb") as recording:
         rate = recording.getframerate()
-        samples = array.array("h", recording.readframes(recording.getnframes()))
+        samples = array.array("h", recording.readframes(recording.getnframes()))[0 :: recording.getnchannels()]
     rms = math.sqrt(sum(value * value for value in samples) / max(1, len(samples)))
     log = (sender.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
     assert len(samples) > rate * 3, (len(samples), rate)
