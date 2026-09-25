@@ -426,6 +426,25 @@ fn answered_elsewhere(reason: &str) -> bool {
 }
 /// What a recording is called: when it started, and whom the call was with,
 /// so that the folder reads like the history. `2026-09-23_14-30-12_1002.wav`.
+/// The number in a peer address: `sip:1001@pbx;x` and `<sip:1001@pbx>` give `1001`.
+pub fn peer_number(peer: &str) -> String {
+    let user = peer.trim().trim_start_matches('<');
+    let user = user
+        .strip_prefix("sip:")
+        .or_else(|| user.strip_prefix("sips:"))
+        .unwrap_or(user);
+    user.split(['@', ';', '>']).next().unwrap_or("").to_string()
+}
+/// How a call's other end is named to the person: the caller's name in front
+/// of the number when the call came with one, as the window shows it.
+pub fn caller_label(call: &CallInfo) -> String {
+    let number = peer_number(&call.peer);
+    if call.name.is_empty() {
+        number
+    } else {
+        format!("{} {}", call.name, number)
+    }
+}
 fn recording_name(stamp: &str, peer: &str) -> String {
     let time: String = stamp
         .chars()
@@ -436,15 +455,7 @@ fn recording_name(stamp: &str, peer: &str) -> String {
             c => c,
         })
         .collect();
-    let user = peer.trim().trim_start_matches('<');
-    let user = user
-        .strip_prefix("sip:")
-        .or_else(|| user.strip_prefix("sips:"))
-        .unwrap_or(user);
-    let user: String = user
-        .split(['@', ';', '>'])
-        .next()
-        .unwrap_or_default()
+    let user: String = peer_number(peer)
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '_' | '.' | '-'))
         .take(40)
@@ -2915,6 +2926,25 @@ mod tests {
         assert!(app.snapshot().microphone_fallback);
         app.log(LOG_ENGINE, "ksip: microphone input recovered".into());
         assert!(!app.snapshot().microphone_fallback);
+    }
+    #[test]
+    fn caller_label_puts_the_name_before_the_number() {
+        let mut call = CallInfo {
+            id: "c".into(),
+            peer: "sip:1001@192.0.2.10;transport=udp".into(),
+            name: String::new(),
+            state: "INCOMING".into(),
+            held: false,
+            duration: 0,
+            codec: String::new(),
+            secure: false,
+            transport: "UDP".into(),
+            line: 1,
+        };
+        assert_eq!(caller_label(&call), "1001");
+        call.name = "部署名".into();
+        assert_eq!(caller_label(&call), "部署名 1001");
+        assert_eq!(peer_number("<sips:117@pbx>"), "117");
     }
     #[test]
     fn settings_migrate_and_auto_record_selects_active_line() {

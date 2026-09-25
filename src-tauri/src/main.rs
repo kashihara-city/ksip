@@ -477,8 +477,7 @@ fn main() {
                     if !fresh.is_empty() {
                         if snapshot.settings.incoming_action == "notify" && !is_visible(&handle) {
                             for call in &fresh {
-                                let who = if call.name.is_empty() { call.peer.clone() } else { format!("{} {}", call.name, call.peer) };
-                                shortcuts::notify_incoming(&handle, &who);
+                                shortcuts::notify_incoming(&handle, &engine::caller_label(call));
                                 announced.insert(call.id.clone());
                             }
                         } else {
