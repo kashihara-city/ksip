@@ -49,7 +49,7 @@ def names():
             for name in re.findall(r'(?<![a-z_])%s\(\s*"(%s)"' % (call, NAME), text):
                 note(name, values)
     module = (ROOT / "src-native/ksip/ksip.cpp").read_text(encoding="utf-8")
-    for assignment in re.findall(r"outcome\s*=\s*([^;]*);", module):
+    for assignment in re.findall(r"(?:outcome\s*=|set_outcome\()\s*([^;]*);", module):
         for name in re.findall(r'"(%s)"' % NAME, assignment):
             note(name, False)
     page = (ROOT / "src-web/index.html").read_text(encoding="utf-8")

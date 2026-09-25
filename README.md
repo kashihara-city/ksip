@@ -219,8 +219,11 @@ ksip.exe ksip:ANSWER
 | `speaker_gain`         | 整数   | スピーカーのソフト増幅率（%）。100〜200                                                                                                          | `100`（増幅しない）                                   |
 | `auto_record`          | 真偽   | 通話成立時に自動録音するか                                                                                                                       | `false`（録音しない）                                 |
 | `auto_answer`          | 真偽   | 着信を即座に応答するか。動作確認用                                                                                                               | `false`（自動応答しない）                             |
-| `aec`                  | 真偽   | エコーキャンセルを有効にするか                                                                                                                   | `true`（有効）                                        |
+| `aec`                  | 真偽   | エコーキャンセル（WebRTC AEC3）を有効にするか                                                                                                    | `true`（有効）                                        |
 | `aec_delay_ms`         | 整数   | AECの遅延ヒント（ミリ秒）。0〜500。ADMが実測値を返すときはそちらを優先                                                                           | `20`                                                  |
+| `high_pass`            | 真偽   | ハイパスフィルタ（低域カット）を有効にするか                                                                                                     | `true`（有効）                                        |
+| `noise_suppression`    | 文字列 | ノイズ抑制の強さ。`off`、`low`、`moderate`、`high`、`very_high`                                                                                  | `high`                                                |
+| `agc`                  | 真偽   | 自動利得調整（WebRTC AGC2のデジタル利得。マイクの音量は変えない）を有効にするか                                                                  | `true`（有効）                                        |
 | `register_interval`    | 整数   | REGISTERの更新周期（秒）。30〜3600                                                                                                               | `300`                                                 |
 | `detail_log`           | 真偽   | 障害調査用の詳細をログへ出すか。SIPメッセージ全文（認証ヘッダーは伏字）、baresipのデバッグ行、WebRTC音声処理の情報行が増える                     | `false`（出さない）                                   |
 | `browser_dial_confirm` | 真偽   | リンクからの発信前に確認するか                                                                                                                   | `true`（確認する）                                    |

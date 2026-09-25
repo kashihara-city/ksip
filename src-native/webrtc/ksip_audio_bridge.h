@@ -35,6 +35,13 @@ typedef struct ksip_audio_stats {
   uint32_t capture_errors;
   uint32_t capture_device_rate;
   uint32_t capture_device_channels;
+  /* What AGC2 reported last (it reports every 10 s of processing): the
+     speech and noise levels it estimates, the headroom it keeps and the
+     gain it applies. */
+  double agc_speech_level_dbfs;
+  double agc_noise_level_dbfs;
+  double agc_headroom_db;
+  double agc_gain_db;
   uint32_t flags;
 } ksip_audio_stats;
 
@@ -60,11 +67,21 @@ enum {
   KSIP_AUDIO_STATS_CAPTURE_OUTPUT_LEVEL = 1u << 10,
   KSIP_AUDIO_STATS_CAPTURE_DEVICE_LEVEL = 1u << 11,
   KSIP_AUDIO_STATS_CAPTURE_MONO_LEVEL = 1u << 12,
+  KSIP_AUDIO_STATS_AGC = 1u << 13,
 };
 
 /* Call before creating: WebRTC prints from LS_INFO unless told otherwise. */
 void ksip_audio_set_log_level(int detail);
-int ksip_audio_create(uint32_t fallback_delay_ms, int processing_enabled,
+/* Which parts of the WebRTC audio processing run. Each is its own switch;
+   when all are off the capture goes through untouched. */
+typedef struct ksip_audio_processing {
+  int echo_cancellation; /* AEC3 */
+  int high_pass_filter;
+  int noise_suppression; /* -1 off, 0 low, 1 moderate, 2 high, 3 very high */
+  int gain_control;      /* AGC2 adaptive digital gain; no device volume */
+} ksip_audio_processing;
+int ksip_audio_create(uint32_t fallback_delay_ms,
+                      const ksip_audio_processing *processing,
                       ksip_audio **out);
 void ksip_audio_destroy(ksip_audio *audio);
 /* 0 on success; -1 busy or a bad argument, -2 the device could not be set

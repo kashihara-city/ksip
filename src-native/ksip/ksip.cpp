@@ -475,6 +475,12 @@ int state(re_printf *pf, void*) {
             if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_MONO_LEVEL)odict_entry_add(aec,"capture_mono_rms_dbfs",ODICT_DOUBLE,stats.capture_mono_rms_dbfs);
             if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_INPUT_LEVEL)odict_entry_add(aec,"capture_input_rms_dbfs",ODICT_DOUBLE,stats.capture_input_rms_dbfs);
             if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_OUTPUT_LEVEL)odict_entry_add(aec,"capture_output_rms_dbfs",ODICT_DOUBLE,stats.capture_output_rms_dbfs);
+            if(stats.flags & KSIP_AUDIO_STATS_AGC) {
+                odict_entry_add(aec,"agc_speech_level_dbfs",ODICT_DOUBLE,stats.agc_speech_level_dbfs);
+                odict_entry_add(aec,"agc_noise_level_dbfs",ODICT_DOUBLE,stats.agc_noise_level_dbfs);
+                odict_entry_add(aec,"agc_headroom_db",ODICT_DOUBLE,stats.agc_headroom_db);
+                odict_entry_add(aec,"agc_gain_db",ODICT_DOUBLE,stats.agc_gain_db);
+            }
             odict_entry_add(aec,"stream_delay_ms",ODICT_INT,static_cast<int64_t>(stats.stream_delay_ms));
             odict_entry_add(aec,"stream_delay_from_device",ODICT_BOOL,stats.stream_delay_from_device != 0);
             odict_entry_add(aec,"render_frames",ODICT_INT,static_cast<int64_t>(stats.render_frames));

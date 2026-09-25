@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,7 @@
 #include "modules/audio_device/include/audio_device_factory.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/win/scoped_com_initializer.h"
+#include "system_wrappers/include/metrics.h"
 
 namespace {
 constexpr uint32_t kSampleRate = 48000;
@@ -51,26 +53,43 @@ double PowerDbfs(double power) {
   return 10.0 * std::log10(std::max(power, 1e-10));
 }
 
-webrtc::AudioProcessing::Config ApmConfig(bool enabled,
-                                           bool echo_enabled = true) {
+webrtc::AudioProcessing::Config::NoiseSuppression::Level NoiseLevel(int level) {
+  using NS = webrtc::AudioProcessing::Config::NoiseSuppression;
+  switch (level) {
+    case 0: return NS::kLow;
+    case 1: return NS::kModerate;
+    case 3: return NS::kVeryHigh;
+    default: return NS::kHigh;
+  }
+}
+
+bool AnyProcessing(const ksip_audio_processing &p) {
+  return p.echo_cancellation || p.high_pass_filter ||
+         p.noise_suppression >= 0 || p.gain_control;
+}
+
+webrtc::AudioProcessing::Config ApmConfig(const ksip_audio_processing &p) {
   webrtc::AudioProcessing::Config config;
-  config.echo_canceller.enabled = enabled && echo_enabled;
-  config.high_pass_filter.enabled = enabled;
-  config.noise_suppression.enabled = enabled;
-  config.noise_suppression.level =
-      webrtc::AudioProcessing::Config::NoiseSuppression::kHigh;
+  config.echo_canceller.enabled = p.echo_cancellation != 0;
+  // The high-pass filter is a setting of its own; AEC3 would otherwise turn
+  // it on whenever it runs.
+  config.echo_canceller.enforce_high_pass_filtering = false;
+  config.high_pass_filter.enabled = p.high_pass_filter != 0;
+  config.noise_suppression.enabled = p.noise_suppression >= 0;
+  config.noise_suppression.level = NoiseLevel(p.noise_suppression);
   config.gain_controller1.enabled = false;
-  config.gain_controller2.enabled = enabled;
+  config.gain_controller2.enabled = p.gain_control != 0;
   config.gain_controller2.input_volume_controller.enabled = false;
-  config.gain_controller2.adaptive_digital.enabled = enabled;
+  config.gain_controller2.adaptive_digital.enabled = p.gain_control != 0;
   return config;
 }
 }  // namespace
 
 struct ksip_audio final : public webrtc::AudioTransport {
-  ksip_audio(uint32_t fallback_delay, bool processing)
+  ksip_audio(uint32_t fallback_delay, const ksip_audio_processing &p)
       : fallback_delay_ms(fallback_delay),
-        processing_enabled(processing),
+        processing(p),
+        processing_enabled(AnyProcessing(p)),
         com(webrtc::ScopedCOMInitializer::kMTA),
         env(webrtc::CreateEnvironment()),
         mono_config(kSampleRate, 1) {}
@@ -78,7 +97,7 @@ struct ksip_audio final : public webrtc::AudioTransport {
   int Initialize() {
     if (!com.Succeeded()) return -2;
     apm = webrtc::BuiltinAudioProcessingBuilder(
-              ApmConfig(processing_enabled)).Build(env);
+              ApmConfig(processing)).Build(env);
     if (!apm) return -3;
     adm = webrtc::CreateWindowsCoreAudioAudioDeviceModule(env);
     if (!adm || adm->Init() || adm->RegisterAudioCallback(this)) return -4;
@@ -211,6 +230,38 @@ struct ksip_audio final : public webrtc::AudioTransport {
     return result;
   }
 
+  // Takes what AGC2 reported since the last poll. It reports every 10 s of
+  // processing through WebRTC's histograms (there is no statistics field for
+  // it), so a poll sees one report at most; the value seen most is kept.
+  void PollAgcMetrics() {
+    std::map<std::string, std::unique_ptr<webrtc::metrics::SampleInfo>,
+             webrtc::AbslStringViewCmp> histograms;
+    webrtc::metrics::GetAndReset(&histograms);
+    auto reported = [&](const char *name, double scale, double *out) {
+      const auto it = histograms.find(name);
+      if (it == histograms.end() || it->second->samples.empty()) return false;
+      int value = 0, events = 0;
+      for (const auto &[sample, count] : it->second->samples)
+        if (count >= events) { value = sample; events = count; }
+      *out = scale * value;
+      return true;
+    };
+    double speech = 0, noise = 0, headroom = 0, gain = 0;
+    const bool got_speech =
+        reported("WebRTC.Audio.Agc2.EstimatedSpeechLevel", -1.0, &speech);
+    const bool got_noise =
+        reported("WebRTC.Audio.Agc2.EstimatedNoiseLevel", -1.0, &noise);
+    const bool got_headroom =
+        reported("WebRTC.Audio.Agc2.Headroom", 1.0, &headroom);
+    if (reported("WebRTC.Audio.Agc2.DigitalGainApplied", 1.0, &gain)) {
+      agc_reported = true;
+      agc_gain_db = gain;
+      if (got_speech) agc_speech_level_dbfs = speech;
+      if (got_noise) agc_noise_level_dbfs = noise;
+      if (got_headroom) agc_headroom_db = headroom;
+    }
+  }
+
   int ResetDiagnostics() {
     std::lock_guard<std::mutex> lock(apm_mutex);
     const int result = apm->Initialize();
@@ -227,6 +278,7 @@ struct ksip_audio final : public webrtc::AudioTransport {
     capture_mono_power = 0;
     capture_device_rate = 0;
     capture_device_channels = 0;
+    agc_reported = false;
     return result;
   }
 
@@ -327,6 +379,7 @@ struct ksip_audio final : public webrtc::AudioTransport {
   }
 
   const uint32_t fallback_delay_ms;
+  const ksip_audio_processing processing;
   const bool processing_enabled;
   webrtc::ScopedCOMInitializer com;
   const webrtc::Environment env;
@@ -364,6 +417,12 @@ struct ksip_audio final : public webrtc::AudioTransport {
   double capture_output_power = 0;
   uint32_t capture_device_rate = 0;
   uint32_t capture_device_channels = 0;
+  // The last AGC2 report, see PollAgcMetrics.
+  bool agc_reported = false;
+  double agc_speech_level_dbfs = 0;
+  double agc_noise_level_dbfs = 0;
+  double agc_headroom_db = 0;
+  double agc_gain_db = 0;
 };
 
 int ksip_audio_internal::ProcessSyntheticFrame(ksip_audio *audio,
@@ -384,7 +443,9 @@ int ksip_audio_internal::SetEchoCancellationForTest(ksip_audio *audio,
                                                       bool enabled) {
   if (!audio || !audio->processing_enabled) return -1;
   std::lock_guard<std::mutex> lock(audio->apm_mutex);
-  audio->apm->ApplyConfig(ApmConfig(true, enabled));
+  ksip_audio_processing processing = audio->processing;
+  processing.echo_cancellation = enabled;
+  audio->apm->ApplyConfig(ApmConfig(processing));
   return audio->apm->Initialize();
 }
 
@@ -400,11 +461,19 @@ extern "C" void ksip_audio_set_log_level(int detail) {
   config.set_debug_severity(level);
   webrtc::InitializeLogging(std::move(config));
 }
-extern "C" int ksip_audio_create(uint32_t delay, int processing,
+extern "C" int ksip_audio_create(uint32_t delay,
+                                  const ksip_audio_processing *processing,
                                   ksip_audio **out) {
-  if (!out || delay > 500) return -1;
+  if (!out || !processing || delay > 500) return -1;
   *out = nullptr;
-  auto audio = std::make_unique<ksip_audio>(delay, processing != 0);
+  // AGC2 reports its levels and gain through WebRTC's histograms, which
+  // collect nothing until enabled: once per process, before WebRTC runs.
+  static bool metrics_enabled = false;
+  if (!metrics_enabled) {
+    webrtc::metrics::Enable();
+    metrics_enabled = true;
+  }
+  auto audio = std::make_unique<ksip_audio>(delay, *processing);
   const int result = audio->Initialize();
   if (result) return result;
   *out = audio.release();
@@ -533,6 +602,16 @@ extern "C" int ksip_audio_get_stats(ksip_audio *audio,
   stats->capture_errors = audio->capture_errors;
   stats->capture_device_rate = audio->capture_device_rate;
   stats->capture_device_channels = audio->capture_device_channels;
+  if (audio->processing.gain_control) {
+    audio->PollAgcMetrics();
+    if (audio->agc_reported) {
+      stats->agc_speech_level_dbfs = audio->agc_speech_level_dbfs;
+      stats->agc_noise_level_dbfs = audio->agc_noise_level_dbfs;
+      stats->agc_headroom_db = audio->agc_headroom_db;
+      stats->agc_gain_db = audio->agc_gain_db;
+      stats->flags |= KSIP_AUDIO_STATS_AGC;
+    }
+  }
   if (audio->render_frames) {
     stats->render_rms_dbfs = PowerDbfs(audio->render_power);
     stats->flags |= KSIP_AUDIO_STATS_RENDER_LEVEL;

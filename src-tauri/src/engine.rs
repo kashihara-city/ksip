@@ -47,6 +47,11 @@ pub struct Settings {
     pub auto_answer: bool,
     pub aec: bool,
     pub aec_delay_ms: u16,
+    /// The other parts of the WebRTC audio processing, each its own switch.
+    pub high_pass: bool,
+    /// off, low, moderate, high or very_high.
+    pub noise_suppression: String,
+    pub agc: bool,
     pub register_interval: u16,
     pub detail_log: bool,
     pub browser_integration: bool,
@@ -158,6 +163,9 @@ impl Default for Settings {
             auto_answer: false,
             aec: true,
             aec_delay_ms: 20,
+            high_pass: true,
+            noise_suppression: "high".into(),
+            agc: true,
             register_interval: 300,
             detail_log: false,
             browser_integration: false,
@@ -254,6 +262,9 @@ impl Settings {
     /// The codecs the app can offer, by the names the setting uses, in the
     /// order they are offered when the setting names none.
     pub const CODECS: [&'static str; 4] = ["opus", "G722", "PCMU", "PCMA"];
+    /// The strengths the noise suppression setting can name.
+    pub const NOISE_SUPPRESSION_LEVELS: [&'static str; 5] =
+        ["off", "low", "moderate", "high", "very_high"];
     /// The codecs to offer, in order: the setting's names, each once, or all
     /// of them when it names none. A PBX that answers one codec and sends
     /// another garbles what the far end hears; the order is how a site steers
@@ -484,6 +495,10 @@ pub struct AudioProcessingStats {
     pub capture_mono_rms_dbfs: Option<f64>,
     pub capture_input_rms_dbfs: Option<f64>,
     pub capture_output_rms_dbfs: Option<f64>,
+    pub agc_speech_level_dbfs: Option<f64>,
+    pub agc_noise_level_dbfs: Option<f64>,
+    pub agc_headroom_db: Option<f64>,
+    pub agc_gain_db: Option<f64>,
     pub delay_ms: Option<i32>,
     pub delay_median_ms: Option<i32>,
     pub delay_standard_deviation_ms: Option<i32>,
@@ -1144,7 +1159,7 @@ impl AppState {
     }
     fn log(&self, source: &str, s: String) {
         let mut v = self.view.lock().unwrap();
-        if s.contains("Google WebRTC ADM + APM initialized (processing enabled)") {
+        if s.contains("Google WebRTC ADM + APM initialized (processing enabled") {
             v.aec_active = true;
         }
         if s.contains("ksip: microphone fallback active") {
@@ -1437,6 +1452,9 @@ impl AppState {
         if s.aec_delay_ms > 500 {
             return Err(message("SETTINGS_AEC_DELAY_RANGE"));
         }
+        if !Settings::NOISE_SUPPRESSION_LEVELS.contains(&s.noise_suppression.as_str()) {
+            return Err(message("SETTINGS_NOISE_SUPPRESSION_INVALID"));
+        }
         if !(30..=3600).contains(&s.register_interval) {
             return Err(message("SETTINGS_REGISTER_INTERVAL_RANGE"));
         }
@@ -1689,6 +1707,9 @@ impl AppState {
         }
         put(format!("webrtc_aec_delay_ms {}", s.aec_delay_ms));
         put(format!("ksip_aec_enabled {}", yes_no(s.aec)));
+        put(format!("ksip_high_pass {}", yes_no(s.high_pass)));
+        put(format!("ksip_noise_suppression {}", s.noise_suppression));
+        put(format!("ksip_agc {}", yes_no(s.agc)));
         put(format!("ksip_register_interval {}", s.register_interval));
         put(format!("ksip_audio_codecs {}", s.codec_list().join(",")));
         put(format!("ksip_detail_log {}", yes_no(s.detail_log)));
@@ -2635,6 +2656,9 @@ mod tests {
             assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
             assert!(config.contains("ksip_aec_enabled yes"));
+            assert!(config.contains("ksip_high_pass yes"));
+            assert!(config.contains("ksip_noise_suppression high"));
+            assert!(config.contains("ksip_agc yes"));
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
             assert!(app.request("lab_stop", "").is_ok());
@@ -2693,6 +2717,7 @@ mod tests {
         assert!(rejected(Settings { microphone: "default\nmodule evil".into(), ..Settings::default() }));
         assert!(rejected(Settings { sip_port: 10000, rtp_port: 10000, ..Settings::default() }));
         assert!(rejected(Settings { aec_delay_ms: 501, ..Settings::default() }));
+        assert!(rejected(Settings { noise_suppression: "loud".into(), ..Settings::default() }));
         assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
         assert!(AppState::validate(&Settings::default()).is_ok());
     }
@@ -2893,6 +2918,9 @@ mod tests {
         assert_eq!(settings.microphone_gain, 100);
         assert_eq!(settings.speaker_gain, 100);
         assert_eq!(settings.aec_delay_ms, 20);
+        assert!(settings.high_pass);
+        assert_eq!(settings.noise_suppression, "high");
+        assert!(settings.agc);
         assert_eq!(settings.register_interval, 300);
         assert_eq!(settings.tray_after_call, -1);
         assert!(!settings.detail_log);

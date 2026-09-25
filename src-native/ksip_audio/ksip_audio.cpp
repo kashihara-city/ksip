@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <thread>
 #include <vector>
@@ -207,14 +208,29 @@ extern "C" int ksip_audio_get_current_stats(ksip_audio_stats *stats) {
   return ksip_audio_get_stats(g_audio, stats);
 }
 
+// The setting's word for the noise suppression, as the bridge counts it.
+static int NoiseLevel(const char *level) {
+  static const char *const names[] = {"low", "moderate", "high", "very_high"};
+  for (int i = 0; i < 4; ++i)
+    if (!std::strcmp(level, names[i])) return i;
+  return std::strcmp(level, "off") ? 2 : -1;
+}
+
 static int module_init() {
-  uint32_t delay = 20; bool enabled = true, detail = false;
+  uint32_t delay = 20;
+  bool aec = true, high_pass = true, agc = true, detail = false;
+  char level[24] = "high";
   conf_get_u32(conf_cur(), "webrtc_aec_delay_ms", &delay);
-  conf_get_bool(conf_cur(), "ksip_aec_enabled", &enabled);
+  conf_get_bool(conf_cur(), "ksip_aec_enabled", &aec);
+  conf_get_bool(conf_cur(), "ksip_high_pass", &high_pass);
+  conf_get_str(conf_cur(), "ksip_noise_suppression", level, sizeof level);
+  conf_get_bool(conf_cur(), "ksip_agc", &agc);
   conf_get_bool(conf_cur(), "ksip_detail_log", &detail);
+  const ksip_audio_processing processing{aec, high_pass, NoiseLevel(level), agc};
+  const bool enabled = aec || high_pass || processing.noise_suppression >= 0 || agc;
   // Set before creating, so that the device warnings of a failing start show up.
   ksip_audio_set_log_level(detail);
-  const int result = ksip_audio_create(std::min(delay, 500u), enabled, &g_audio);
+  const int result = ksip_audio_create(std::min(delay, 500u), &processing, &g_audio);
   if (result) return ENODEV;
   tmr_init(&g_linger);
   tmr_init(&g_handback);
@@ -225,8 +241,14 @@ static int module_init() {
     g_player = static_cast<struct auplay *>(mem_deref(g_player));
     ksip_audio_destroy(g_audio); g_audio = nullptr; return error;
   }
-  info("ksip_audio: Google WebRTC ADM + APM initialized (%s)\n",
-       enabled ? "processing enabled" : "processing disabled");
+  // The app reads "processing enabled" from this line.
+  if (enabled)
+    info("ksip_audio: Google WebRTC ADM + APM initialized (processing enabled:"
+         " aec %s, high-pass %s, noise suppression %s, agc %s)\n",
+         aec ? "on" : "off", high_pass ? "on" : "off",
+         processing.noise_suppression >= 0 ? level : "off", agc ? "on" : "off");
+  else
+    info("ksip_audio: Google WebRTC ADM + APM initialized (processing disabled)\n");
   return 0;
 }
 static int module_close() {

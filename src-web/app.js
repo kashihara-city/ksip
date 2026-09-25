@@ -132,6 +132,8 @@ $('logs').addEventListener('keydown',e=>{
 });
 const durationText=seconds=>String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)+unit:'—';
+// The words for each noise suppression strength, shared by the settings and the footer.
+const NOISE_LEVEL_NAMES={low:'SETTINGS_NS_LOW',moderate:'SETTINGS_NS_MODERATE',high:'SETTINGS_NS_HIGH',very_high:'SETTINGS_NS_VERY_HIGH'};
 const count=value=>Number.isFinite(value)?value.toLocaleString(language):'—';
 const codecNames={opus:'Opus',G722:'G.722',PCMU:'G.711 μ-law',PCMA:'G.711 A-law'};
 const encryptionNames={srtp:'SRTP（SDES）',dtls_srtp:'SRTP（DTLS）'};
@@ -303,13 +305,16 @@ function render(){
   $('transfer-status').textContent=showOutcome?outcomeText:'';
   $('record').disabled=!ready||busy;$('record').textContent=t(state.settings.auto_record?'RECORD_ON':'RECORD_OFF');$('record').classList.toggle('active',!!state.settings.auto_record);$('record').setAttribute('aria-pressed',String(!!state.settings.auto_record));
   $('record-status').classList.toggle('recording',!!state.recording);$('record-status').textContent=t(state.recording?'RECORD_RECORDING':state.converting?'RECORDING_CONVERTING':state.settings.auto_record?'RECORD_AUTO_ON':'RECORD_AUTO_OFF');
-  $('aec-label').textContent=state.settings.aec?'ON':'OFF';
+  // The footer names every part of the audio processing and whether it is on;
+  // the numbers below it are the AEC's, then the levels, then the AGC's report.
+  const processing=state.settings,noiseOn=!!NOISE_LEVEL_NAMES[processing.noise_suppression],processingOn=!!processing.aec||!!processing.high_pass||noiseOn||!!processing.agc;
+  $('processing-labels').textContent=['AEC '+(processing.aec?'ON':'OFF'),'HPF '+(processing.high_pass?'ON':'OFF'),'NS '+(noiseOn?t(NOISE_LEVEL_NAMES[processing.noise_suppression]):'OFF'),'AGC '+(processing.agc?'ON':'OFF')].join(' · ');
   // A codec and an encryption belong to a call, so outside one this stays empty.
   $('codec-label').textContent=callSummary(current());
   const metrics=state.audio_processing_stats;
-  const showMetrics=!!state.settings.aec&&!!state.aec_active&&state.calls.some(call=>call.state==='ESTABLISHED')&&!!metrics;
+  const showMetrics=processingOn&&!!state.aec_active&&state.calls.some(call=>call.state==='ESTABLISHED')&&!!metrics;
   $('aec-metrics').hidden=!showMetrics;
-  $('aec-state').hidden=!showMetrics;
+  $('aec-state').hidden=!showMetrics||!processing.aec;
   if(showMetrics){
     const errors=(metrics.render_errors||0)+(metrics.capture_errors||0),hasRender=(metrics.render_frames||0)>0&&Number.isFinite(metrics.render_rms_dbfs)&&metrics.render_rms_dbfs>-65,hasCapture=(metrics.capture_frames||0)>0,hasCaptureSignal=Number.isFinite(metrics.capture_input_rms_dbfs)&&metrics.capture_input_rms_dbfs>-65,converged=(metrics.capture_frames||0)>500&&Number.isFinite(metrics.delay_ms)&&metrics.delay_ms>0&&Number.isFinite(metrics.echo_return_loss_enhancement)&&metrics.echo_return_loss_enhancement>3;
     $('aec-state').textContent=t(errors?'AEC_ERROR':!hasCapture?'AEC_WAITING_MICROPHONE':!hasRender?'AEC_WAITING_REFERENCE':!hasCaptureSignal?'AEC_LOW_INPUT':converged?'AEC_CONVERGED':'AEC_ESTIMATING');
@@ -325,8 +330,10 @@ function render(){
     $('aec-levels').textContent=fill('AEC_LEVELS',metric(metrics.render_rms_dbfs,' dBFS'),metric(metrics.capture_input_rms_dbfs,' dBFS'),metric(metrics.capture_output_rms_dbfs,' dBFS'));
     $('aec-flow').textContent=fill('AEC_FLOW',count(metrics.render_frames),count(metrics.capture_frames),count(errors),
       errors?fill('AEC_FLOW_DETAIL',count(metrics.render_errors),count(metrics.capture_errors)):'');
+    if(!processing.aec){$('aec-core').textContent='';$('aec-delay').textContent='';}
+    $('aec-agc').textContent=!processing.agc?'':Number.isFinite(metrics.agc_gain_db)?fill('AGC_REPORT',metric(metrics.agc_gain_db,' dB'),metric(metrics.agc_speech_level_dbfs,' dBFS',0),metric(metrics.agc_noise_level_dbfs,' dBFS',0),metric(metrics.agc_headroom_db,' dB',0)):t('AGC_WAITING');
   }else{
-    for(const id of ['aec-core','aec-delay','aec-levels','aec-flow'])$(id).textContent='';
+    for(const id of ['aec-core','aec-delay','aec-levels','aec-flow','aec-agc'])$(id).textContent='';
   }
   const banner=t(error)||t(state.error)||'';
   if(banner!==bannerText){bannerText=banner;bannerSince=Date.now();}
@@ -369,7 +376,7 @@ function openSettings(){
   // The list shows the saved order first, ticked, then the rest unticked in the usual order.
   const codecOrder=(state.settings.codecs||'').split(',').map(s=>s.trim()).filter(Boolean),codecsInUse=codecOrder.length?codecOrder:CODEC_NAMES,codecList=$('codec-list');
   for(const name of [...codecsInUse,...CODEC_NAMES.filter(n=>!codecsInUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=codecsInUse.includes(name);}}
-  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
+  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;$('noise_suppression').value=state.settings.noise_suppression||'high';$('agc').checked=!!state.settings.agc;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   $('settings-error').hidden=true;$('configuration').showModal();
 }
@@ -484,7 +491,7 @@ for(const button of document.querySelectorAll('[data-sound]'))button.addEventLis
 });
 $('settings-form').addEventListener('submit',async e=>{
   e.preventDefault();$('settings-error').hidden=true;
-  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,codecs:[...$('codec-list').querySelectorAll('li')].filter(li=>li.querySelector('input').checked).map(li=>li.dataset.codec).join(','),ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
+  const settings={network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,auto_record:!!state.settings.auto_record,buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),auto_answer:$('auto_answer').checked,aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,transport:$('transport').value,media_encryption:$('media_encryption').value,codecs:[...$('codec-list').querySelectorAll('li')].filter(li=>li.querySelector('input').checked).map(li=>li.dataset.codec).join(','),ca_file:$('ca_file').value.trim(),sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim()};
   const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
   try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
   catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}

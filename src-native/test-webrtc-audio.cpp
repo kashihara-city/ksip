@@ -123,7 +123,8 @@ void CaptureSamples(void *, const int16_t *, size_t, int64_t) {
 int main(int argc, char **argv) {
   if (ksip_audio_internal::InterleavedSamples(480, 2) != 960) return 3;
   ksip_audio *audio = nullptr;
-  if (ksip_audio_create(20, 1, &audio) != 0 || !audio) return 1;
+  const ksip_audio_processing processing{1, 1, 2, 1};
+  if (ksip_audio_create(20, &processing, &audio) != 0 || !audio) return 1;
   ksip_audio_stats stats{};
   if (ksip_audio_get_stats(audio, &stats) != 0) return 2;
   const bool disable_aec = argc >= 2 &&
