@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "ksip"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "miniz_oxide 0.9.1",
  "serde",
