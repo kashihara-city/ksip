@@ -138,6 +138,17 @@ impl CustomButton {
     pub fn dial_target(&self) -> Option<&str> {
         self.watches().then(|| Self::address(&self.number))
     }
+    /// What is sent for the transfer: the target as it was set up, angle
+    /// brackets included. Refer-To carries a URI bare or in brackets, both
+    /// standard, and a PBX may only take the form its phones were set up
+    /// with (the production one does).
+    pub fn transfer_text(&self) -> Option<&str> {
+        self.transfer_target()?;
+        Some(match self.kind.as_str() {
+            "park" if !Self::address(&self.transfer).is_empty() => self.transfer.trim(),
+            _ => self.number.trim(),
+        })
+    }
     /// Where a call in progress goes when the button is pressed, if anywhere.
     pub fn transfer_target(&self) -> Option<&str> {
         match self.kind.as_str() {
@@ -2388,7 +2399,8 @@ impl AppState {
                 .settings
                 .buttons
                 .iter()
-                .find_map(|b| b.transfer_target().filter(|t| *t == wanted));
+                .find(|b| b.transfer_target() == Some(wanted))
+                .and_then(|b| b.transfer_text());
             match known {
                 Some(t) if v.calls.iter().any(|c| c.id == id && c.state == "ESTABLISHED" && !c.held) => {
                     target = t.to_string();
@@ -2776,10 +2788,13 @@ mod tests {
         assert!(AppState::validate(&with(vec![button("dial", "701", ""), button("park", "701", "")])).is_err());
         assert!(AppState::validate(&with(vec![button("", "", "")])).is_ok());
         // A full SIP URI is accepted for either address, with or without the
-        // angle brackets a Refer-To header would carry, and handed on bare.
+        // angle brackets a Refer-To header would carry. It is matched bare and
+        // sent as it was written.
         let odd = with(vec![button("park", "61", "<sip:61@127.0.0.1>"), button("dial", " sip:sales@pbx.example ", "")]);
         assert!(AppState::validate(&odd).is_ok());
         assert_eq!(odd.buttons[0].transfer_target(), Some("sip:61@127.0.0.1"));
+        assert_eq!(odd.buttons[0].transfer_text(), Some("<sip:61@127.0.0.1>"));
+        assert_eq!(button("park", "701", "").transfer_text(), Some("701"));
         assert_eq!(odd.buttons[0].dial_target(), Some("61"));
         assert_eq!(odd.watched_numbers(), vec!["61", "sip:sales@pbx.example"]);
         assert!(AppState::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());

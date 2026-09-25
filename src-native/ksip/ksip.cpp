@@ -555,7 +555,10 @@ int action(re_printf *pf, void *arg) {
         auto from=find(original);auto to=find(consultation);
         if (!from || !to || from==to || call_state(from)!=CALL_STATE_ESTABLISHED || call_state(to)!=CALL_STATE_ESTABLISHED) {clear_transfer();return EINVAL;}
         transfer_reversed=false;
-        err=call_hold(from,true);if(!err)err=call_hold(to,true); if(!err)err=call_replace_transfer(from,to);
+        // The consultation call stays as it is, talking: RFC 5589 leaves that
+        // open, and the production PBX completed transfers only from phones
+        // that do not hold it before the REFER.
+        err=call_hold(from,true); if(!err)err=call_replace_transfer(from,to);
         if (err) {
             transfer_reversed=true;
             std::swap(original,consultation);
@@ -574,10 +577,14 @@ int action(re_printf *pf, void *arg) {
         // The call in progress is sent to the number as it is; the buttons
         // decide what the number means (a park slot, a colleague, a queue).
         if(!c || call_state(c)!=CALL_STATE_ESTABLISHED || call_is_onhold(c))return EINVAL;
-        if(!(sip_uri(value) ? address_ok(value) : token(value.c_str(),"*#+")))return EINVAL;
+        // A URI goes into Refer-To as it was set up, angle brackets included:
+        // baresip copies what it can read as it is, and the PBX may only take
+        // the form its phones send. A number is completed with the registrar.
+        std::string bare=value;
+        if(bare.size()>=2 && bare.front()=='<' && bare.back()=='>')bare=bare.substr(1,bare.size()-2);
+        if(!(sip_uri(bare) ? address_ok(value) : token(value.c_str(),"*#+")))return EINVAL;
         std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
-        // baresip writes a decodable URI into Refer-To as it is (addr-spec form).
-        std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
+        std::string uri=sip_uri(bare) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
         return call_transfer(c,uri.c_str());
     }
     // Do not disturb is about the account as well: on or off, no call named.

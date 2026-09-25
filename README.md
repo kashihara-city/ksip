@@ -245,7 +245,7 @@ ksip.exe ksip:ANSWER
 
 範囲外の値や制御文字を含む文字列は保存時に拒否します。
 
-カスタムボタンは標準のSIPだけで動きます。BLFは番号への `dialog` イベントの購読（SUBSCRIBE/NOTIFY、`application/dialog-info+xml`）、発信は番号への INVITE、転送は番号への REFER です。どの番号へ転送すると駐車されるか、どの番号にBLFが出るかはSIPサーバー側の設定に合わせて書きます。
+カスタムボタンは標準のSIPだけで動きます。BLFは番号への `dialog` イベントの購読（SUBSCRIBE/NOTIFY、`application/dialog-info+xml`）、発信は番号への INVITE、転送は番号への REFER です。どの番号へ転送すると駐車されるか、どの番号にBLFが出るかはSIPサーバー側の設定に合わせて書きます。 転送先を `<sip:61@127.0.0.1>` のようにSIP URIで書いた場合は、山かっこも含めて書いたとおりに Refer-To に載せます（SIPサーバーが設定された形だけを受け付けることがあるため）。
 
 - 通知設定:`HKCU\Software\Classes\AppUserModelId\local.ksip.client`
 
