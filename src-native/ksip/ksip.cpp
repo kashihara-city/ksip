@@ -23,6 +23,11 @@ std::string transfer_hangup;
 std::string registered_transport, media_encryption;
 bool pending=false;
 tmr transfer_timer;
+// A transfer sends its REFER only once the holds it sent have been answered:
+// the timer fires it, and these are the calls whose answer is still waited for.
+tmr refer_timer;
+std::vector<std::string> refer_waiting;
+bool refer_armed=false;
 // Retries the park subscriptions a while after one closes.
 tmr parking_timer;
 int subscribe_parking();
@@ -87,7 +92,7 @@ struct sipsub *mwi_sub=nullptr;
 std::string mwi_summary, own_user;
 // Callers turned away while do not disturb was on, until the app has read them.
 std::vector<std::string> refused;
-void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); }
+void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); refer_armed=false; refer_waiting.clear(); tmr_cancel(&refer_timer); }
 // A button may name a full SIP URI instead of a number; it is passed on as it
 // is, and only has to be one line of visible ASCII.
 bool sip_uri(const std::string &s) {
@@ -320,8 +325,31 @@ int login(re_printf *pf, void*) {
     if (!err) re_hprintf(pf,"Registration started\n");
     return err;
 }
+// The REFER of a transfer, once every hold sent for it has been answered (or
+// the wait for them has run out): call 1 is referred to call 2, and a refusal
+// is answered by trying the other way round once, as before.
+// The REFER the other way round (call 2 referred to call 1), tried once when
+// the first was refused. True when it went out.
+bool refer_reversed(call *from, call *to) {
+    transfer_reversed=true; std::swap(original,consultation);
+    if (!call_replace_transfer(to,from)) return true;
+    std::swap(original,consultation); return false;
+}
+void send_refer(void*) {
+    if (!refer_armed) return;
+    refer_armed=false; refer_waiting.clear();
+    auto from=find(original); auto to=find(consultation);
+    if (!from || !to || call_state(from)!=CALL_STATE_ESTABLISHED || call_state(to)!=CALL_STATE_ESTABLISHED) {
+        clear_transfer(); set_outcome("TRANSFER_FAILED");
+        if (from) uag_hold_resume(from);
+        return;
+    }
+    if (call_replace_transfer(from,to) && !refer_reversed(from,to)) {
+        clear_transfer(); set_outcome("TRANSFER_FAILED"); uag_hold_resume(from);
+    }
+}
 void transfer_timeout(void*) {
-    pending=false; set_outcome("TRANSFER_UNKNOWN");
+    pending=false; refer_armed=false; set_outcome("TRANSFER_UNKNOWN");
     if (auto c=find(original)) uag_hold_resume(c);
 }
 // The server takes the other call over with the transfer and ends it itself.
@@ -351,6 +379,12 @@ void event(bevent_ev ev, bevent *e, void*) {
         info("ksip: call answered while another is active, holding it\n");
         call_hold(c,true);
     }
+    if (ev==BEVENT_CALL_REMOTE_SDP && refer_armed && !str_cmp(bevent_get_text(e),"answer")) {
+        // The answer to a hold sent for the transfer. Its ACK goes out right
+        // after this event, so the REFER follows from the timer, not from here.
+        refer_waiting.erase(std::remove(refer_waiting.begin(),refer_waiting.end(),id),refer_waiting.end());
+        if (refer_waiting.empty()) tmr_start(&refer_timer,0,send_refer,nullptr);
+    }
     if (ev==BEVENT_CALL_INCOMING && dnd) {
         info("ksip: dnd, incoming call refused as busy\n");
         refused.push_back(call_peeruri(c) ? call_peeruri(c) : "");
@@ -359,15 +393,11 @@ void event(bevent_ev ev, bevent *e, void*) {
     }
     if (ev==BEVENT_CALL_TRANSFER_FAILED && id==original) {
         auto other=find(consultation);
+        // Both calls are on hold by now (the REFER waited for that), so the
+        // other way round can go out at once.
         if (!transfer_reversed && other && call_state(c)==CALL_STATE_ESTABLISHED
-            && call_state(other)==CALL_STATE_ESTABLISHED) {
-            transfer_reversed=true;
-            std::swap(original,consultation);
-            int again=call_hold(other,true);
-            if (!again) again=call_hold(c,true);
-            if (!again) again=call_replace_transfer(other,c);
-            if (!again) { tmr_start(&transfer_timer,60000,transfer_timeout,nullptr); return; }
-            std::swap(original,consultation);
+            && call_state(other)==CALL_STATE_ESTABLISHED && refer_reversed(c,other)) {
+            tmr_start(&transfer_timer,60000,transfer_timeout,nullptr); return;
         }
         pending=false; tmr_cancel(&transfer_timer); set_outcome("TRANSFER_FAILED");
         uag_hold_resume(c);
@@ -555,17 +585,22 @@ int action(re_printf *pf, void *arg) {
         auto from=find(original);auto to=find(consultation);
         if (!from || !to || from==to || call_state(from)!=CALL_STATE_ESTABLISHED || call_state(to)!=CALL_STATE_ESTABLISHED) {clear_transfer();return EINVAL;}
         transfer_reversed=false;
-        // The consultation call stays as it is, talking: RFC 5589 leaves that
-        // open, and the production PBX completed transfers only from phones
-        // that do not hold it before the REFER.
-        err=call_hold(from,true); if(!err)err=call_replace_transfer(from,to);
-        if (err) {
-            transfer_reversed=true;
-            std::swap(original,consultation);
-            err=call_replace_transfer(to,from);
-            if (err) { std::swap(original,consultation); uag_hold_resume(to); return err; }
-        }
-        pending=true;set_outcome("TRANSFER_PENDING");tmr_start(&transfer_timer,60000,transfer_timeout,nullptr);return 0;
+        // As RFC 5589 has it: both calls on hold, then call 1 is referred to
+        // call 2. The REFER waits until every hold sent here has been answered
+        // and acknowledged. The production PBX ignored a REFER that arrived
+        // while a hold re-INVITE on either call was still in progress, and
+        // that is why its transfers did not go through; a hold that gets no
+        // answer is waited for two seconds at most.
+        refer_waiting.clear();
+        for (call *each : {from,to})
+            if (!call_is_onhold(each)) {
+                err=call_hold(each,true);
+                if (err) { clear_transfer(); return err; }
+                refer_waiting.push_back(call_id(each));
+            }
+        pending=true;refer_armed=true;set_outcome("TRANSFER_PENDING");tmr_start(&transfer_timer,60000,transfer_timeout,nullptr);
+        tmr_start(&refer_timer,refer_waiting.empty() ? 0 : 2000,send_refer,nullptr);
+        return 0;
     }
     if (op=="cancel_transfer") {
         auto from=find(original);auto to=find(consultation);
