@@ -35,12 +35,13 @@ def main():
     finally:
         phone.close()
 
-    # The recording is stereo: the far end on the left, this side on the right.
+    # What the player fixture wrote is mono; a call recording would be stereo
+    # with the far end on the left. Either way the first channel is read.
     with wave.open(str(received), "rb") as wav:
-        assert wav.getnchannels() == 2
+        assert wav.getnchannels() in (1, 2)
         assert wav.getsampwidth() == 2
         assert wav.getframerate() == 48000
-        samples = array("h", wav.readframes(wav.getnframes()))[0::2]
+        samples = array("h", wav.readframes(wav.getnframes()))[0::wav.getnchannels()]
     assert len(samples) >= 48000 * 6, len(samples)
     rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
     peak = max(abs(sample) for sample in samples)
