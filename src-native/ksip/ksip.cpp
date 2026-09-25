@@ -34,6 +34,17 @@ std::array<ParkSlot,30> parking;
 bool sip_message_log=false;
 uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
+// The name a P-Asserted-Identity carried for a call, when it carried one.
+std::unordered_map<std::string,std::string> connected_name;
+// A display name as the window shows it: without the quotes a header puts
+// around it, and empty when there is none.
+std::string display_name(const pl &name) {
+    if (!pl_isset(&name)) return "";
+    std::string s(name.p,name.l);
+    while (!s.empty() && (s.back()==' ' || s.back()=='\t')) s.pop_back();
+    if (s.size()>=2 && s.front()=='"' && s.back()=='"') s=s.substr(1,s.size()-2);
+    return s;
+}
 call *find(const std::string &id) { return id.empty() ? nullptr : uag_call_find(id.c_str()); }
 // The outcome is counted as well as named: the window shows a notice each
 // time one is set, and the same outcome twice in a row (returning to the held
@@ -147,6 +158,7 @@ void sip_trace(bool tx,enum sip_transp tp,const sa*,const sa*,const uint8_t *pac
     std::string uri="sip:"+std::string(address.uri.user.p,address.uri.user.l);
     if(pl_isset(&address.uri.host))uri+="@"+std::string(address.uri.host.p,address.uri.host.l);
     connected_identity[callid]=uri;
+    if(pl_isset(&address.dname))connected_name[callid]=display_name(address.dname);
 }
 int auth_handler(char **username,char **password,const char *realm,void *arg) {
     return account_auth(static_cast<account*>(arg),username,password,realm);
@@ -401,7 +413,7 @@ void event(bevent_ev ev, bevent *e, void*) {
             set_outcome("CALL_ENDED_SWITCHED");
         }
     }
-    if(ev==BEVENT_CALL_CLOSED)connected_identity.erase(id);
+    if(ev==BEVENT_CALL_CLOSED){connected_identity.erase(id);connected_name.erase(id);}
 }
 int state(re_printf *pf, void*) {
     odict *od=nullptr,*calls=nullptr,*xfer=nullptr;
@@ -427,6 +439,10 @@ int state(re_printf *pf, void*) {
             odict_entry_add(entry,"id",ODICT_STRING,call_id(c));
             auto identity=connected_identity.find(call_id(c));
             odict_entry_add(entry,"peer",ODICT_STRING,identity==connected_identity.end() ? call_peeruri(c) : identity->second.c_str());
+            // The caller's name: the one PAI gave, else the one From gave.
+            auto named=connected_name.find(call_id(c));
+            pl from_name; pl_set_str(&from_name,call_peername(c) ? call_peername(c) : "");
+            odict_entry_add(entry,"name",ODICT_STRING,(named==connected_name.end() ? display_name(from_name) : named->second).c_str());
             odict_entry_add(entry,"state",ODICT_STRING,call_statename(c));
             odict_entry_add(entry,"held",ODICT_BOOL,call_is_onhold(c));
             odict_entry_add(entry,"duration",ODICT_INT,static_cast<int64_t>(call_duration(c)));
@@ -654,6 +670,6 @@ int init(){
     sip_message_log=detail;
     if(detail)log_enable_debug(true);
     tmr_init(&transfer_timer);tmr_init(&parking_timer);sip_set_trace_handler(uag_sip(),sip_trace);int err=bevent_register(event,nullptr);if(!err)err=cmd_register(baresip_commands(),commands,RE_ARRAY_SIZE(commands));return err;}
-int close(){sip_set_trace_handler(uag_sip(),nullptr);connected_identity.clear();clear_transfer();clear_parking_subscriptions();bevent_unregister(event);cmd_unregister(baresip_commands(),commands);account_ua=nullptr;return 0;}
+int close(){sip_set_trace_handler(uag_sip(),nullptr);connected_identity.clear();connected_name.clear();clear_transfer();clear_parking_subscriptions();bevent_unregister(event);cmd_unregister(baresip_commands(),commands);account_ua=nullptr;return 0;}
 }
 extern "C" const struct mod_export DECL_EXPORTS(ksip)={"ksip","application",init,close};

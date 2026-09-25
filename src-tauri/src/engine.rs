@@ -349,6 +349,9 @@ pub struct Snapshot {
 pub struct CallInfo {
     pub id: String,
     pub peer: String,
+    /// The caller's display name, when the call came with one.
+    #[serde(default)]
+    pub name: String,
     pub state: String,
     pub held: bool,
     pub duration: u32,
@@ -366,6 +369,8 @@ pub struct CallHistory {
     pub ended_at: u64,
     pub direction: String,
     pub peer: String,
+    #[serde(default)]
+    pub name: String,
     pub duration: u32,
     /// The file in `recordings/` that holds this call, if it was recorded.
     /// A file can hold several calls: automatic recording follows the call
@@ -1949,6 +1954,7 @@ impl AppState {
                 ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
                 direction: message("HISTORY_INCOMING"),
                 peer: peer.clone(),
+                name: String::new(),
                 duration: 0,
                 recording: String::new(),
                 outcome: message("HISTORY_REFUSED"),
@@ -1964,6 +1970,7 @@ impl AppState {
                     .as_secs(),
                 direction: directions.remove(&old.id).unwrap_or_else(|| message("HISTORY_CALL")),
                 peer: old.peer.clone(),
+                name: old.name.clone(),
                 duration: old.duration,
                 recording: recorded.remove(&old.id).unwrap_or_default(),
                 outcome: call_outcome(&old.state, old.state == "INCOMING", &closed.remove(&old.id).unwrap_or_default(), dnd),
@@ -2931,6 +2938,7 @@ mod tests {
             CallInfo {
                 id: "held".into(),
                 peer: "sip:1@local".into(),
+                name: String::new(),
                 state: "ESTABLISHED".into(),
                 held: true,
                 duration: 1,
@@ -2942,6 +2950,7 @@ mod tests {
             CallInfo {
                 id: "active".into(),
                 peer: "sip:2@local".into(),
+                name: String::new(),
                 state: "ESTABLISHED".into(),
                 held: false,
                 duration: 1,
@@ -3076,6 +3085,7 @@ mod tests {
             ended_at: n,
             direction: "OUTGOING".into(),
             peer: format!("sip:{n}@pbx"),
+            name: String::new(),
             duration: 1,
             recording: String::new(),
             outcome: String::new(),
@@ -3158,6 +3168,7 @@ mod tests {
             CallInfo {
                 id: "incoming".into(),
                 peer: "sip:1@local".into(),
+                name: String::new(),
                 state: "INCOMING".into(),
                 held: false,
                 duration: 0,
@@ -3169,6 +3180,7 @@ mod tests {
             CallInfo {
                 id: "talking".into(),
                 peer: "sip:2@local".into(),
+                name: String::new(),
                 state: "ESTABLISHED".into(),
                 held: false,
                 duration: 5,

@@ -93,7 +93,9 @@ const peakPending={microphone:false,speaker:false};
 const volumes=Object.fromEntries(kinds.map(k=>[k,{pending:false,dragging:false,available:false,muted:false,sequence:0,queued:null}]));
 const callAt=n=>state.calls.find(c=>c.line===n);
 const current=()=>callAt(selected);
-const peerLabel=c=>c?.peer?.replace(/^sip:/,'').split('@')[0] || '—';
+const peerNumber=c=>c?.peer?.replace(/^sip:/,'').split('@')[0]||'';
+// The caller's name, when the call came with one, in front of the number.
+const peerLabel=c=>{const number=peerNumber(c);return number?(c.name?c.name+' '+number:number):'—';};
 const status=c=>c?(c.held?texts.callHeld:texts.callState[c.state]||c.state):texts.callIdle;
 const two=value=>String(value).padStart(2,'0');
 function logTime(iso){const at=new Date(iso);return isNaN(at)?iso:(at.getMonth()+1)+'/'+at.getDate()+' '+at.getHours()+':'+two(at.getMinutes())+':'+two(at.getSeconds());}
@@ -240,10 +242,10 @@ function copyButton(number){
   return button;
 }
 function renderHistory(){
-  const history=historyRows.filter(item=>passesFilter(historyNumber(item.peer)));
+  const history=historyRows.filter(item=>passesFilter(historyNumber(item.peer),item.name));
   const panel=$('call-history');panel.replaceChildren();panel.className='history'+(history.length?'':' empty');
   if(!history.length){const empty=document.createElement('div');empty.className='history-empty';empty.textContent=t(historyRows.length?'HISTORY_NO_MATCH':'HISTORY_EMPTY');panel.append(empty);return;}
-  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=historyNumber(item.peer);peer.textContent=number;cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording),locationButton(item.recording));const meta=document.createElement('span');meta.className='history-meta'+(item.outcome&&item.outcome!=='HISTORY_ELSEWHERE'?' history-outcome':'');meta.textContent=item.outcome?t(item.outcome):durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
+  for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=historyNumber(item.peer);peer.textContent=number;if(item.name){const who=document.createElement('span');who.className='history-name';who.textContent=item.name;cell.append(who);}cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording),locationButton(item.recording));const meta=document.createElement('span');meta.className='history-meta'+(item.outcome&&item.outcome!=='HISTORY_ELSEWHERE'?' history-outcome':'');meta.textContent=item.outcome?t(item.outcome):durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
 }
 function dialHistory(peer){
   dial((peer||'').replace(/^sip:/i,'').split(/[;@]/)[0]);
