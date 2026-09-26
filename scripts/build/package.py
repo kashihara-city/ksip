@@ -48,7 +48,9 @@ def main():
     copy(ROOT/'temp/build/webrtc-notices/LICENSE.md',OUT/'licenses/native/google-webrtc/LICENSE.md')
     # Target-specific dependency tree, including build-time tools. No fetching.
     tree=subprocess.check_output(['cargo','tree','--locked','--offline','--manifest-path',str(ROOT/'src-tauri/Cargo.toml'),'--target','x86_64-pc-windows-msvc','--prefix','none','--format','{p}|{l}'],encoding='utf-8')
-    cache=next(Path.home().glob('.cargo/registry/src/index.crates.io-*'))
+    # The cargo home is where cargo says it is (CARGO_HOME), not always under the user's folder.
+    cargo_home=Path(os.environ.get('CARGO_HOME') or Path.home()/'.cargo')
+    cache=next(cargo_home.glob('registry/src/index.crates.io-*'))
     packages={}
     for line in tree.splitlines():
         m=re.match(r'([\w-]+) v([\w.+-]+).*?\|(.*)',line)

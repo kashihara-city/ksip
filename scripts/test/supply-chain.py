@@ -1,5 +1,5 @@
 """Fail closed on unpinned/untrusted/too-new dependencies; retain audit evidence."""
-import pathlib,tarfile
+import pathlib,tarfile,os
 import datetime,hashlib,json,pathlib,re,subprocess,tomllib,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 # Nothing published in the last seven days is accepted, whenever this runs.
@@ -48,7 +48,9 @@ def checkout_differences(source):
 def main():
     (ROOT/'temp/reports').mkdir(parents=True,exist_ok=True)
     evidence={'cutoff':CUTOFF.isoformat(),'rust':[],'npm':[],'native':[]}
-    cache=next(pathlib.Path.home().glob('.cargo/registry/index/index.crates.io-*/.cache'))
+    # The cargo home is where cargo says it is (CARGO_HOME), not always under the user's folder.
+    cargo_home=pathlib.Path(os.environ.get('CARGO_HOME') or pathlib.Path.home()/'.cargo')
+    cache=next(cargo_home.glob('registry/index/index.crates.io-*/.cache'))
     lock=tomllib.loads((ROOT/'src-tauri/Cargo.lock').read_text())
     for p in lock['package']:
         if 'source' not in p:continue

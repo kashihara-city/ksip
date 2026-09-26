@@ -42,7 +42,11 @@ def names():
     def note(name, values):
         found[name] = found.get(name, False) or values
 
-    for path in (ROOT / "src-tauri/src").glob("*.rs"):
+    # Every Rust file, in subfolders as well: a split of engine.rs must not
+    # take its message codes out of this check unnoticed.
+    rust_files = sorted((ROOT / "src-tauri/src").rglob("*.rs"))
+    assert len(rust_files) >= 5, f"only {len(rust_files)} Rust files found"
+    for path in rust_files:
         text = without_tests(path.read_text(encoding="utf-8"))
         for call, values in (("message", False), ("message_with", True),
                              ("windows_text", False), ("windows_text_with", True)):

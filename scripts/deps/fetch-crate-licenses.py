@@ -2,9 +2,11 @@
 Only text is fetched; nothing is executed. Record URLs and content hashes.
 """
 from pathlib import Path
-import hashlib,json,re,subprocess,tomllib,urllib.request
+import hashlib,json,re,subprocess,tomllib,urllib.request,os
 ROOT=Path(__file__).resolve().parents[2]
-cache=next(Path.home().glob('.cargo/registry/src/index.crates.io-*'))
+# The cargo home is where cargo says it is (CARGO_HOME), not always under the user's folder.
+cargo_home=Path(os.environ.get('CARGO_HOME') or Path.home()/'.cargo')
+cache=next(cargo_home.glob('registry/src/index.crates.io-*'))
 def read(url):
     return urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'ksip-notices/0.1'}),timeout=40).read()
 def is_notice(p):return p.upper().startswith(('LICENSE','LICENCE','COPYING','COPYRIGHT','NOTICE'))

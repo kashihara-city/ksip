@@ -1,5 +1,5 @@
 """Run the test suite, or a group of it, one test after another against the chosen PBX, and write a summary with one log per test."""
-import argparse, datetime, os, pathlib, subprocess, sys, time
+import argparse, datetime, os, pathlib, subprocess, sys, time,hashlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TESTS = ROOT / 'scripts/test'
@@ -57,7 +57,13 @@ def main():
     out = ROOT / 'temp/reports' / f'run-{stamp}-{pbx}'
     out.mkdir(parents=True, exist_ok=True)
     summary = out / 'summary.txt'
-    lines = [f'started {datetime.datetime.now():%Y-%m-%dT%H:%M:%S} pbx={pbx} folder={args.folder or "release"}']
+    # What was tested: the commit (and whether the tree was clean) and the
+    # executable the app tests use, so that a summary can be read back later.
+    commit = subprocess.run(['git', 'describe', '--tags', '--always', '--dirty'], cwd=ROOT, capture_output=True, text=True).stdout.strip() or 'unknown'
+    exe = pathlib.Path(args.folder) / 'ksip.exe' if args.folder else ROOT / 'release/ksip.exe'
+    exe_note = f'{exe} sha256={hashlib.sha256(exe.read_bytes()).hexdigest()[:16]}' if exe.is_file() else f'{exe} (missing)'
+    lines = [f'started {datetime.datetime.now():%Y-%m-%dT%H:%M:%S} pbx={pbx} folder={args.folder or "release"}',
+             f'source {commit}', f'exe {exe_note}']
     summary.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     failed = 0
     for script in chosen:
