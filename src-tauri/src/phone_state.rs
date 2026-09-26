@@ -46,10 +46,11 @@ pub struct PhoneState {
     /// Which engine process the calls belong to. A report from an earlier
     /// generation is stale and changes nothing.
     generation: u64,
+    /// The receive number of the last report applied. One received before
+    /// it, however late it is looked at, changes nothing either.
+    last_report: u64,
     /// Something that needs the phone quiet (a settings change, a device
-    /// calibration) is going on. Begun only while no call is up. Wired in
-    /// with the actor (step 2); until then only the rule and its test exist.
-    #[allow(dead_code)]
+    /// calibration) is going on. Begun only while no call is up.
     maintenance: bool,
 }
 
@@ -60,12 +61,12 @@ impl PhoneState {
         self.calls.clear();
         self.records.clear();
         self.generation += 1;
+        self.last_report = 0;
         self.generation
     }
     pub fn generation(&self) -> u64 {
         self.generation
     }
-    #[allow(dead_code)] // The actor reads the calls from here (step 2).
     pub fn calls(&self) -> &[CallInfo] {
         &self.calls
     }
@@ -87,7 +88,6 @@ impl PhoneState {
     }
     /// Maintenance (a settings change, a calibration) starts only while no
     /// call is up, and marks the phone so until it ends.
-    #[allow(dead_code)] // Wired in with the actor (step 2).
     pub fn begin_maintenance(&mut self) -> Result<(), ()> {
         if !self.calls.is_empty() {
             return Err(());
@@ -95,20 +95,21 @@ impl PhoneState {
         self.maintenance = true;
         Ok(())
     }
-    #[allow(dead_code)]
     pub fn end_maintenance(&mut self) {
         self.maintenance = false;
     }
-    #[allow(dead_code)]
     pub fn in_maintenance(&self) -> bool {
         self.maintenance
     }
-    /// Takes one report of the engine's calls. Returns what changed, or None
-    /// for a report of an earlier engine, which is ignored whole.
-    pub fn apply_report(&mut self, generation: u64, mut calls: Vec<CallInfo>, dnd: bool, auto_answer: bool, now: u64) -> Option<Applied> {
-        if generation != self.generation {
+    /// Takes one report of the engine's calls, received as number `seq` of
+    /// its engine's messages. Returns what changed, or None for a report of
+    /// an earlier engine or one received before the last applied, which is
+    /// ignored whole.
+    pub fn apply_report(&mut self, generation: u64, seq: u64, mut calls: Vec<CallInfo>, dnd: bool, auto_answer: bool, now: u64) -> Option<Applied> {
+        if generation != self.generation || seq <= self.last_report {
             return None;
         }
+        self.last_report = seq;
         let present = |records: &HashMap<String, CallRecord>, id: &str| records.contains_key(id);
         let _ = present;
         for call in &calls {
@@ -311,7 +312,7 @@ mod tests {
         // An outgoing call answered with an error at once.
         phone.note_announced("o1", "HISTORY_OUTGOING", "sip:1002@pbx.example");
         phone.note_closed("o1", "486 Busy Here");
-        let applied = phone.apply_report(g, vec![], false, false, 10).expect("current generation");
+        let applied = phone.apply_report(g, 10, vec![], false, false, 10).expect("current generation");
         let outcomes: Vec<(String, String)> = applied.ended.iter().map(|r| (r.peer.clone(), r.outcome.clone())).collect();
         assert_eq!(outcomes, vec![
             ("sip:1003@pbx.example".into(), message("HISTORY_MISSED")),
@@ -321,7 +322,7 @@ mod tests {
         assert!(applied.ended.iter().all(|r| r.ended_at == 10));
         // Nothing is left behind, and the next report makes no second row.
         assert!(phone.records.is_empty());
-        assert!(phone.apply_report(g, vec![], false, false, 11).unwrap().ended.is_empty());
+        assert!(phone.apply_report(g, 11, vec![], false, false, 11).unwrap().ended.is_empty());
     }
 
     #[test]
@@ -331,15 +332,15 @@ mod tests {
         phone.note_announced("o1", "HISTORY_OUTGOING", "sip:1002@pbx.example");
         phone.note_dialled("o1", 2);
         phone.note_recording("o1", "2026-09-26_23-00-00_1002.wav");
-        let a = phone.apply_report(g, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 20).unwrap();
+        let a = phone.apply_report(g, 20, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 20).unwrap();
         assert_eq!(a.calls[0].line, 2, "the line chosen for the dial");
         assert!(a.ended.is_empty());
         // A second call takes the lowest free line, which is 1.
-        let a = phone.apply_report(g, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example"), call("i9", "INCOMING", "sip:1005@pbx.example")], false, false, 21).unwrap();
+        let a = phone.apply_report(g, 21, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example"), call("i9", "INCOMING", "sip:1005@pbx.example")], false, false, 21).unwrap();
         assert_eq!(a.calls.iter().map(|c| c.line).collect::<Vec<_>>(), vec![2, 1]);
         // The first ends normally, the incoming one is answered elsewhere.
         phone.note_closed("i9", "connection reset [108],SIP;cause=200;text=\"Call completed elsewhere\"");
-        let a = phone.apply_report(g, vec![], false, false, 30).unwrap();
+        let a = phone.apply_report(g, 30, vec![], false, false, 30).unwrap();
         let rows: Vec<(String, String, String)> = a.ended.iter().map(|r| (r.peer.clone(), r.outcome.clone(), r.recording.clone())).collect();
         assert_eq!(rows, vec![
             ("sip:1002@pbx.example".into(), String::new(), "2026-09-26_23-00-00_1002.wav".into()),
@@ -349,15 +350,30 @@ mod tests {
     }
 
     #[test]
+    fn a_report_received_earlier_than_the_last_applied_changes_nothing() {
+        let mut phone = PhoneState::default();
+        let g = phone.new_engine();
+        assert!(phone.apply_report(g, 5, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).is_some());
+        // Received as number 3, looked at after number 5: the call did not end.
+        assert!(phone.apply_report(g, 3, vec![], false, false, 2).is_none());
+        assert_eq!(phone.calls().len(), 1);
+        assert!(phone.apply_report(g, 5, vec![], false, false, 3).is_none(), "the same report twice is once");
+        let ended = phone.apply_report(g, 6, vec![], false, false, 4).unwrap().ended;
+        assert_eq!(ended.len(), 1);
+        // A new engine starts the count again.
+        let g = phone.new_engine();
+        assert!(phone.apply_report(g, 1, vec![], false, false, 5).is_some());
+    }
+    #[test]
     fn a_report_from_an_earlier_engine_changes_nothing() {
         let mut phone = PhoneState::default();
         let old = phone.new_engine();
-        phone.apply_report(old, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).unwrap();
+        phone.apply_report(old, 1, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).unwrap();
         let new = phone.new_engine();
         assert!(phone.calls().is_empty(), "a new engine starts with no calls");
-        assert!(phone.apply_report(old, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 2).is_none());
+        assert!(phone.apply_report(old, 2, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 2).is_none());
         assert!(phone.calls().is_empty());
-        assert!(phone.apply_report(new, vec![], false, false, 3).is_some());
+        assert!(phone.apply_report(new, 3, vec![], false, false, 3).is_some());
     }
 
     #[test]
@@ -365,9 +381,9 @@ mod tests {
         let mut phone = PhoneState::default();
         let g = phone.new_engine();
         let ringing = vec![call("i1", "INCOMING", "a"), call("i2", "INCOMING", "b")];
-        assert!(phone.apply_report(g, ringing.clone(), false, false, 1).unwrap().answer.is_empty(), "off: nobody is answered");
-        assert_eq!(phone.apply_report(g, ringing.clone(), false, true, 2).unwrap().answer, vec!["i1", "i2"]);
-        assert!(phone.apply_report(g, ringing, false, true, 3).unwrap().answer.is_empty(), "claimed calls are not answered twice");
+        assert!(phone.apply_report(g, 1, ringing.clone(), false, false, 1).unwrap().answer.is_empty(), "off: nobody is answered");
+        assert_eq!(phone.apply_report(g, 2, ringing.clone(), false, true, 2).unwrap().answer, vec!["i1", "i2"]);
+        assert!(phone.apply_report(g, 3, ringing, false, true, 3).unwrap().answer.is_empty(), "claimed calls are not answered twice");
     }
 
     #[test]
@@ -376,7 +392,7 @@ mod tests {
         let g = phone.new_engine();
         phone.note_dialled("o1", 1);
         phone.note_recording("o1", "rec.wav");
-        phone.apply_report(g, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example"), call("i1", "INCOMING", "sip:1003@pbx.example")], false, false, 5).unwrap();
+        phone.apply_report(g, 5, vec![call("o1", "ESTABLISHED", "sip:1002@pbx.example"), call("i1", "INCOMING", "sip:1003@pbx.example")], false, false, 5).unwrap();
         let rows = phone.engine_gone(false, 9);
         assert_eq!(rows.len(), 2);
         assert_eq!((rows[0].recording.as_str(), rows[0].outcome.as_str()), ("rec.wav", ""));
@@ -391,7 +407,7 @@ mod tests {
         assert!(phone.begin_maintenance().is_ok());
         assert!(phone.in_maintenance());
         phone.end_maintenance();
-        phone.apply_report(g, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).unwrap();
+        phone.apply_report(g, 1, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).unwrap();
         assert!(phone.begin_maintenance().is_err());
         assert!(!phone.in_maintenance());
     }

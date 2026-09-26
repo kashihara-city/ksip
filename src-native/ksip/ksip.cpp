@@ -90,6 +90,10 @@ bool unregistered=false;
 // Do not disturb: an incoming call is answered with 486 Busy Here, so the PBX
 // treats the phone as busy rather than absent. Never kept across a start.
 bool dnd=false;
+// Maintenance: the app is changing settings or calibrating and wants no
+// call to arrive meanwhile, so an incoming call is refused as under do not
+// disturb. Set and cleared by the app; never kept across a start.
+bool maintenance=false;
 // The voicemail box's message-summary subscription, and the last summary
 // body the server sent ("Messages-Waiting: yes", "Voice-Message: 2/5").
 // The app reads the counts out of it.
@@ -456,10 +460,10 @@ void event(bevent_ev ev, bevent *e, void*) {
         refer_waiting.erase(std::remove(refer_waiting.begin(),refer_waiting.end(),id),refer_waiting.end());
         if (refer_waiting.empty()) tmr_start(&refer_timer,0,send_refer,nullptr);
     }
-    if (ev==BEVENT_CALL_INCOMING && dnd) {
+    if (ev==BEVENT_CALL_INCOMING && (dnd || maintenance)) {
         // The app hears of it through CALL_INCOMING and the CALL_CLOSED that
         // follows, with these words; the state reply carries no list of its own.
-        info("ksip: dnd, incoming call refused as busy\n");
+        info("ksip: %s, incoming call refused as busy\n", dnd ? "dnd" : "maintenance");
         ua_hangup(bevent_get_ua(e),c,486,"Busy Here");
         return;
     }
@@ -690,6 +694,7 @@ int action(re_printf *pf, void *arg) {
     }
     // Do not disturb is about the account as well: on or off, no call named.
     if (op=="dnd") { dnd=value=="on"; return 0; }
+    if (op=="maintenance") { maintenance=value=="on"; return 0; }
     // Unregistering is about the account, not about a call.
     if (op=="unregister") {
         if (!account_ua) return EINVAL;

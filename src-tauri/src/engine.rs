@@ -1,31 +1,31 @@
 use crate::message::{message, message_with};
 use crate::storage::{Account, AccountView, Store};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use crate::engine_link::StartPlan;
+use crate::phone_actor::{PhoneHandle, Published};
+use crate::phone_message::Command;
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetLocalTime};
-use crate::phone_state::{automatic_recording_target, PhoneState};
 use std::{
-    collections::{HashMap, VecDeque},
-    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
-    net::{Ipv4Addr, Shutdown, TcpStream},
-    os::windows::process::CommandExt,
+    collections::VecDeque,
+    io::{Read, Seek, SeekFrom, Write},
+    net::TcpListener,
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::Command as Process,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc, Mutex,
+        Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 /// The endpoints the engine is given for a saved choice, see
 /// `resolve_audio_endpoints`.
-struct AudioEndpoints {
-    microphone: String,
-    speaker: String,
-    microphone_missing: bool,
-    speaker_missing: bool,
+pub struct AudioEndpoints {
+    pub microphone: String,
+    pub speaker: String,
+    pub microphone_missing: bool,
+    pub speaker_missing: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -503,7 +503,7 @@ pub fn caller_label(call: &CallInfo) -> String {
         format!("{} {}", call.name, number)
     }
 }
-fn recording_name(stamp: &str, peer: &str) -> String {
+pub fn recording_name(stamp: &str, peer: &str) -> String {
     let time: String = stamp
         .chars()
         .take(19)
@@ -595,23 +595,24 @@ pub struct Transfer {
     #[serde(default)]
     pub outcome_seq: u64,
 }
+/// What the engine answers to `ksip_state`.
 #[derive(Deserialize)]
-struct EngineReport {
-    registration: String,
+pub struct EngineReport {
+    pub registration: String,
     #[serde(default)]
-    dnd: bool,
+    pub dnd: bool,
     #[serde(default)]
-    transport: String,
+    pub transport: String,
     #[serde(default)]
-    media_encryption: String,
-    calls: Vec<CallInfo>,
-    transfer: Transfer,
+    pub media_encryption: String,
+    pub calls: Vec<CallInfo>,
+    pub transfer: Transfer,
     #[serde(default)]
-    parking: Vec<ParkingInfo>,
+    pub parking: Vec<ParkingInfo>,
     #[serde(default)]
-    audio_processing_stats: Option<AudioProcessingStats>,
+    pub audio_processing_stats: Option<AudioProcessingStats>,
     #[serde(default)]
-    mwi_summary: String,
+    pub mwi_summary: String,
 }
 /// What the registrar is asked to call. A SIP URI is taken as written, one
 /// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
@@ -642,25 +643,6 @@ pub fn dial_target(text: &str) -> Result<String, String> {
         return Err(message("DIAL_TARGET_INVALID"));
     }
     Ok(number)
-}
-
-/// The engine colours its warnings for a terminal; the log wants the words.
-fn without_colour(line: &str) -> String {
-    let mut plain = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            plain.push(c);
-        }
-    }
-    plain
 }
 
 /// The name a conversion writes under until it is finished. It keeps the
@@ -703,9 +685,9 @@ const DETAIL_LOG_FILE_LIMIT: usize = 10000;
 const LOG_FILE: &str = "ksip-log.jsonl";
 // Which layer a log line came from. It is written into the line so that a
 // support log shows at a glance whether the app or the engine said it.
-const LOG_APP: &str = "app";
-const LOG_ENGINE: &str = "engine";
-const LOG_EVENT: &str = "event";
+pub const LOG_APP: &str = "app";
+pub const LOG_ENGINE: &str = "engine";
+pub const LOG_EVENT: &str = "event";
 const LOG_UI: &str = "ui";
 const HISTORY_LIMIT: usize = 1000;
 const HISTORY_FILE: &str = "call-history.jsonl";
@@ -749,7 +731,7 @@ impl LogLine {
 /// grown to twice the limit and is written afresh with what the tab holds.
 /// Another process appends to it too: the link handler, when there is
 /// nothing to hand a link to. Those lines are picked up from the file.
-struct Logs {
+pub struct Logs {
     entries: VecDeque<LogLine>,
     sequence: u64,
     flushed: Instant,
@@ -784,7 +766,7 @@ impl Logs {
         }
     }
     /// The detail log keeps ten times as many lines in the file.
-    fn set_detail(&mut self, detail: bool) {
+    pub fn set_detail(&mut self, detail: bool) {
         self.file_limit = if detail { DETAIL_LOG_FILE_LIMIT } else { LOG_LIMIT };
     }
     fn push(&mut self, line: LogLine) {
@@ -808,7 +790,7 @@ impl Logs {
     /// error is returned only when the writing has just started failing, so
     /// the caller can say so once rather than every second; the recovery is
     /// noted in the log itself.
-    fn sync(&mut self, data: &Path) -> Result<(), String> {
+    pub fn sync(&mut self, data: &Path) -> Result<(), String> {
         self.flushed = Instant::now();
         let path = data.join(LOG_FILE);
         self.take_foreign(&path);
@@ -822,7 +804,7 @@ impl Logs {
                     self.unwritten = 0;
                     if self.write_failed {
                         self.write_failed = false;
-                        self.push(LogLine::new(AppState::stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
+                        self.push(LogLine::new(stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
                     }
                 }
                 Err(e) => {
@@ -936,7 +918,7 @@ fn keep_last_lines(path: &Path, limit: usize) -> std::io::Result<(u64, usize)> {
 /// has nothing to hand a link to. The app picks the line up from the file.
 pub fn append_log(data: &Path, body: String) {
     let clean: String = body.chars().filter(|c| !c.is_control()).take(300).collect();
-    let bytes = lines(std::iter::once(&LogLine::new(AppState::stamp(), LOG_APP, clean)));
+    let bytes = lines(std::iter::once(&LogLine::new(stamp(), LOG_APP, clean)));
     let _ = std::fs::create_dir_all(data);
     let _ = append(&data.join(LOG_FILE), &bytes);
 }
@@ -971,7 +953,7 @@ pub fn data_dir(store: &Store) -> PathBuf {
 /// The call history and its file: one call per line, oldest first, appended
 /// as calls end. The tab shows it newest first. Past twice the limit the file
 /// is written afresh with its last lines. Nothing else writes it.
-struct History {
+pub struct History {
     /// Newest first, as the tab shows it.
     rows: Vec<CallHistory>,
     sequence: u64,
@@ -1006,7 +988,7 @@ impl History {
     /// The calls that ended since the last look, in the order the tab shows
     /// them. The tab gets them at once; the file, being oldest first, gets
     /// them the other way round, together with whatever is still waiting.
-    fn add(&mut self, data: &Path, ended: Vec<CallHistory>) -> Result<(), String> {
+    pub fn add(&mut self, data: &Path, ended: Vec<CallHistory>) -> Result<(), String> {
         for entry in ended.iter().rev() {
             self.rows.insert(0, entry.clone());
         }
@@ -1018,7 +1000,7 @@ impl History {
         self.flush(data)
     }
     /// Writes the rows still waiting for the file, if any.
-    fn flush(&mut self, data: &Path) -> Result<(), String> {
+    pub fn flush(&mut self, data: &Path) -> Result<(), String> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -1048,73 +1030,97 @@ pub struct LogPage {
     pub from: u64,
     pub entries: Vec<LogLine>,
 }
-type Pending = Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>;
-struct Engine {
-    child: Child,
-    writer: TcpStream,
-    pending: Pending,
-    threads: Vec<thread::JoinHandle<()>>,
-}
+/// The parts of the app that are not the phone: where the files go, the
+/// registry and the vault, the log, the call history and the recordings
+/// being converted. Shared by the window side (`AppState`) and the phone
+/// actor; none of it is phone state, and none of it changes the phone.
 #[derive(Clone)]
-pub struct AppState {
-    inner: Arc<Mutex<Option<Engine>>>,
-    view: Arc<Mutex<Snapshot>>,
-    serial: Arc<AtomicU64>,
-    data: PathBuf,
-    store: Store,
-    operations: Arc<Mutex<()>>,
-    /// The calls and what is known about them, and the rules that move them
-    /// (phone_state.rs). Held here alone; the window sees a copy in the snapshot.
-    phone: Arc<Mutex<PhoneState>>,
-    converting: Arc<AtomicU64>,
-    logs: Arc<Mutex<Logs>>,
-    history: Arc<Mutex<History>>,
-    polling_error: Arc<Mutex<String>>,
-    bound: Arc<Mutex<String>>,
-    closing: Arc<AtomicBool>,
+pub struct Services {
+    pub data: PathBuf,
+    pub store: Store,
+    pub logs: Arc<Mutex<Logs>>,
+    pub history: Arc<Mutex<History>>,
+    /// Recordings being turned into MP3 at the moment.
+    pub converting: Arc<AtomicU64>,
+}
+/// What a start needs, worked out from the settings before the process
+/// exists: the plan the link spawns from, the endpoints the engine was
+/// given, the address it binds, and the log lines that explain the choices.
+pub struct Prepared {
+    pub plan: StartPlan,
+    pub endpoints: AudioEndpoints,
+    pub address: String,
+    pub notes: Vec<String>,
 }
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-pub fn read_netstring(r: &mut impl Read) -> Result<Vec<u8>, String> {
-    let mut header = String::new();
-    loop {
-        let mut b = [0];
-        r.read_exact(&mut b).map_err(err)?;
-        if b[0] == b':' {
-            break;
-        }
-        if !b[0].is_ascii_digit() || header.len() >= 7 {
-            return Err("Invalid IPC frame length".into());
-        }
-        header.push(b[0] as char);
-    }
-    if header.is_empty() || (header.len() > 1 && header.starts_with('0')) {
-        return Err("Invalid IPC frame header".into());
-    }
-    let n: usize = header.parse().map_err(err)?;
-    if n > 1024 * 1024 {
-        return Err("IPC frame too large".into());
-    }
-    let mut buf = vec![0; n];
-    r.read_exact(&mut buf).map_err(err)?;
-    let mut end = [0];
-    r.read_exact(&mut end).map_err(err)?;
-    if end[0] != b',' {
-        return Err("Invalid IPC frame terminator".into());
-    }
-    Ok(buf)
+/// Local wall clock for a log line, without pulling in a date crate.
+pub fn stamp() -> String {
+    use windows_sys::Win32::System::Time::{
+        GetTimeZoneInformation, TIME_ZONE_INFORMATION, TIME_ZONE_ID_INVALID,
+    };
+    // TIME_ZONE_ID_DAYLIGHT, whose constant lives in a feature nothing else needs.
+    const DAYLIGHT: u32 = 2;
+    let mut now: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    let mut zone: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: both calls only fill the structures above.
+    unsafe { GetLocalTime(&mut now) };
+    let kind = unsafe { GetTimeZoneInformation(&mut zone) };
+    // The bias says how many minutes local time is behind UTC, which is the
+    // opposite sign of the offset written after the time.
+    let bias = match kind {
+        TIME_ZONE_ID_INVALID => 0,
+        DAYLIGHT => zone.Bias + zone.DaylightBias,
+        _ => zone.Bias + zone.StandardBias,
+    };
+    let offset = -bias;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        if offset < 0 { '-' } else { '+' },
+        offset.abs() / 60,
+        offset.abs() % 60
+    )
 }
-fn write_netstring(w: &mut impl Write, data: &[u8]) -> Result<(), String> {
-    write!(w, "{}:", data.len()).map_err(err)?;
-    w.write_all(data).map_err(err)?;
-    w.write_all(b",").map_err(err)
+/// Which endpoints the engine got, by name and id, and when a saved one was
+/// not there. By name and id, so that a device the engine then cannot open
+/// can be told apart from a wrong choice.
+pub fn endpoint_notes(s: &Settings, endpoints: &AudioEndpoints, devices: &[Device]) -> Vec<String> {
+    let mut notes = Vec::new();
+    for (missing, kind) in [
+        (endpoints.microphone_missing, "microphone"),
+        (endpoints.speaker_missing, "speaker"),
+    ] {
+        if missing {
+            notes.push(format!("ksip: the saved {kind} is not there, using the default"));
+        }
+    }
+    for (kind, id, chosen) in [
+        ("microphone", &endpoints.microphone, &s.microphone),
+        ("speaker", &endpoints.speaker, &s.speaker),
+    ] {
+        let name = devices
+            .iter()
+            .find(|d| d.kind == kind && d.id == *id)
+            .map(|d| format!("{} ", d.name))
+            .unwrap_or_default();
+        let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
+        notes.push(format!("ksip: {kind} {name}{id}{role}"));
+    }
+    notes
 }
-impl AppState {
-    pub fn new() -> Self {
+impl Services {
+    /// Opens the store, the log and the history, and makes the snapshot the
+    /// app starts with. Nothing here may panic: the panic hook is only
+    /// installed once this exists.
+    pub fn open() -> (Self, Snapshot) {
         let store = Store::new();
-        // Nothing here may panic: the panic hook is only installed once this
-        // state exists.
         let data = data_dir(&store);
         let mut logs = Logs::open(&data);
         let loaded = store.read_settings::<Settings>();
@@ -1132,66 +1138,58 @@ impl AppState {
             }
         };
         let history = History::open(&data);
-        let state = Self {
-            inner: Arc::new(Mutex::new(None)),
-            view: Arc::new(Mutex::new(Snapshot {
-                running: false,
-                window_visible: true,
-                recording: false,
-                recording_path: String::new(),
-                converting: 0,
-                error: startup_error,
-                settings,
-                devices: vec![],
-                log_sequence: 0,
-                data_dir: data.to_string_lossy().into(),
-                aec_active: false,
-                transport: String::new(),
-                media_encryption: String::new(),
-                microphone_fallback: false,
-                microphone_missing: false,
-                speaker_missing: false,
-                microphone_id: String::new(),
-                speaker_id: String::new(),
-                account,
-                calls: vec![],
-                transfer: Transfer::default(),
-                registration: "UNCONFIGURED".into(),
-                recording_call: String::new(),
-                dnd: false,
-                unregistered_by_choice: false,
-                history_sequence: 0,
-                parking: vec![],
-                audio_processing_stats: None,
-                mwi: Mwi::default(),
-            })),
-            serial: Arc::new(AtomicU64::new(1)),
+        let view = Snapshot {
+            running: false,
+            window_visible: true,
+            recording: false,
+            recording_path: String::new(),
+            converting: 0,
+            error: startup_error,
+            settings,
+            devices: vec![],
+            log_sequence: 0,
+            data_dir: data.to_string_lossy().into(),
+            aec_active: false,
+            transport: String::new(),
+            media_encryption: String::new(),
+            microphone_fallback: false,
+            microphone_missing: false,
+            speaker_missing: false,
+            microphone_id: String::new(),
+            speaker_id: String::new(),
+            account,
+            calls: vec![],
+            transfer: Transfer::default(),
+            registration: "UNCONFIGURED".into(),
+            recording_call: String::new(),
+            dnd: false,
+            unregistered_by_choice: false,
+            history_sequence: 0,
+            parking: vec![],
+            audio_processing_stats: None,
+            mwi: Mwi::default(),
+        };
+        let services = Self {
             data,
             store,
-            operations: Arc::new(Mutex::new(())),
-            phone: Arc::new(Mutex::new(PhoneState::default())),
-            converting: Arc::new(AtomicU64::new(0)),
             logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(history)),
-            polling_error: Arc::new(Mutex::new(String::new())),
-            bound: Arc::new(Mutex::new(String::new())),
-            closing: Arc::new(AtomicBool::new(false)),
+            converting: Arc::new(AtomicU64::new(0)),
         };
-        if !state.view.lock().unwrap().error.is_empty() {
-            let error = state.view.lock().unwrap().error.clone();
-            state.log(LOG_APP, error);
+        if !view.error.is_empty() {
+            services.log(LOG_APP, view.error.clone());
         }
-        state
+        (services, view)
     }
     /// Settings come from the JSON document plus the values a policy can set.
-    fn settings(&self) -> Result<Settings, String> {
+    pub fn settings(&self) -> Result<Settings, String> {
         let mut settings = self.store.read_settings::<Settings>()?;
         settings.read_policy(|key| self.store.read_text(key));
         Ok(settings)
     }
     /// The policy values own a registry value each, so they are removed from
     /// the settings document instead of being stored twice.
-    fn save_settings(&self, settings: &Settings) -> Result<(), String> {
+    pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
         let mut document = serde_json::to_value(settings).map_err(|e| e.to_string())?;
         if let Some(fields) = document.as_object_mut() {
             for key in Settings::POLICY_DOCUMENT_KEYS {
@@ -1204,44 +1202,14 @@ impl AppState {
         }
         Ok(())
     }
-    /// Local wall clock for a log line, without pulling in a date crate.
-    fn stamp() -> String {
-        use windows_sys::Win32::System::Time::{
-            GetTimeZoneInformation, TIME_ZONE_INFORMATION, TIME_ZONE_ID_INVALID,
-        };
-        // TIME_ZONE_ID_DAYLIGHT, whose constant lives in a feature nothing else needs.
-        const DAYLIGHT: u32 = 2;
-        let mut now: SYSTEMTIME = unsafe { std::mem::zeroed() };
-        let mut zone: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
-        // SAFETY: both calls only fill the structures above.
-        unsafe { GetLocalTime(&mut now) };
-        let kind = unsafe { GetTimeZoneInformation(&mut zone) };
-        // The bias says how many minutes local time is behind UTC, which is the
-        // opposite sign of the offset written after the time.
-        let bias = match kind {
-            TIME_ZONE_ID_INVALID => 0,
-            DAYLIGHT => zone.Bias + zone.DaylightBias,
-            _ => zone.Bias + zone.StandardBias,
-        };
-        let offset = -bias;
-        format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-            now.wYear,
-            now.wMonth,
-            now.wDay,
-            now.wHour,
-            now.wMinute,
-            now.wSecond,
-            if offset < 0 { '-' } else { '+' },
-            offset.abs() / 60,
-            offset.abs() % 60
-        )
-    }
-    /// Everything the banner shows also belongs in the log, so that a report
-    /// made afterwards still explains what the user saw.
-    pub fn show_error(&self, error: String) {
-        self.log(LOG_APP, error.clone());
-        self.view.lock().unwrap().error = error;
+    /// One line into the tab and, once a second, into the file. What a line
+    /// from the engine says about the phone is the actor's to read.
+    pub fn log(&self, source: &str, s: String) {
+        let mut logs = self.logs.lock().unwrap();
+        logs.push(LogLine::new(stamp(), source, s));
+        if logs.flushed.elapsed() >= Duration::from_secs(1) {
+            let _ = logs.sync(&self.data);
+        }
     }
     /// What the window and the shortcuts do belongs in the same log.
     pub fn log_app(&self, text: String) {
@@ -1270,42 +1238,9 @@ impl AppState {
             return;
         };
         let line = text.replace(['\r', '\n'], " ");
-        logs.push(LogLine::new(Self::stamp(), LOG_APP, line));
+        logs.push(LogLine::new(stamp(), LOG_APP, line));
         // A write that fails is kept and said by the periodic sync in snapshot().
         let _ = logs.sync(&self.data);
-    }
-    fn log(&self, source: &str, s: String) {
-        let mut v = self.view.lock().unwrap();
-        if s.contains("Google WebRTC ADM + APM initialized (processing enabled") {
-            v.aec_active = true;
-        }
-        if s.contains("ksip: microphone fallback active") {
-            v.microphone_fallback = true;
-        }
-        if s.contains("ksip: microphone input recovered") {
-            v.microphone_fallback = false;
-        }
-        if (s.contains("ksip_audio:") || s.contains("wasapi/src:") || s.contains("wasapi/play:"))
-            && s.contains("failed")
-            && !s.contains("using silence")
-        {
-            v.error = message_with("AUDIO_DEVICE_INIT_FAILED_DETAIL", [&s]);
-            v.aec_active = false;
-        }
-        if s.contains("postlab: receive WAV closed") && !s.contains("0 dropped samples, error=0") {
-            v.error = message("RECORDING_WRITE_PROBLEM");
-        }
-        // The engine only warns when it cannot load the trust list, and then
-        // fails every TLS registration with nothing else to show for it.
-        if s.contains("tls_add_ca() failed") {
-            v.error = message("TRUST_STORE_UNUSABLE");
-        }
-        drop(v);
-        let mut logs = self.logs.lock().unwrap();
-        logs.push(LogLine::new(Self::stamp(), source, s));
-        if logs.flushed.elapsed() >= Duration::from_secs(1) {
-            let _ = logs.sync(&self.data);
-        }
     }
     pub fn clear_logs(&self) {
         self.logs.lock().unwrap().clear(&self.data);
@@ -1332,7 +1267,7 @@ impl AppState {
     }
     /// Writes the chosen file over the built-in sound, converted to what the
     /// engine can play. A missing or unreadable file leaves the built-in one.
-    fn replace_sound(&self, dir: &std::path::Path, key: &str, chosen: &str) -> Result<(), String> {
+    pub fn replace_sound(&self, dir: &std::path::Path, key: &str, chosen: &str) -> Result<(), String> {
         if chosen.is_empty() {
             return Ok(());
         }
@@ -1356,7 +1291,7 @@ impl AppState {
     }
     /// The file a history row's recording is in now: the MP3 once it has
     /// been made, the WAV until then, nothing once both are gone.
-    fn recording_file(&self, name: &str) -> Option<PathBuf> {
+    pub fn recording_file(&self, name: &str) -> Option<PathBuf> {
         let plain = !name.is_empty()
             && name.ends_with(".wav")
             && !name.contains(['/', '\\', ':'])
@@ -1390,162 +1325,7 @@ impl AppState {
         crate::native::open_url(&path.to_string_lossy())
             .map_err(|e| message_with("RECORDING_OPEN_FAILED", [crate::message::split(&e).1.join(" ")]))
     }
-    pub fn snapshot(&self) -> Snapshot {
-        let journal = {
-            // The file is written from log(), so a quiet moment would leave the
-            // last lines only in memory, and what another process appended
-            // unseen. Polling keeps both moving.
-            let mut logs = self.logs.lock().unwrap();
-            if logs.flushed.elapsed() >= Duration::from_secs(1) {
-                logs.sync(&self.data)
-            } else {
-                Ok(())
-            }
-        };
-        // Rows the history could not write earlier get another try; the first
-        // failure of either file is said once, in the log and in the window.
-        let history = self.history.lock().unwrap().flush(&self.data);
-        for e in [journal, history].into_iter().filter_map(Result::err) {
-            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
-        }
-        // An engine that has gone without being asked is noticed here once:
-        // its handle is taken out, so the next look finds nothing to report.
-        let exited = self.inner.try_lock().ok().and_then(|mut guard| {
-            let status = guard.as_mut().and_then(|e| e.child.try_wait().ok().flatten())?;
-            Some((guard.take(), status))
-        });
-        if let Some((engine, status)) = exited {
-            self.engine_exited(engine, status);
-        }
-        let mut view = self.view.lock().unwrap().clone();
-        view.converting = self.converting.load(Ordering::Relaxed) as u32;
-        view.log_sequence = self.logs.lock().unwrap().sequence;
-        view.history_sequence = self.history.lock().unwrap().sequence;
-        view
-    }
-    /// Reads the devices again and, when no call is going on, restarts the
-    /// engine on the saved ones: a device that was unplugged and put back, or
-    /// a new Windows default, is only picked up by a fresh start.
-    pub fn refresh_devices(&self) -> Result<(), String> {
-        self.view.lock().unwrap().devices = crate::audio::devices()?;
-        if !self.snapshot().running {
-            return Ok(());
-        }
-        // A saved device that has come back is taken into use, and one that
-        // has gone gives way to the default; the engine is only restarted
-        // when it does not take the change.
-        let taken = {
-            let _operation = self.operations.lock().unwrap();
-            if self.ensure_idle().is_err() {
-                return Ok(());
-            }
-            let settings = self.settings()?;
-            match self.apply_audio_endpoints(&settings) {
-                Ok(()) => true,
-                Err(e) => {
-                    self.log(
-                        LOG_APP,
-                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
-                    );
-                    false
-                }
-            }
-        };
-        // Restarting the engine would register again; someone who unregistered
-        // on purpose keeps the devices they have until they connect themselves.
-        if !taken && !self.snapshot().unregistered_by_choice {
-            self.connect()?;
-        }
-        Ok(())
-    }
-    /// Told by the polling loop, which can see the window; the state cannot.
-    pub fn set_window_visible(&self, visible: bool) {
-        self.view.lock().unwrap().window_visible = visible;
-    }
-    pub fn volume(&self, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
-        if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
-            return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
-        }
-        let _operation = (level.is_some() || mute.is_some()).then(|| self.operations.lock().unwrap());
-        let mut result =
-            crate::audio::volume(kind, device, level.map(|value| value.min(100) as u8), mute)?;
-        if let Some(level) = level {
-            let gain = level.max(100);
-            if self.snapshot().running {
-                self.request("lab_gain", &format!("{kind} {gain}"))?;
-            }
-            let mut settings = self.settings()?;
-            if kind == "microphone" {
-                settings.microphone_gain = gain;
-            } else {
-                settings.speaker_gain = gain;
-            }
-            Self::validate(&settings)?;
-            self.save_settings(&settings)?;
-            self.view.lock().unwrap().settings = settings;
-            result.level = level;
-        } else {
-            let settings = &self.view.lock().unwrap().settings;
-            let gain = if kind == "microphone" {
-                settings.microphone_gain
-            } else {
-                settings.speaker_gain
-            };
-            if gain > 100 {
-                result.level = gain;
-            }
-        }
-        Ok(result)
-    }
-    pub fn peak(&self, kind: &str, device: &str) -> Result<Peak, String> {
-        crate::audio::peak(kind, device)
-    }
-    pub fn calibrate_aec(
-        &self,
-        microphone: &str,
-        speaker: &str,
-        careful: bool,
-    ) -> Result<Calibration, String> {
-        let _operation = self.operations.lock().unwrap();
-        self.ensure_idle()?;
-        crate::audio::calibrate_aec(microphone, speaker, careful)
-    }
-    pub fn select_audio_device(&self, kind: &str, device: String) -> Result<(), String> {
-        {
-            let _operation = self.operations.lock().unwrap();
-            self.ensure_idle()?;
-            if !matches!(kind, "microphone" | "speaker")
-                || (device != "default"
-                    && !self
-                        .snapshot()
-                        .devices
-                        .iter()
-                        .any(|entry| entry.kind == kind && entry.id == device))
-            {
-                return Err(message("SETTINGS_AUDIO_DEVICE_INVALID"));
-            }
-            let mut settings = self.settings()?;
-            if kind == "microphone" {
-                settings.microphone = device;
-            } else {
-                settings.speaker = device;
-            }
-            Self::validate(&settings)?;
-            self.save_settings(&settings)?;
-            self.view.lock().unwrap().settings = settings.clone();
-            if self.snapshot().running {
-                match self.apply_audio_endpoints(&settings) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => self.log(
-                        LOG_APP,
-                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
-                    ),
-                }
-            }
-        }
-        self.connect()
-    }
-    fn validate(s: &Settings) -> Result<(), String> {
+    pub fn validate(s: &Settings) -> Result<(), String> {
         // A chosen adapter has to exist and hold an address, here and again
         // when the engine starts: what is plugged in can change meanwhile.
         if !s.network_adapter.trim().is_empty() {
@@ -1668,7 +1448,7 @@ impl AppState {
     }
     /// The address to bind to, and the adapter to hand to the engine. An
     /// unset adapter keeps the historic behaviour of binding everything.
-    fn binding(settings: &Settings) -> Result<(String, String), String> {
+    pub fn binding(settings: &Settings) -> Result<(String, String), String> {
         let chosen = settings.network_adapter.trim();
         if chosen.is_empty() {
             return Ok(("0.0.0.0".into(), String::new()));
@@ -1679,9 +1459,9 @@ impl AppState {
     /// itself when Windows has it, the default in its place otherwise. Nothing
     /// is written back: the choice stands, and it is used again once the
     /// device is back.
-    fn resolve_audio_endpoints(&self, s: &Settings) -> Result<AudioEndpoints, String> {
+    pub fn resolve_audio_endpoints(&self, s: &Settings) -> Result<AudioEndpoints, String> {
         let mut microphone_missing = false;
-        let microphone = match self.volume("microphone", &s.microphone, None, None) {
+        let microphone = match crate::audio::volume("microphone", &s.microphone, None, None) {
             Ok(volume) => volume.id,
             Err(_) => {
                 microphone_missing = s.microphone != "default";
@@ -1692,11 +1472,11 @@ impl AppState {
             }
         };
         let mut speaker_missing = false;
-        let speaker = match self.volume("speaker", &s.speaker, None, None) {
+        let speaker = match crate::audio::volume("speaker", &s.speaker, None, None) {
             Ok(volume) => volume.id,
             Err(_) if s.speaker != "default" => {
                 speaker_missing = true;
-                self.volume("speaker", "default", None, None)?.id
+                crate::audio::volume("speaker", "default", None, None)?.id
             }
             Err(error) => return Err(error),
         };
@@ -1707,92 +1487,35 @@ impl AppState {
             speaker_missing,
         })
     }
-    /// Writes down which endpoints the engine got, by name and id, and when a
-    /// saved one was not there; the window shows the same.
-    fn note_audio_endpoints(&self, s: &Settings, endpoints: &AudioEndpoints) {
-        for (missing, kind) in [
-            (endpoints.microphone_missing, "microphone"),
-            (endpoints.speaker_missing, "speaker"),
-        ] {
-            if missing {
-                self.log(LOG_APP, format!("ksip: the saved {kind} is not there, using the default"));
-            }
-        }
-        // By name and id, so that a device the engine then cannot open can be
-        // told apart from a wrong choice.
-        for (kind, id, chosen) in [
-            ("microphone", &endpoints.microphone, &s.microphone),
-            ("speaker", &endpoints.speaker, &s.speaker),
-        ] {
-            let name = self
-                .snapshot()
-                .devices
-                .iter()
-                .find(|d| d.kind == kind && d.id == *id)
-                .map(|d| format!("{} ", d.name))
-                .unwrap_or_default();
-            let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
-            self.log(LOG_APP, format!("ksip: {kind} {name}{id}{role}"));
-        }
-        let mut v = self.view.lock().unwrap();
-        v.microphone_id = endpoints.microphone.clone();
-        v.speaker_id = endpoints.speaker.clone();
-        v.microphone_missing = endpoints.microphone_missing;
-        v.speaker_missing = endpoints.speaker_missing;
-    }
-    /// Hands the saved microphone and speaker to the running engine for the
-    /// calls from now on. The engine used to be restarted for a change of
-    /// device, which meant a new registration and a second or more without a
-    /// phone. The caller holds the operations lock and has seen that no call
-    /// is up, so the change reaches the next call and no running one.
-    fn apply_audio_endpoints(&self, s: &Settings) -> Result<(), String> {
-        let endpoints = self.resolve_audio_endpoints(s)?;
-        self.request(
-            "ksip_audio_devices",
-            &format!("{},{}", endpoints.microphone, endpoints.speaker),
-        )?;
-        self.note_audio_endpoints(s, &endpoints);
-        Ok(())
-    }
-    pub fn start(&self, s: Settings, account: &Account) -> Result<(), String> {
-        Self::validate(&s)?;
-        self.logs.lock().unwrap().set_detail(s.detail_log);
-        let mut guard = self.inner.lock().unwrap();
-        if let Some(e) = guard.as_mut() {
-            if e.child.try_wait().map_err(err)?.is_none() {
-                return Err(message("ENGINE_ALREADY_RUNNING"));
-            }
-        }
-        if let Some(e) = guard.take() {
-            let _ = e.writer.shutdown(Shutdown::Both);
-            for t in e.threads {
-                let _ = t.join();
-            }
-        }
+    /// Works out everything a start needs and writes the engine's config:
+    /// the endpoints for the saved devices, the control port, the address to
+    /// bind, the trust list for TLS and the chosen sounds. The process itself
+    /// is the link's to start.
+    pub fn prepare_start(&self, s: &Settings, account: &Account, devices: &[Device]) -> Result<Prepared, String> {
         let exe = crate::native::engine_exe()?;
         // Resolve the communications defaults once: the volume controls must
         // target the same endpoints that the running engine actually opens.
-        let endpoints = self.resolve_audio_endpoints(&s)?;
+        let endpoints = self.resolve_audio_endpoints(s)?;
         let microphone = endpoints.microphone.clone();
         let speaker = endpoints.speaker.clone();
         let profile = self.profile_dir();
         std::fs::create_dir_all(&profile).map_err(err)?;
         // Reserve an ephemeral control port until immediately before spawn.
-        let reservation = std::net::TcpListener::bind("127.0.0.1:0").map_err(err)?;
+        let reservation = TcpListener::bind("127.0.0.1:0").map_err(err)?;
         let ctrl = reservation.local_addr().map_err(err)?.port();
         if ctrl == s.sip_port || (s.rtp_port..=s.rtp_port + 20).contains(&ctrl) {
             return Err(message("ENGINE_CONTROL_PORT_TAKEN"));
         }
-        let (address, adapter) = Self::binding(&s)?;
+        let (address, adapter) = Self::binding(s)?;
+        let mut notes = Vec::new();
         if !adapter.is_empty() {
             let label = crate::native::adapters()
                 .into_iter()
                 .find(|a| a.name.eq_ignore_ascii_case(&adapter))
                 .map(|a| a.label)
                 .unwrap_or_default();
-            self.log(LOG_APP, format!("ksip: adapter {label} {adapter} {address}"));
+            notes.push(format!("ksip: adapter {label} {adapter} {address}"));
         }
-        *self.bound.lock().unwrap() = address.clone();
         let yes_no = |flag: bool| if flag { "yes" } else { "no" };
         // One line per setting, so that a value cannot land under the wrong name.
         let mut config = String::new();
@@ -1898,451 +1621,27 @@ impl AppState {
         if let Some(dir) = crate::native::sounds() {
             for (key, chosen) in Settings::SOUND_KEYS.iter().zip(s.sounds()) {
                 if let Err(e) = self.replace_sound(&dir, key, chosen) {
-                    self.log(LOG_APP, format!("ksip: {key} sound not replaced, {e}"));
+                    notes.push(format!("ksip: {key} sound not replaced, {e}"));
                 }
             }
             put(format!("audio_path {}", dir.to_string_lossy().replace('\\', "/")));
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
-        self.note_audio_endpoints(&s, &endpoints);
+        notes.extend(endpoint_notes(s, &endpoints, devices));
         if let Some((included, left_out)) = trust_note {
-            self.log(
-                LOG_APP,
-                format!("ksip: windows trust store, {included} certificates, {left_out} left out"),
-            );
+            notes.push(format!("ksip: windows trust store, {included} certificates, {left_out} left out"));
         }
-        {
-            let mut v = self.view.lock().unwrap();
-            v.settings = s;
-            v.error.clear();
-            v.aec_active = false;
-            v.microphone_fallback = false;
-            v.recording = false;
-            v.calls.clear();
-            v.transfer = Transfer::default();
-            v.parking.clear();
-            v.registration = "CONNECTING".into();
-            v.recording_call.clear();
-        }
-        drop(reservation);
-        let mut threads = Vec::new();
-        let mut child = Command::new(&exe)
-            .args([
-                "--engine",
-                &std::process::id().to_string(),
-                "-f",
-                profile.to_str().ok_or(message("ENGINE_PROFILE_PATH_INVALID"))?,
-            ])
-            .current_dir(exe.parent().unwrap())
-            .env("KSIP_CREDENTIAL_TARGET", &self.store.target)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(0x08000000)
-            .spawn()
-            .map_err(err)?;
-        for pipe in [
-            child
-                .stdout
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-            child
-                .stderr
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let me = self.clone();
-            threads.push(thread::spawn(move || {
-                for line in BufReader::new(pipe).split(b'\n') {
-                    match line {
-                        Ok(bytes) => me.log(
-                            LOG_ENGINE,
-                            without_colour(&String::from_utf8_lossy(&bytes)).trim().into(),
-                        ),
-                        Err(_) => break,
-                    }
-                }
-            }));
-        }
-        let deadline = Instant::now() + Duration::from_secs(12);
-        let writer = loop {
-            if let Ok(socket) = TcpStream::connect((Ipv4Addr::LOCALHOST, ctrl)) {
-                break socket;
-            }
-            if let Some(status) = child.try_wait().map_err(err)? {
-                return Err(message_with("ENGINE_START_FAILED", [status]));
-            }
-            if Instant::now() > deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(message("ENGINE_CONNECT_TIMEOUT"));
-            }
-            thread::sleep(Duration::from_millis(100));
-        };
-        writer
-            .set_write_timeout(Some(Duration::from_secs(3)))
-            .map_err(err)?;
-        let mut reader = BufReader::new(writer.try_clone().map_err(err)?);
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let p = pending.clone();
-        let me = self.clone();
-        threads.push(thread::spawn(move || {
-            while let Ok(data) = read_netstring(&mut reader) {
-                let Ok(v) = serde_json::from_slice::<Value>(&data) else {
-                    continue;
-                };
-                if let Some(token) = v.get("token").and_then(Value::as_str) {
-                    if let Some(tx) = p.lock().unwrap().remove(token) {
-                        let _ = tx.send(Ok(v.clone()));
-                    }
-                }
-                if v.get("event").and_then(Value::as_bool) == Some(true) {
-                    me.event(&v);
-                }
-            }
-            for (_, tx) in p.lock().unwrap().drain() {
-                let _ = tx.send(Err(message("ENGINE_DISCONNECTED")));
-            }
-            me.log(LOG_APP, message("ENGINE_CONTROL_LOST"));
-            me.close_calls_on_exit(None);
-        }));
-        *guard = Some(Engine {
-            child,
-            writer,
-            pending,
-            threads,
-        });
-        self.phone.lock().unwrap().new_engine();
-        {
-            let mut v = self.view.lock().unwrap();
-            v.running = true;
-        }
-        Ok(())
-    }
-    fn event(&self, e: &Value) {
-        let kind = e["type"].as_str().unwrap_or("");
-        // Credentials never enter events or command parameters.
-        self.log(
-            LOG_EVENT,
-            format!("{} {}", kind, e["param"].as_str().unwrap_or("")),
-        );
-        if let Some(id) = e["id"].as_str() {
-            let param = e["param"].as_str().unwrap_or("");
-            let mut phone = self.phone.lock().unwrap();
-            match kind {
-                "CALL_CLOSED" => phone.note_closed(id, param),
-                "CALL_OUTGOING" => phone.note_announced(id, "HISTORY_OUTGOING", param),
-                "CALL_INCOMING" => phone.note_announced(id, "HISTORY_INCOMING", param),
-                _ => {}
-            }
-        }
-        let mut v = self.view.lock().unwrap();
-        if matches!(
-            kind,
-            "REGISTERING" | "REGISTER_OK" | "REGISTER_FAIL" | "UNREGISTERING"
-        ) {
-            v.registration = kind.into();
-        }
-        if kind == "AUDIO_ERROR" {
-            v.error = message("AUDIO_DEVICE_INIT_FAILED");
-        }
-    }
-    pub fn sync_phone(&self) -> Result<(), String> {
-        // Serialize UI operations with polling so a stale snapshot cannot overwrite an action.
-        let _operation = self.operations.lock().unwrap();
-        self.update_phone()
-    }
-    fn update_phone(&self) -> Result<(), String> {
-        if !self.snapshot().running {
-            return Ok(());
-        }
-        let report: EngineReport =
-            serde_json::from_str(&self.request("ksip_state", "")?).map_err(err)?;
-        // The phone state takes the report: which calls ended and what their
-        // rows say, which line each call is on, which incoming calls the
-        // automatic answer takes. The request above went to the engine that
-        // is running, so the report is of the current generation.
-        let auto_answer = self.view.lock().unwrap().settings.auto_answer;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        let applied = {
-            let mut phone = self.phone.lock().unwrap();
-            let generation = phone.generation();
-            phone.apply_report(generation, report.calls, report.dnd, auto_answer, now)
-        };
-        let Some(applied) = applied else {
-            return Ok(());
-        };
-        let ended = applied.ended;
-        let answer_targets = applied.answer;
-        let mut v = self.view.lock().unwrap();
-        v.transport = report.transport;
-        v.media_encryption = report.media_encryption;
-        v.calls = applied.calls;
-        if v.calls.is_empty() {
-            v.microphone_fallback = false;
-        }
-        v.transfer = report.transfer;
-        v.parking = report.parking;
-        v.mwi = Mwi::parse(&report.mwi_summary);
-        v.audio_processing_stats = report.audio_processing_stats;
-        v.registration = report.registration;
-        v.dnd = report.dnd;
-        drop(v);
-        if !ended.is_empty() {
-            // A call of ours that never connected is said so, with the engine's
-            // words beside the name; the history keeps the name.
-            for call in &ended {
-                if !call.outcome.is_empty() && call.direction == message("HISTORY_OUTGOING") && call.outcome != message("HISTORY_CANCELLED") {
-                    self.show_error(message_with("CALL_NOT_CONNECTED", [&call.outcome]));
-                }
-            }
-            self.history.lock().unwrap().add(&self.data, ended)?;
-        }
-        for id in answer_targets {
-            let payload =
-                serde_json::to_string(&json!({"op":"answer","id":id,"value":""})).map_err(err)?;
-            // A failed automatic answer is reported once; the call can still be answered manually.
-            if let Err(e) = self.request("ksip_action", &payload) {
-                self.log(LOG_APP, format!("auto answer failed {}", e));
-            }
-        }
-        self.sync_auto_record()
-    }
-    /// Keeps the `ksip:` registration in step with the setting.
-    pub fn apply_browser_integration(&self) {
-        let Ok(settings) = self.settings() else {
-            return;
-        };
-        // A test profile registers a scheme of its own, so that a test never
-        // removes or redirects the registration the person's real KSIP has.
-        let scheme = if self.store.target.starts_with("KSIP/Test/") { "ksip-test" } else { "ksip" };
-        if let Err(e) = crate::protocol::register(settings.browser_integration, scheme) {
-            self.log(LOG_APP, format!("ksip: browser integration {e}"));
-        }
-    }
-    pub fn initialize(&self) {
-        self.apply_browser_integration();
-        self.sweep_recordings();
-        if let Err(e) = self.refresh_devices() {
-            self.show_error(e);
-        }
-        if !self.view.lock().unwrap().error.is_empty() {
-            return;
-        }
-        if self.snapshot().account.has_password {
-            if let Err(e) = self.connect() {
-                self.show_error(e);
-            }
-        }
-    }
-    fn ensure_idle(&self) -> Result<(), String> {
-        if self.snapshot().running {
-            let state: EngineReport =
-                serde_json::from_str(&self.request("ksip_state", "")?).map_err(err)?;
-            if !state.calls.is_empty() {
-                return Err(message("CALL_IN_PROGRESS"));
-            }
-        }
-        Ok(())
-    }
-    pub fn connect(&self) -> Result<(), String> {
-        let _operation = self.operations.lock().unwrap();
-        if self.is_closing() {
-            return Err(message("APP_CLOSING"));
-        }
-        self.ensure_idle()?;
-        // A connect is asked for (the button, a saved setting) or follows an
-        // automatic reason that checked first; either way the phone is wanted
-        // registered from here on.
-        self.view.lock().unwrap().unregistered_by_choice = false;
-        let mut account = self
-            .store
-            .read_account()?
-            .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
-        account.validate()?;
-        let settings = self.settings()?;
-        // What is stored may not have passed through the dialog (a policy, a
-        // hand-edited registry, an older version's values), so it is checked
-        // here as well before the engine is started with it.
-        Self::validate(&settings)?;
-        // The engine takes thirty comma-separated numbers to watch, empty ones included.
-        let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
-        watched.resize(CustomButton::COUNT, String::new());
-        let watched = watched.join(",");
-        self.stop()?;
-        // The window shows what the engine is actually running with, so a
-        // reconnect brings the saved settings forward as well.
-        self.view.lock().unwrap().settings = settings.clone();
-        self.start(settings, &account)?;
-        if let Err(e) = self.request("ksip_login", "") {
-            let _ = self.stop();
-            return Err(e);
-        }
-        if let Err(e) = self.request("ksip_parking", &watched) {
-            let _ = self.stop();
-            return Err(e);
-        }
-        Ok(())
-    }
-    /// The stored password, when the account still belongs to the same
-    /// authentication user. The vault holds that user and the password; the
-    /// address lives in the registry, so changing it asks for nothing.
-    fn password_for(&self, account: &Account) -> Result<String, String> {
-        let previous = self
-            .store
-            .read_account()?
-            .filter(|a| a.auth_user == account.auth_user.trim())
-            .ok_or(message("ACCOUNT_PASSWORD_REQUIRED"))?;
-        Ok(previous.password)
-    }
-    pub fn save_configuration(
-        &self,
-        settings: Settings,
-        mut account: Account,
-    ) -> Result<(), String> {
-        {
-            let _operation = self.operations.lock().unwrap();
-            self.ensure_idle()?;
-            Self::validate(&settings)?;
-            let ca = settings.ca_file.trim();
-            if !ca.is_empty() && !std::path::Path::new(ca).is_file() {
-                return Err(message("SETTINGS_CA_FILE_MISSING"));
-            }
-            // The ringback tone plays through the call's player, which takes
-            // 48 kHz mono only, so a chosen file is refused here rather than
-            // found silent later. A file that is not there falls back to the
-            // built-in tone, as every sound does.
-            let ringback = settings.sound_ringback.trim();
-            if !ringback.is_empty() {
-                if let Ok(bytes) = std::fs::read(ringback) {
-                    if crate::wav::layout(&bytes)? != (48000, 1) {
-                        return Err(message("SETTINGS_SOUND_RINGBACK_FORMAT"));
-                    }
-                }
-            }
-            // An empty extension registers under the authentication user.
-            if account.extension.trim().is_empty() {
-                account.extension = account.auth_user.trim().into();
-            }
-            if account.password.is_empty() {
-                account.password = self.password_for(&account)?;
-            }
-            account.validate()?;
-            self.persist_configuration(&settings, &account)?;
-            let mut v = self.view.lock().unwrap();
-            v.settings = settings;
-            v.account = account.public();
-            drop(v);
-            self.apply_browser_integration();
-            let mut v = self.view.lock().unwrap();
-            v.error.clear();
-        }
-        // Saved. Whether the engine then comes up on the new settings is a
-        // separate matter, told in the window's own error line, so that the
-        // dialog can close on what did succeed.
-        if let Err(e) = self.connect() {
-            self.report_error(e);
-        }
-        Ok(())
-    }
-    /// Writes the account and the settings, or leaves the store as it was.
-    /// Both are several registry values and a credential written one by one,
-    /// so a failure part way through would leave old and new mixed; the copies
-    /// read first are then written back, every one of them, and only when
-    /// that fails too is the person told to save again.
-    fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
-        let old_account = self.store.read_account()?;
-        let old_settings = self.settings()?;
-        let written = self
-            .store
-            .write_account(account)
-            .and_then(|()| self.save_settings(settings));
-        if let Err(e) = written {
-            let restored = match &old_account {
-                Some(previous) => self.store.write_account(previous),
-                None => self.store.delete_account(),
-            }
-            .and_then(|()| self.save_settings(&old_settings));
-            return Err(if restored.is_ok() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) });
-        }
-        Ok(())
-    }
-    fn request(&self, command: &str, params: &str) -> Result<String, String> {
-        let token = self.serial.fetch_add(1, Ordering::Relaxed).to_string();
-        let (tx, rx) = mpsc::channel();
-        let pending;
-        {
-            let mut guard = self.inner.lock().unwrap();
-            let e = guard.as_mut().ok_or(message("ENGINE_NOT_RUNNING"))?;
-            pending = e.pending.clone();
-            pending.lock().unwrap().insert(token.clone(), tx);
-            let payload =
-                serde_json::to_vec(&json!({"command":command,"params":params,"token":token}))
-                    .map_err(err)?;
-            if let Err(error) = write_netstring(&mut e.writer, &payload) {
-                pending.lock().unwrap().remove(&token);
-                return Err(error);
-            }
-        }
-        let result = rx.recv_timeout(Duration::from_secs(8));
-        pending.lock().unwrap().remove(&token);
-        let response = result.map_err(|_| message("ENGINE_RESPONSE_TIMEOUT"))??;
-        if response["ok"] != true {
-            let detail = response["data"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| message("ACTION_FAILED"));
-            return Err(message_with("ENGINE_COMMAND_FAILED", [command, &detail]));
-        }
-        Ok(response["data"].as_str().unwrap_or("").into())
-    }
-    fn start_recording(&self, id: &str) -> Result<(), String> {
-        // The folder appears next to the executable the first time something is recorded.
-        let folder = self.data.join("recordings");
-        std::fs::create_dir_all(&folder).map_err(err)?;
-        let peer = self
-            .snapshot()
-            .calls
-            .iter()
-            .find(|call| call.id == id)
-            .map(|call| call.peer.clone())
-            .unwrap_or_default();
-        // Two recordings within a second with the same peer are told apart by a count.
-        let wanted = recording_name(&Self::stamp(), &peer);
-        let mut name = wanted.clone();
-        let mut count = 1;
-        while folder.join(&name).exists() {
-            count += 1;
-            name = wanted.replace(".wav", &format!("-{count}.wav"));
-        }
-        let path = folder.join(&name);
-        self.request(
-            "lab_record",
-            &format!("{id} {}", path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?),
-        )?;
-        self.phone.lock().unwrap().note_recording(id, &name);
-        let mut v = self.view.lock().unwrap();
-        v.recording = true;
-        v.recording_call = id.into();
-        v.recording_path = path.to_string_lossy().into();
-        Ok(())
-    }
-    fn stop_recording(&self) -> Result<(), String> {
-        let snapshot = self.snapshot();
-        if snapshot.recording {
-            self.request("lab_stop", "")?;
-        }
-        let mut v = self.view.lock().unwrap();
-        v.recording = false;
-        v.recording_call.clear();
-        drop(v);
-        if snapshot.recording {
-            self.convert_recording(PathBuf::from(snapshot.recording_path));
-        }
-        Ok(())
+        Ok(Prepared {
+            plan: StartPlan {
+                exe,
+                profile,
+                control: reservation,
+                credential_target: self.store.target.clone(),
+            },
+            endpoints,
+            address,
+            notes,
+        })
     }
     /// Turns a recording that has just closed into an MP3, on a thread of
     /// its own with a lower priority, so that the next call is not disturbed.
@@ -2352,7 +1651,7 @@ impl AppState {
     /// copy, which the next start converts. The WAV goes once the MP3 is
     /// there; if it is being played just then, it stays until the next start
     /// sweeps it away. A failure leaves the WAV.
-    fn convert_recording(&self, wav: PathBuf) {
+    pub fn convert_recording(&self, wav: PathBuf) {
         let me = self.clone();
         me.converting.fetch_add(1, Ordering::Relaxed);
         thread::spawn(move || {
@@ -2385,260 +1684,16 @@ impl AppState {
     /// What earlier runs left in the recordings folder, at start: finished
     /// conversions lose their WAV, unfinished ones lose their partial MP3, and
     /// a WAV without an MP3 is converted now.
-    fn sweep_recordings(&self) {
+    pub fn sweep_recordings(&self) {
         for wav in sweep_recording_folder(&self.data.join("recordings")) {
             self.convert_recording(wav);
         }
-    }
-    fn sync_auto_record(&self) -> Result<(), String> {
-        let snapshot = self.snapshot();
-        let target = automatic_recording_target(snapshot.settings.auto_record, &snapshot.calls);
-        if snapshot.recording && (!snapshot.settings.auto_record || snapshot.calls.is_empty()) {
-            self.stop_recording()?;
-            return Ok(());
-        }
-        if snapshot.recording && target.as_deref() != Some(snapshot.recording_call.as_str()) {
-            self.request("lab_record_select", target.as_deref().unwrap_or("-"))?;
-            // The file goes on with the call it was switched to.
-            if let Some(id) = &target {
-                let name = Path::new(&snapshot.recording_path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                self.phone.lock().unwrap().note_recording(id, &name);
-            }
-            self.view.lock().unwrap().recording_call = target.unwrap_or_default();
-        } else if !snapshot.recording {
-            if let Some(id) = target {
-                self.start_recording(&id)?;
-            }
-        }
-        Ok(())
-    }
-    pub fn action(&self, name: &str, id: &str, value: &str, line: u8) -> Result<String, String> {
-        let _operation = self.operations.lock().unwrap();
-        if !matches!(
-            name,
-            "dial"
-                | "answer"
-                | "hangup"
-                | "hold"
-                | "resume"
-                | "select"
-                | "transfer"
-                | "cancel_transfer"
-                | "unregister"
-                | "dtmf"
-                | "blind_transfer"
-                | "auto_record"
-                | "dnd"
-        ) {
-            return Err(message("ACTION_UNSUPPORTED"));
-        }
-        if !(1..=2).contains(&line)
-            || id.len() > 200
-            || id.chars().any(char::is_control)
-            || value.len() > 200
-            || value.chars().any(char::is_control)
-        {
-            return Err(message("ACTION_ARGUMENT_INVALID"));
-        }
-        if name == "auto_record" {
-            let enabled = match value {
-                "on" => true,
-                "off" => false,
-                _ => return Err(message("AUTO_RECORD_ARGUMENT_INVALID")),
-            };
-            let mut settings = self.settings()?;
-            settings.auto_record = enabled;
-            self.save_settings(&settings)?;
-            self.view.lock().unwrap().settings = settings;
-            self.sync_auto_record()?;
-            return Ok(if enabled {
-                message("AUTO_RECORD_ON")
-            } else {
-                message("AUTO_RECORD_OFF")
-            });
-        }
-        if name == "dnd" && !matches!(value, "on" | "off") {
-            return Err(message("ACTION_ARGUMENT_INVALID"));
-        }
-        if name == "dial" && self.snapshot().calls.iter().any(|c| c.line == line) {
-            return Err(message("CALL_LINE_BUSY"));
-        }
-        if name == "transfer" {
-            let v = self.snapshot();
-            if !v.calls.iter().any(|c| c.id == id && c.line == 1)
-                || !v.calls.iter().any(|c| c.id == value && c.line == 2)
-            {
-                return Err(message("TRANSFER_NEEDS_TWO_CALLS"));
-            }
-        }
-        // What the engine is sent: the value as it came, or, for a button,
-        // the address the button was set up with.
-        let mut target = value.to_string();
-        if name == "blind_transfer" {
-            // Only a target one of the buttons was set up with, and only a
-            // call that is actually in progress.
-            let v = self.snapshot();
-            let wanted = CustomButton::address(value);
-            let known = v
-                .settings
-                .buttons
-                .iter()
-                .find(|b| b.transfer_target() == Some(wanted))
-                .and_then(|b| b.transfer_text());
-            match known {
-                Some(t) if v.calls.iter().any(|c| c.id == id && c.state == "ESTABLISHED" && !c.held) => {
-                    target = t.to_string();
-                }
-                _ => return Err(message("BUTTON_NEEDS_CALL_AND_TARGET")),
-            }
-        }
-        if name == "dial" {
-            // The dial box, a button and a link are held to the same rule.
-            target = dial_target(value)?;
-        }
-        let result = self.request(
-            "ksip_action",
-            &serde_json::to_string(&json!({"op":name,"id":id,"value":target})).map_err(err)?,
-        )?;
-        if name == "dnd" {
-            self.log(LOG_APP, if value == "on" { message("DND_ON") } else { message("DND_OFF") });
-        }
-        if name == "unregister" {
-            self.view.lock().unwrap().unregistered_by_choice = true;
-        }
-        if name == "dial" {
-            self.phone.lock().unwrap().note_dialled(result.trim(), line);
-        }
-        self.update_phone()?;
-        // An operation that went through supersedes whatever the banner said;
-        // choosing a line is not an operation on the phone.
-        if name != "select" {
-            self.view.lock().unwrap().error.clear();
-        }
-        Ok(result)
-    }
-    /// The engine process has gone without being asked. The handle, if it was
-    /// still held, is closed and its threads joined; the calls that were up
-    /// get their rows and the window is told, once.
-    fn engine_exited(&self, engine: Option<Engine>, status: ExitStatus) {
-        if let Some(e) = engine {
-            let _ = e.writer.shutdown(Shutdown::Both);
-            for t in e.threads {
-                let _ = t.join();
-            }
-        }
-        let notice = message_with("ENGINE_EXITED", [status]);
-        self.close_calls_on_exit(Some(notice.clone()));
-        // The reader thread may have closed the calls first; the exit status is
-        // still what the window should say.
-        self.view.lock().unwrap().error = notice.clone();
-        self.log(LOG_APP, notice);
-    }
-    /// What has to happen when the engine is gone, whichever side notices
-    /// first: the reader thread when the connection ends, or a snapshot when
-    /// the process has exited. The calls that were up in the last snapshot
-    /// get their history rows (their closing words never came), a recording
-    /// in progress is closed into an MP3, the call bookkeeping is emptied and
-    /// the window shows the phone as disconnected. It runs once: the second
-    /// caller finds the engine already marked as not running.
-    fn close_calls_on_exit(&self, error: Option<String>) {
-        let (recording, dnd) = {
-            let mut v = self.view.lock().unwrap();
-            if !v.running {
-                return;
-            }
-            v.calls.clear();
-            let recording = v.recording.then(|| PathBuf::from(v.recording_path.clone()));
-            let dnd = v.dnd;
-            v.running = false;
-            v.recording = false;
-            v.recording_call.clear();
-            v.aec_active = false;
-            v.microphone_fallback = false;
-            v.transfer = Transfer::default();
-            v.parking.clear();
-            v.audio_processing_stats = None;
-            v.registration = "DISCONNECTED".into();
-            if let Some(error) = error {
-                v.error = error;
-            }
-            (recording, dnd)
-        };
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        let rows = self.phone.lock().unwrap().engine_gone(dnd, now);
-        if !rows.is_empty() {
-            if let Err(e) = self.history.lock().unwrap().add(&self.data, rows) {
-                self.log(LOG_APP, e);
-            }
-        }
-        if let Some(wav) = recording {
-            self.convert_recording(wav);
-        }
-    }
-    pub fn stop(&self) -> Result<(), String> {
-        if self.inner.lock().unwrap().is_some() {
-            let _ = self.request("lab_stop", "");
-            // Parking dialog subscriptions keep baresip's SIP stack alive.
-            // Release them before quit so shutdown does not hit the kill timeout.
-            let _ = self.request("ksip_shutdown", "");
-        }
-        let mut guard = self.inner.lock().unwrap();
-        if let Some(mut e) = guard.take() {
-            let payload = serde_json::to_vec(&json!({"command":"quit","token":"quit"})).unwrap();
-            let _ = write_netstring(&mut e.writer, &payload);
-            let asked = Instant::now();
-            let end = asked + Duration::from_secs(3);
-            let mut ended = false;
-            while e.child.try_wait().map_err(err)?.is_none() {
-                if Instant::now() > end {
-                    let _ = e.child.kill();
-                    ended = true;
-                    break;
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
-            let took = asked.elapsed();
-            let status = e.child.wait();
-            let _ = e.writer.shutdown(Shutdown::Both);
-            for t in e.threads {
-                let _ = t.join();
-            }
-            // How the engine went is part of the record: one that had to be
-            // ended was still waiting on something, usually a SIP request the
-            // server has not answered, and the window waited with it.
-            if ended {
-                self.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
-            } else {
-                let code = status
-                    .ok()
-                    .and_then(|s| s.code())
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "?".into());
-                self.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", took.as_millis()));
-            }
-        }
-        let mut v = self.view.lock().unwrap();
-        v.running = false;
-        v.recording = false;
-        v.aec_active = false;
-        v.microphone_fallback = false;
-        v.calls.clear();
-        v.transfer = Transfer::default();
-        v.parking.clear();
-        v.registration = "DISCONNECTED".into();
-        v.recording_call.clear();
-        drop(v);
-        let _ = self.logs.lock().unwrap().sync(&self.data);
-        Ok(())
     }
     pub fn open_licenses(&self) -> Result<(), String> {
         std::fs::create_dir_all(&self.data).map_err(err)?;
         let path = self.data.join("THIRD_PARTY_NOTICES.txt");
         std::fs::write(&path, crate::licenses::text()?).map_err(err)?;
-        Command::new("notepad.exe").arg(path).spawn().map_err(err)?;
+        Process::new("notepad.exe").arg(path).spawn().map_err(err)?;
         Ok(())
     }
     /// The folder everything the app writes goes into.
@@ -2648,87 +1703,232 @@ impl AppState {
     pub fn open_recordings(&self) -> Result<(), String> {
         let path = self.data.join("recordings");
         std::fs::create_dir_all(&path).map_err(err)?;
-        Command::new("explorer.exe")
+        Process::new("explorer.exe")
             .arg(explorer_path(&path))
             .spawn()
             .map_err(err)?;
         Ok(())
     }
     pub fn open_sound_control(&self) -> Result<(), String> {
-        Command::new("control.exe")
+        Process::new("control.exe")
             .arg("mmsys.cpl")
             .spawn()
             .map_err(err)?;
         Ok(())
     }
+    /// The stored password, when the account still belongs to the same
+    /// authentication user. The vault holds that user and the password; the
+    /// address lives in the registry, so changing it asks for nothing.
+    pub fn password_for(&self, account: &Account) -> Result<String, String> {
+        let previous = self
+            .store
+            .read_account()?
+            .filter(|a| a.auth_user == account.auth_user.trim())
+            .ok_or(message("ACCOUNT_PASSWORD_REQUIRED"))?;
+        Ok(previous.password)
+    }
+    /// Writes the account and the settings, or leaves the store as it was.
+    /// Both are several registry values and a credential written one by one,
+    /// so a failure part way through would leave old and new mixed; the copies
+    /// read first are then written back, every one of them, and only when
+    /// that fails too is the person told to save again.
+    pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
+        let old_account = self.store.read_account()?;
+        let old_settings = self.settings()?;
+        let written = self
+            .store
+            .write_account(account)
+            .and_then(|()| self.save_settings(settings));
+        if let Err(e) = written {
+            let restored = match &old_account {
+                Some(previous) => self.store.write_account(previous),
+                None => self.store.delete_account(),
+            }
+            .and_then(|()| self.save_settings(&old_settings));
+            return Err(if restored.is_ok() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) });
+        }
+        Ok(())
+    }
+    /// Keeps the `ksip:` registration in step with the setting.
+    pub fn apply_browser_integration(&self) {
+        let Ok(settings) = self.settings() else {
+            return;
+        };
+        // A test profile registers a scheme of its own, so that a test never
+        // removes or redirects the registration the person's real KSIP has.
+        let scheme = if self.store.target.starts_with("KSIP/Test/") { "ksip-test" } else { "ksip" };
+        if let Err(e) = crate::protocol::register(settings.browser_integration, scheme) {
+            self.log(LOG_APP, format!("ksip: browser integration {e}"));
+        }
+    }
+}
+/// What the window and the desktop hold: the services, the way into the
+/// phone actor and the snapshot it publishes. Every question about the phone
+/// is read from the snapshot; every change to it is a command to the actor.
+#[derive(Clone)]
+pub struct AppState {
+    services: Services,
+    phone: PhoneHandle,
+    published: Published,
+    closing: Arc<AtomicBool>,
+}
+impl AppState {
+    pub fn new() -> Self {
+        let (services, initial) = Services::open();
+        let (phone, published) = crate::phone_actor::spawn(services.clone(), initial);
+        Self {
+            services,
+            phone,
+            published,
+            closing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn show_error(&self, error: String) {
+        self.phone.send(Command::ShowError(error));
+    }
+    pub fn report_error(&self, error: String) {
+        self.phone.send(Command::ReportError(error));
+    }
+    pub fn log_app(&self, text: String) {
+        self.services.log_app(text);
+    }
+    pub fn log_protocol(&self, command: &str) {
+        self.services.log_protocol(command);
+    }
+    pub fn log_ui(&self, text: String) {
+        self.services.log_ui(text);
+    }
+    pub fn log_panic(&self, text: String) {
+        self.services.log_panic(text);
+    }
+    pub fn clear_logs(&self) {
+        self.services.clear_logs();
+    }
+    pub fn read_logs(&self, after: u64) -> LogPage {
+        self.services.read_logs(after)
+    }
+    pub fn clear_call_history(&self) -> Result<(), String> {
+        self.services.clear_call_history()
+    }
+    pub fn read_call_history(&self) -> Vec<CallHistory> {
+        self.services.read_call_history()
+    }
+    pub fn open_recording_location(&self, name: &str) -> Result<(), String> {
+        self.services.open_recording_location(name)
+    }
+    pub fn open_recording(&self, name: &str) -> Result<(), String> {
+        self.services.open_recording(name)
+    }
+    /// The phone as the actor last published it, with the counters of the
+    /// services laid over. Reading also moves the files along: the log is
+    /// written from log(), so a quiet moment would leave the last lines only
+    /// in memory, and what another process appended unseen; rows the history
+    /// could not write earlier get another try. The first failure of either
+    /// file is said once, in the log and in the window.
+    pub fn snapshot(&self) -> Snapshot {
+        let journal = {
+            let mut logs = self.services.logs.lock().unwrap();
+            if logs.flushed.elapsed() >= Duration::from_secs(1) {
+                logs.sync(&self.services.data)
+            } else {
+                Ok(())
+            }
+        };
+        let history = self.services.history.lock().unwrap().flush(&self.services.data);
+        for e in [journal, history].into_iter().filter_map(Result::err) {
+            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
+        }
+        let mut view = self.published.read();
+        view.converting = self.services.converting.load(Ordering::Relaxed) as u32;
+        view.log_sequence = self.services.logs.lock().unwrap().sequence;
+        view.history_sequence = self.services.history.lock().unwrap().sequence;
+        view
+    }
+    pub fn refresh_devices(&self) -> Result<(), String> {
+        self.phone.call(Command::RefreshDevices)
+    }
+    /// Told by the desktop loop, which can see the window; the phone cannot.
+    pub fn set_window_visible(&self, visible: bool) {
+        self.phone.send(Command::WindowVisible(visible));
+    }
+    /// Reads a volume, or sets it. Reading asks Windows and lays the saved
+    /// gain over; setting goes through the phone, since the engine and the
+    /// settings take the change too.
+    pub fn volume(&self, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
+        if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
+            return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
+        }
+        if level.is_some() || mute.is_some() {
+            let (kind, device) = (kind.to_string(), device.to_string());
+            return self.phone.call(|reply| Command::SetVolume { kind, device, level, mute, reply });
+        }
+        let mut result = crate::audio::volume(kind, device, None, None)?;
+        let settings = self.published.read().settings;
+        let gain = if kind == "microphone" {
+            settings.microphone_gain
+        } else {
+            settings.speaker_gain
+        };
+        if gain > 100 {
+            result.level = gain;
+        }
+        Ok(result)
+    }
+    pub fn peak(&self, kind: &str, device: &str) -> Result<Peak, String> {
+        crate::audio::peak(kind, device)
+    }
+    pub fn calibrate_aec(&self, microphone: &str, speaker: &str, careful: bool) -> Result<Calibration, String> {
+        let (microphone, speaker) = (microphone.to_string(), speaker.to_string());
+        self.phone.call(|reply| Command::CalibrateAec { microphone, speaker, careful, reply })
+    }
+    pub fn select_audio_device(&self, kind: &str, device: String) -> Result<(), String> {
+        let kind = kind.to_string();
+        self.phone.call(|reply| Command::SelectAudioDevice { kind, device, reply })
+    }
+    /// The first thing after the window is up: the link registration, the
+    /// recordings earlier runs left, then the devices and the saved account.
+    pub fn initialize(&self) {
+        self.services.apply_browser_integration();
+        self.services.sweep_recordings();
+        self.phone.send(Command::Initialize);
+    }
+    pub fn connect(&self) -> Result<(), String> {
+        self.phone.call(Command::Connect)
+    }
+    pub fn save_configuration(&self, settings: Settings, account: Account) -> Result<(), String> {
+        self.phone.call(|reply| Command::SaveConfiguration { settings: Box::new(settings), account, reply })
+    }
+    pub fn action(&self, name: &str, id: &str, value: &str, line: u8) -> Result<String, String> {
+        let (name, id, value) = (name.to_string(), id.to_string(), value.to_string());
+        self.phone.call(|reply| Command::Action { name, id, value, line, reply })
+    }
+    pub fn open_licenses(&self) -> Result<(), String> {
+        self.services.open_licenses()
+    }
+    /// The folder everything the app writes goes into.
+    pub fn data(&self) -> &Path {
+        self.services.data()
+    }
+    pub fn open_recordings(&self) -> Result<(), String> {
+        self.services.open_recordings()
+    }
+    pub fn open_sound_control(&self) -> Result<(), String> {
+        self.services.open_sound_control()
+    }
     pub fn is_closing(&self) -> bool {
         self.closing.load(Ordering::SeqCst)
     }
+    /// Stops the engine through the actor, then gives a conversion still
+    /// running a moment to finish. One that does not make it leaves its WAV
+    /// and a partial MP3, and the next start converts the WAV again, so
+    /// nothing is lost by leaving.
     pub fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
-        let _operation = self.operations.lock().unwrap();
-        let _ = self.stop();
-        // A conversion still running gets a moment to finish. One that does not
-        // make it leaves its WAV and a partial MP3, and the next start converts
-        // the WAV again, so nothing is lost by leaving.
+        let _ = self.phone.call(Command::Shutdown);
         let end = Instant::now() + Duration::from_secs(5);
-        while self.converting.load(Ordering::Relaxed) > 0 && Instant::now() < end {
+        while self.services.converting.load(Ordering::Relaxed) > 0 && Instant::now() < end {
             thread::sleep(Duration::from_millis(100));
         }
-    }
-    /// The engine binds one address, so a new one means the binding is stale.
-    /// Re-registering does not re-bind; only a restart does, and that is what
-    /// the reconnect does. A call is never cut short for this.
-    pub fn follow_network(&self) {
-        let settings = match self.settings() {
-            Ok(settings) => settings,
-            Err(_) => return,
-        };
-        if settings.network_adapter.trim().is_empty() || !self.snapshot().running {
-            return;
-        }
-        // Unregistered on purpose: a new address changes nothing about that.
-        if self.snapshot().unregistered_by_choice {
-            return;
-        }
-        let Ok(current) = crate::native::adapter_address(settings.network_adapter.trim()) else {
-            return;
-        };
-        if *self.bound.lock().unwrap() == current {
-            return;
-        }
-        if !self.snapshot().calls.is_empty() {
-            self.report_error(message("NETWORK_CHANGED"));
-            return;
-        }
-        self.log(
-            LOG_APP,
-            format!("ksip: adapter address changed, reconnecting on {current}"),
-        );
-        if let Err(e) = self.connect() {
-            self.report_error(e);
-        }
-    }
-    pub fn report_error(&self, error: String) {
-        let mut reported = self.polling_error.lock().unwrap();
-        if *reported != error {
-            self.log(LOG_APP, error.clone());
-        }
-        *reported = error.clone();
-        self.view.lock().unwrap().error = error;
-    }
-    /// Drops the banner the polling loop raised once polling works again. An error
-    /// another path put on screen is left alone.
-    pub fn clear_polling_error(&self) {
-        let mut reported = self.polling_error.lock().unwrap();
-        if reported.is_empty() {
-            return;
-        }
-        let mut v = self.view.lock().unwrap();
-        if v.error == *reported {
-            v.error.clear();
-        }
-        reported.clear();
     }
 }
 // Explorer interprets forward slashes as switches and does not support the
@@ -2744,6 +1944,7 @@ fn explorer_path(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::phone_state::automatic_recording_target;
     #[test]
     fn explorer_receives_windows_folder_paths() {
         assert_eq!(
@@ -2762,7 +1963,7 @@ mod tests {
     #[test]
     fn a_save_that_fails_part_way_leaves_the_store_as_it_was() {
         let suffix = format!("test-rollback-{}", std::process::id());
-        let mut app = AppState::new();
+        let mut app = Services::open().0;
         app.store = Store {
             key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
             target: format!("KSIP/Test/{suffix}"),
@@ -2798,7 +1999,7 @@ mod tests {
     #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {
         let suffix = format!("test-password-{}", std::process::id());
-        let mut app = AppState::new();
+        let mut app = Services::open().0;
         app.store = Store {
             key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
             target: format!("KSIP/Test/{suffix}"),
@@ -2837,14 +2038,16 @@ mod tests {
     #[test]
     #[ignore = "requires scripts/build/native.ps1; uses isolated temp/build/rust-engine-test"]
     fn real_engine_starts_stops_and_restarts() {
+        use crate::engine_link::EngineLink;
+        use crate::phone_message::{LinkBody, Message};
         let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .to_path_buf();
         let root = project.join("temp/build/rust-engine-test");
-        let mut app = AppState::new();
-        app.data = root.join("data");
-        app.store = Store {
+        let mut services = Services::open().0;
+        services.data = root.join("data");
+        services.store = Store {
             key: r"Software\KashiharaCity\ksip\Test\test-engine".into(),
             target: "KSIP/Test/test-engine".into(),
         };
@@ -2853,11 +2056,10 @@ mod tests {
             rtp_port: 17100,
             ..Settings::default()
         };
-        for _ in 0..2 {
-            app.refresh_devices().unwrap();
-            assert!(!app.snapshot().running);
-            assert!(app.inner.lock().unwrap().is_none());
-            assert!(!app.snapshot().devices.is_empty());
+        let devices = crate::audio::devices().unwrap();
+        assert!(!devices.is_empty());
+        let (tx, rx) = std::sync::mpsc::channel();
+        for generation in 1..=2 {
             let account = Account {
                 server: "127.0.0.1".into(),
                 port: 5060,
@@ -2865,15 +2067,13 @@ mod tests {
                 auth_user: "1001".into(),
                 password: "secret".into(),
             };
-            app.start(settings.clone(), &account).unwrap();
-            assert!(app.snapshot().running);
-            let snapshot = app.snapshot();
-            let config = std::fs::read_to_string(app.profile_dir().join("config")).unwrap();
+            let prepared = services.prepare_start(&settings, &account, &devices).unwrap();
+            let config = std::fs::read_to_string(services.profile_dir().join("config")).unwrap();
             assert!(config.contains(&format!(
                 "audio_source ksip_audio,{}",
-                snapshot.microphone_id
+                prepared.endpoints.microphone
             )));
-            assert!(config.contains(&format!("audio_player ksip_audio,{}", snapshot.speaker_id)));
+            assert!(config.contains(&format!("audio_player ksip_audio,{}", prepared.endpoints.speaker)));
             assert!(config.contains("webrtc_aec_delay_ms 20"));
             assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
@@ -2883,21 +2083,41 @@ mod tests {
             assert!(config.contains("ksip_agc yes"));
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
-            assert!(app.request("lab_stop", "").is_ok());
-            assert!(app.action("record", "", "", 1).is_err());
-            app.stop().unwrap();
-            assert!(!app.snapshot().running);
-            assert!(app.inner.lock().unwrap().is_none());
+            let mut link = EngineLink::start(prepared.plan, generation, tx.clone()).unwrap();
+            assert_eq!(link.generation(), generation);
+            // A request is answered on the queue, under this engine's generation
+            // and the request's token, in receive order.
+            let token = link.send("lab_stop", "").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(8);
+            let mut last_seq = 0;
+            loop {
+                let message = rx.recv_timeout(deadline - Instant::now().min(deadline)).expect("an answer in time");
+                let Message::Link(delivered) = message else {
+                    continue;
+                };
+                assert_eq!(delivered.generation, generation);
+                assert!(delivered.seq > last_seq, "receive numbers only grow");
+                last_seq = delivered.seq;
+                if let LinkBody::Response { token: t, value } = delivered.body {
+                    assert_eq!(t, token);
+                    assert_eq!(value["ok"], true);
+                    break;
+                }
+            }
+            let report = link.stop().unwrap();
+            assert!(!report.forced, "the engine quits when asked");
+            // The reader thread says the connection is gone once the engine has.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let message = rx.recv_timeout(deadline - Instant::now().min(deadline)).expect("the loss is reported");
+                if let Message::Link(delivered) = message {
+                    if matches!(delivered.body, LinkBody::Lost) {
+                        assert_eq!(delivered.generation, generation);
+                        break;
+                    }
+                }
+            }
         }
-    }
-    #[test]
-    fn netstrings_are_byte_counted_and_sequential() {
-        let mut wire = Vec::new();
-        write_netstring(&mut wire, "日本語".as_bytes()).unwrap();
-        write_netstring(&mut wire, b"{}").unwrap();
-        let mut r = std::io::Cursor::new(wire);
-        assert_eq!(read_netstring(&mut r).unwrap(), "日本語".as_bytes());
-        assert_eq!(read_netstring(&mut r).unwrap(), b"{}");
     }
     #[test]
     fn webrtc_audio_processing_statistics_are_parsed_from_native_state() {
@@ -2922,26 +2142,14 @@ mod tests {
         assert_eq!(stats.render_errors + stats.capture_errors, 0);
     }
     #[test]
-    fn reject_malformed_frames() {
-        for data in [
-            b"9999999:x,".as_slice(),
-            b"01:a,",
-            b"2:{};",
-            b"x:{}",
-            b"2:{",
-        ] {
-            assert!(read_netstring(&mut &data[..]).is_err());
-        }
-    }
-    #[test]
     fn reject_config_injection_and_port_overlap() {
-        let rejected = |s: Settings| AppState::validate(&s).is_err();
+        let rejected = |s: Settings| Services::validate(&s).is_err();
         assert!(rejected(Settings { microphone: "default\nmodule evil".into(), ..Settings::default() }));
         assert!(rejected(Settings { sip_port: 10000, rtp_port: 10000, ..Settings::default() }));
         assert!(rejected(Settings { aec_delay_ms: 501, ..Settings::default() }));
         assert!(rejected(Settings { noise_suppression: "loud".into(), ..Settings::default() }));
         assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
-        assert!(AppState::validate(&Settings::default()).is_ok());
+        assert!(Services::validate(&Settings::default()).is_ok());
     }
     #[test]
     fn the_recordings_folder_is_tidied_and_leftover_wavs_are_named() {
@@ -3011,21 +2219,21 @@ mod tests {
             ..Settings::default()
         };
         for (transport, media) in [("", ""), ("udp", ""), ("tcp", "dtls"), ("tls", "sdes"), ("tls", "osrtp"), ("tls", "dtls")] {
-            assert!(AppState::validate(&with(transport, media)).is_ok(), "{transport} {media}");
+            assert!(Services::validate(&with(transport, media)).is_ok(), "{transport} {media}");
         }
         // SDES and OSRTP carry their keys in the signalling: TLS or nothing.
         for (transport, media) in [("", "sdes"), ("udp", "sdes"), ("tcp", "osrtp"), ("udp", "osrtp")] {
-            assert_eq!(AppState::validate(&with(transport, media)), Err(message("SETTINGS_SDES_NEEDS_TLS")), "{transport} {media}");
+            assert_eq!(Services::validate(&with(transport, media)), Err(message("SETTINGS_SDES_NEEDS_TLS")), "{transport} {media}");
         }
         // A value this version does not know is refused, not read as the weak default.
-        assert_eq!(AppState::validate(&with("ssl", "")), Err(message("SETTINGS_TRANSPORT_INVALID")));
-        assert_eq!(AppState::validate(&with("tls", "srtp")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
-        assert_eq!(AppState::validate(&with("tls", "srtp-mand")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
+        assert_eq!(Services::validate(&with("ssl", "")), Err(message("SETTINGS_TRANSPORT_INVALID")));
+        assert_eq!(Services::validate(&with("tls", "srtp")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
+        assert_eq!(Services::validate(&with("tls", "srtp-mand")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
         // Policy text is normalised on the way in, so "TLS" and " sdes " are the known values.
         let mut policy = Settings::default();
         policy.read_policy(|key| match key { "transport" => " TLS ".into(), "media_encryption" => "SDES".into(), _ => String::new() });
         assert_eq!((policy.transport.as_str(), policy.media_encryption.as_str()), ("tls", "sdes"));
-        assert!(AppState::validate(&policy).is_ok());
+        assert!(Services::validate(&policy).is_ok());
     }
     #[test]
     fn custom_buttons_are_checked_and_resolved() {
@@ -3039,16 +2247,16 @@ mod tests {
         let with = |buttons: Vec<CustomButton>| Settings { buttons, ..Settings::default() };
         // The pickup is checked like a number; the window itself falls back to the number.
         let pickup = CustomButton { pickup: "*8701".into(), ..button("dial", "701", "") };
-        assert!(AppState::validate(&with(vec![pickup])).is_ok());
-        assert!(AppState::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
+        assert!(Services::validate(&with(vec![pickup])).is_ok());
+        assert!(Services::validate(&with(vec![CustomButton { pickup: "70 1".into(), ..button("dial", "701", "") }])).is_err());
         // A voicemail button names the number that plays the messages.
-        assert!(AppState::validate(&with(vec![button("mwi", "*97", "")])).is_ok());
-        assert!(AppState::validate(&with(vec![button("mwi", "", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("mwi", "*97", "")])).is_ok());
+        assert!(Services::validate(&with(vec![button("mwi", "", "")])).is_err());
         // A do-not-disturb switch names nothing.
-        assert!(AppState::validate(&with(vec![button("dnd", "", "")])).is_ok());
-        assert!(AppState::validate(&with(vec![button("dnd", "701", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("dnd", "", "")])).is_ok());
+        assert!(Services::validate(&with(vec![button("dnd", "701", "")])).is_err());
         let ok = with(vec![button("park", "701", "*701"), button("dial", "1002", ""), button("transfer", "9001", "")]);
-        assert!(AppState::validate(&ok).is_ok());
+        assert!(Services::validate(&ok).is_ok());
         assert_eq!(ok.watched_numbers(), vec!["701", "1002"]);
         assert_eq!(ok.buttons[0].transfer_target(), Some("*701"));
         assert_eq!(ok.buttons[1].transfer_target(), None);
@@ -3057,49 +2265,49 @@ mod tests {
         // What is refused: a kind that is not one of the three, a title too
         // long, a number outside the SIP user alphabet, and two watchers of
         // one number. An unused button may leave its number empty.
-        assert!(AppState::validate(&with(vec![button("hold", "701", "")])).is_err());
-        assert!(AppState::validate(&with(vec![CustomButton { title: "x".repeat(41), ..button("dial", "1", "") }])).is_err());
-        assert!(AppState::validate(&with(vec![button("dial", "70 1", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("dial", "", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("dial", "701", ""), button("park", "701", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("", "", "")])).is_ok());
+        assert!(Services::validate(&with(vec![button("hold", "701", "")])).is_err());
+        assert!(Services::validate(&with(vec![CustomButton { title: "x".repeat(41), ..button("dial", "1", "") }])).is_err());
+        assert!(Services::validate(&with(vec![button("dial", "70 1", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("dial", "", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("dial", "701", ""), button("park", "701", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("", "", "")])).is_ok());
         // A full SIP URI is accepted for either address, with or without the
         // angle brackets a Refer-To header would carry. It is matched bare and
         // sent as it was written.
         let odd = with(vec![button("park", "61", "<sip:61@127.0.0.1>"), button("dial", " sip:sales@pbx.example ", "")]);
-        assert!(AppState::validate(&odd).is_ok());
+        assert!(Services::validate(&odd).is_ok());
         assert_eq!(odd.buttons[0].transfer_target(), Some("sip:61@127.0.0.1"));
         assert_eq!(odd.buttons[0].transfer_text(), Some("<sip:61@127.0.0.1>"));
         assert_eq!(button("park", "701", "").transfer_text(), Some("701"));
         assert_eq!(odd.buttons[0].dial_target(), Some("61"));
         assert_eq!(odd.watched_numbers(), vec!["61", "sip:sales@pbx.example"]);
-        assert!(AppState::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());
         // A dial without BLF is not watched, so its number may be written as the
         // dial box takes it: RFC 3966 separators, a leading +, a tel: scheme.
         // Letters are still no number, and an empty one is refused like any other.
         let speed = with(vec![button("speed", "06-1234-5678", ""), button("dial", "1002", "")]);
-        assert!(AppState::validate(&speed).is_ok());
+        assert!(Services::validate(&speed).is_ok());
         assert_eq!(speed.watched_numbers(), vec!["1002"]);
         assert_eq!(speed.buttons[0].transfer_target(), None);
         assert_eq!(speed.buttons[0].dial_target(), None);
-        assert!(AppState::validate(&with(vec![button("speed", "tel:+81-6-1234-5678", "")])).is_ok());
-        assert!(AppState::validate(&with(vec![button("speed", "<sip:sales@pbx.example>", "")])).is_ok());
-        assert!(AppState::validate(&with(vec![button("speed", "sales", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("speed", "", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("speed", "tel:+81-6-1234-5678", "")])).is_ok());
+        assert!(Services::validate(&with(vec![button("speed", "<sip:sales@pbx.example>", "")])).is_ok());
+        assert!(Services::validate(&with(vec![button("speed", "sales", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("speed", "", "")])).is_err());
         // A link button holds a web address and nothing the engine would dial.
         let page = with(vec![button("open", " https://pbx.example/extensions ", "")]);
-        assert!(AppState::validate(&page).is_ok());
+        assert!(Services::validate(&page).is_ok());
         assert_eq!(page.buttons[0].link_target(), Some("https://pbx.example/extensions"));
         assert_eq!(page.buttons[0].dial_target(), None);
         assert_eq!(page.buttons[0].transfer_target(), None);
-        assert!(AppState::validate(&with(vec![button("open", "ftp://pbx.example/", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("open", "https://pbx.example/a b", "")])).is_err());
-        assert!(AppState::validate(&with(vec![button("dial", "https://pbx.example/", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("open", "ftp://pbx.example/", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("open", "https://pbx.example/a b", "")])).is_err());
+        assert!(Services::validate(&with(vec![button("dial", "https://pbx.example/", "")])).is_err());
         // The tray delay is -1 (never) or up to an hour.
-        assert!(AppState::validate(&Settings { tray_after_call: 0, ..Settings::default() }).is_ok());
-        assert!(AppState::validate(&Settings { tray_after_call: -2, ..Settings::default() }).is_err());
-        assert!(AppState::validate(&Settings { tray_after_call: 3601, ..Settings::default() }).is_err());
-        assert!(AppState::validate(&with(vec![button("transfer", &format!("sip:{}@pbx", "6".repeat(200)), "")])).is_err());
+        assert!(Services::validate(&Settings { tray_after_call: 0, ..Settings::default() }).is_ok());
+        assert!(Services::validate(&Settings { tray_after_call: -2, ..Settings::default() }).is_err());
+        assert!(Services::validate(&Settings { tray_after_call: 3601, ..Settings::default() }).is_err());
+        assert!(Services::validate(&with(vec![button("transfer", &format!("sip:{}@pbx", "6".repeat(200)), "")])).is_err());
         // The policy values round-trip through their registry names.
         let mut read_back = Settings::default();
         let stored: std::collections::HashMap<String, String> = ok.policy_values().into_iter().collect();
@@ -3118,7 +2326,7 @@ mod tests {
     }
     #[test]
     fn logs_move_by_sequence_and_reset_when_lines_are_dropped() {
-        let app = AppState::new();
+        let app = Services::open().0;
         app.log(LOG_APP, "one".into());
         app.log(LOG_APP, "two".into());
         let page = app.read_logs(0);
@@ -3146,11 +2354,11 @@ mod tests {
         let page = app.read_logs(1);
         assert_eq!(page.entries.len(), LOG_LIMIT);
         assert!(page.from > 1, "the window is told which lines it lost");
-        assert_eq!(app.snapshot().log_sequence, LOG_LIMIT as u64 + 2);
+        assert_eq!(app.logs.lock().unwrap().sequence, LOG_LIMIT as u64 + 2);
     }
     #[test]
     fn ui_and_panic_lines_are_labelled_and_kept_readable() {
-        let app = AppState::new();
+        let app = Services::open().0;
         app.log_ui("failed\u{7}\nwith a control char".into());
         app.log_panic("panic at 'boom'\nsecond line".into());
         let entries = app.read_logs(0).entries;
@@ -3164,32 +2372,20 @@ mod tests {
         assert_eq!(app.read_logs(0).entries.len(), 2);
     }
     #[test]
-    fn polling_errors_clear_themselves_but_leave_other_errors() {
-        let app = AppState::new();
-        app.report_error(message("TEMPORARY"));
-        assert_eq!(app.snapshot().error, "TEMPORARY");
-        app.clear_polling_error();
-        assert_eq!(app.snapshot().error, "");
-        app.report_error(message("TEMPORARY"));
-        app.view.lock().unwrap().error = message("AUDIO_DEVICE_INIT_FAILED");
-        app.clear_polling_error();
-        assert_eq!(app.snapshot().error, "AUDIO_DEVICE_INIT_FAILED");
-    }
-    #[test]
     fn codecs_are_offered_in_the_chosen_order_and_all_by_default() {
         let mut s = Settings::default();
         assert_eq!(s.codec_list(), ["opus", "G722", "PCMU", "PCMA"]);
         s.codecs = "PCMU, opus".into();
         assert_eq!(s.codec_list(), ["PCMU", "opus"]);
-        assert!(AppState::validate(&s).is_ok());
+        assert!(Services::validate(&s).is_ok());
         s.codecs = "PCMU,PCMU".into();
-        assert!(AppState::validate(&s).is_err(), "a codec named twice is refused");
+        assert!(Services::validate(&s).is_err(), "a codec named twice is refused");
         s.codecs = "G729".into();
-        assert!(AppState::validate(&s).is_err(), "a codec the app does not have is refused");
+        assert!(Services::validate(&s).is_err(), "a codec the app does not have is refused");
     }
     #[test]
     fn a_chosen_sound_replaces_the_built_in_one() {
-        let app = AppState::new();
+        let app = Services::open().0;
         let dir = std::env::temp_dir().join("ksip-sound-test");
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("chosen.wav");
@@ -3221,14 +2417,6 @@ mod tests {
         assert!(app.replace_sound(&dir, "ring", "C:/no/such/file.wav").is_err());
         assert_eq!(std::fs::read(dir.join("ring.wav")).unwrap(), b"built-in");
         std::fs::remove_dir_all(&dir).ok();
-    }
-    #[test]
-    fn microphone_fallback_log_updates_visible_state() {
-        let app = AppState::new();
-        app.log(LOG_ENGINE, "ksip: microphone fallback active".into());
-        assert!(app.snapshot().microphone_fallback);
-        app.log(LOG_ENGINE, "ksip: microphone input recovered".into());
-        assert!(!app.snapshot().microphone_fallback);
     }
     #[test]
     fn caller_label_puts_the_name_before_the_number() {
@@ -3505,13 +2693,5 @@ mod tests {
         assert_eq!(Mwi::parse("messages-waiting: YES\n"), Mwi { waiting: true, new: 0, old: 0 });
     }
 
-    #[test]
-    fn the_engine_colours_are_left_out_of_the_log() {
-        assert_eq!(
-            without_colour("\x1b[m\x1b[31mctrl_tcp: error processing command\x1b[;m"),
-            "ctrl_tcp: error processing command"
-        );
-        assert_eq!(without_colour("plain [text]"), "plain [text]");
-    }
 
 }

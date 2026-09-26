@@ -2,10 +2,13 @@
 use crate::message::message_with;
 mod audio;
 mod engine;
+mod engine_link;
 mod licenses;
 mod message;
 mod mp3;
 mod native;
+mod phone_actor;
+mod phone_message;
 mod phone_state;
 mod protocol;
 mod shortcuts;
@@ -477,11 +480,6 @@ fn main() {
                     // The window stops asking for the microphone level while it
                     // is in the tray, which lets the microphone close.
                     state.set_window_visible(is_visible(&handle));
-                    match state.sync_phone() {
-                        Err(e) => state.report_error(e),
-                        Ok(()) => state.clear_polling_error(),
-                    }
-                    state.follow_network();
                     let snapshot = state.snapshot();
                     let incoming: std::collections::HashSet<String> = snapshot
                         .calls
