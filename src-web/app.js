@@ -622,8 +622,11 @@ async function onDial({target,confirm,refused}){
   while(state.registration!=='REGISTER_OK'&&Date.now()<end)await new Promise(done=>setTimeout(done,250));
   dial(target);
 }
-window.__TAURI__.event.listen('ksip-link',event=>{onLink(String(event.payload||''));});
-window.__TAURI__.event.listen('ksip-dial',event=>{onDial(event.payload||{});});
+// The listeners are in place; links held for the page since it started may come now.
+Promise.all([
+  window.__TAURI__.event.listen('ksip-link',event=>{onLink(String(event.payload||''));}),
+  window.__TAURI__.event.listen('ksip-dial',event=>{onDial(event.payload||{});}),
+]).then(()=>invoke('ui_ready')).catch(e=>logUi('ui ready',e));
 async function poll(){
   try{
     if(!busy){update(await invoke('snapshot'));await syncLogs();await syncHistory();}

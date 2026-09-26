@@ -21,6 +21,27 @@ use tauri::{Emitter, Manager, State};
 fn snapshot(state: State<AppState>) -> engine::Snapshot {
     state.snapshot()
 }
+/// Link events for the page, held until it says it listens. Windows starts
+/// the app for a link before the page has loaded, and an event emitted into
+/// a page without listeners reaches nobody; `ui_ready` lets them go, in order.
+struct LinkQueue(std::sync::Mutex<Option<Vec<(&'static str, serde_json::Value)>>>);
+fn emit_link(app: &tauri::AppHandle, event: &'static str, payload: serde_json::Value) {
+    if let Some(queue) = app.try_state::<LinkQueue>() {
+        let mut held = queue.0.lock().unwrap();
+        if let Some(pending) = held.as_mut() {
+            pending.push((event, payload));
+            return;
+        }
+    }
+    let _ = app.emit(event, payload);
+}
+#[tauri::command]
+fn ui_ready(app: tauri::AppHandle) {
+    let pending = app.try_state::<LinkQueue>().and_then(|queue| queue.0.lock().unwrap().take());
+    for (event, payload) in pending.unwrap_or_default() {
+        let _ = app.emit(event, payload);
+    }
+}
 #[tauri::command]
 async fn reconnect(state: State<'_, AppState>) -> Result<(), String> {
     let state = state.inner().clone();
@@ -332,6 +353,7 @@ fn main() {
             snapshot,
             reconnect,
             save_configuration,
+            ui_ready,
             action,
             open_recordings,
             open_recording,
@@ -400,6 +422,7 @@ fn main() {
                 state.log_app(e);
             }
             fit_window(app.handle(), &state.snapshot().settings);
+            app.manage(LinkQueue(std::sync::Mutex::new(Some(Vec::new()))));
             let served = app.handle().clone();
             protocol::serve(move |link| {
                 let state = served.state::<AppState>();
@@ -407,12 +430,8 @@ fn main() {
                 match protocol::parse(&link) {
                     Ok(protocol::Link::ShowWindow) => show(&served),
                     Ok(protocol::Link::Quit) => served.exit(0),
-                    Ok(protocol::Link::Answer) => {
-                        let _ = served.emit("ksip-link", "ANSWER");
-                    }
-                    Ok(protocol::Link::Hangup) => {
-                        let _ = served.emit("ksip-link", "HANGUP");
-                    }
+                    Ok(protocol::Link::Answer) => emit_link(&served, "ksip-link", serde_json::json!("ANSWER")),
+                    Ok(protocol::Link::Hangup) => emit_link(&served, "ksip-link", serde_json::json!("HANGUP")),
                     Ok(protocol::Link::Dial(text)) => match engine::dial_target(&text) {
                         Ok(target) => {
                             // Dialling asks first unless that was turned off, and
@@ -424,14 +443,14 @@ fn main() {
                             if confirm {
                                 show(&served);
                             }
-                            let _ = served.emit("ksip-dial", serde_json::json!({"target": target, "confirm": confirm}));
+                            emit_link(&served, "ksip-dial", serde_json::json!({"target": target, "confirm": confirm}));
                         }
                         Err(e) => {
                             // What was refused goes into the dial box beside
                             // the error, so that the person sees what came.
                             show(&served);
                             state.show_error(e);
-                            let _ = served.emit("ksip-dial", serde_json::json!({"target": text, "refused": true}));
+                            emit_link(&served, "ksip-dial", serde_json::json!({"target": text, "refused": true}));
                         }
                     },
                     Err(e) => {

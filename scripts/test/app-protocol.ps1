@@ -137,6 +137,23 @@ try {
     if(Test-Path 'HKCU:\Software\Classes\ksip-test'){throw 'The registration is still there'}
     'PASS: 設定をOFFにすると登録を消す'
 
+    # A link from a cold start: the link process starts the app and hands the
+    # link over before the page has loaded. The dial must still happen once the
+    # page listens, without asking (the confirmation is off here).
+    Stop-KsipApp $app; Stop-KsipEngine; $app=$null
+    Set-Setting 'browser_dial_confirm' $false
+    $starter=Start-Process $exe -ArgumentList "ksip:$playback" -PassThru -WindowStyle Hidden
+    $end=[DateTime]::UtcNow.AddSeconds(30)
+    while(!$app -and [DateTime]::UtcNow -lt $end){
+        $app=Get-Process ksip -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq [IO.Path]::GetFullPath($exe) -and $_.Id -ne $starter.Id -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+        if(!$app){Start-Sleep -Milliseconds 200}
+    }
+    if(!$app){throw 'the link did not start the app'}
+    Set-KsipWindow $app "$root/temp/build/ui-failure.txt"
+    Wait-Class 'line-1' 'call-established' 40
+    'PASS: 起動前に届いたリンクでも、窓の準備ができてから発信する'
+    Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
+
     Send-Link 'APP_QUIT'
     if(!$app.WaitForExit(15000)){throw 'APP_QUIT did not close the app'}
     $app=$null

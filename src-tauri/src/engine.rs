@@ -2284,7 +2284,6 @@ impl AppState {
                     }
                 }
             }
-            let old = self.store.read_account()?;
             // An empty extension registers under the authentication user.
             if account.extension.trim().is_empty() {
                 account.extension = account.auth_user.trim().into();
@@ -2293,19 +2292,7 @@ impl AppState {
                 account.password = self.password_for(&account)?;
             }
             account.validate()?;
-            self.store.write_account(&account)?;
-            if let Err(e) = self.save_settings(&settings) {
-                let rollback = if let Some(previous) = old {
-                    self.store.write_account(&previous)
-                } else {
-                    self.store.delete_account()
-                };
-                return Err(if rollback.is_ok() {
-                    e
-                } else {
-                    message_with("ACCOUNT_ROLLBACK_FAILED", [e])
-                });
-            }
+            self.persist_configuration(&settings, &account)?;
             let mut v = self.view.lock().unwrap();
             v.settings = settings;
             v.account = account.public();
@@ -2314,7 +2301,35 @@ impl AppState {
             let mut v = self.view.lock().unwrap();
             v.error.clear();
         }
-        self.connect()
+        // Saved. Whether the engine then comes up on the new settings is a
+        // separate matter, told in the window's own error line, so that the
+        // dialog can close on what did succeed.
+        if let Err(e) = self.connect() {
+            self.report_error(e);
+        }
+        Ok(())
+    }
+    /// Writes the account and the settings, or leaves the store as it was.
+    /// Both are several registry values and a credential written one by one,
+    /// so a failure part way through would leave old and new mixed; the copies
+    /// read first are then written back, every one of them, and only when
+    /// that fails too is the person told to save again.
+    fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
+        let old_account = self.store.read_account()?;
+        let old_settings = self.settings()?;
+        let written = self
+            .store
+            .write_account(account)
+            .and_then(|()| self.save_settings(settings));
+        if let Err(e) = written {
+            let restored = match &old_account {
+                Some(previous) => self.store.write_account(previous),
+                None => self.store.delete_account(),
+            }
+            .and_then(|()| self.save_settings(&old_settings));
+            return Err(if restored.is_ok() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) });
+        }
+        Ok(())
     }
     fn request(&self, command: &str, params: &str) -> Result<String, String> {
         let token = self.serial.fetch_add(1, Ordering::Relaxed).to_string();
@@ -2829,6 +2844,42 @@ mod tests {
             explorer_path(std::path::Path::new("\\\\?\\UNC\\server\\share/recordings")),
             "\\\\server\\share\\recordings"
         );
+    }
+    #[test]
+    fn a_save_that_fails_part_way_leaves_the_store_as_it_was() {
+        let suffix = format!("test-rollback-{}", std::process::id());
+        let mut app = AppState::new();
+        app.store = Store {
+            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
+            target: format!("KSIP/Test/{suffix}"),
+        };
+        let account = |server: &str| Account {
+            server: server.into(),
+            port: 5060,
+            extension: "1001".into(),
+            auth_user: "1001".into(),
+            password: "local-test-only".into(),
+        };
+        let settings = |codecs: &str| Settings { codecs: codecs.into(), ..Settings::default() };
+        let result = (|| -> Result<(), String> {
+            app.persist_configuration(&settings("opus"), &account("192.0.2.10"))?;
+            // The codecs are a policy value, written after the account and the
+            // document: failing there is the mixed state the rollback is for.
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&settings("PCMU"), &account("192.0.2.20"));
+            crate::storage::fail_next_write_of("");
+            assert!(failed.is_err(), "the injected failure must surface");
+            let kept = app.store.read_account()?.expect("the account is still there");
+            assert_eq!(kept.server, "192.0.2.10", "the old server is back");
+            assert_eq!(app.settings()?.codecs, "opus", "the old codecs are back");
+            // And with nothing in the way, the new values land whole.
+            app.persist_configuration(&settings("PCMU"), &account("192.0.2.20"))?;
+            assert_eq!(app.store.read_account()?.expect("account").server, "192.0.2.20");
+            assert_eq!(app.settings()?.codecs, "PCMU");
+            Ok(())
+        })();
+        app.store.cleanup_test();
+        result.unwrap();
     }
     #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {

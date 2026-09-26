@@ -89,6 +89,18 @@ pub struct Store {
     pub key: String,
     pub target: String,
 }
+#[cfg(test)]
+thread_local! {
+    /// A registry value name whose write is made to fail, for the tests of
+    /// what a save does when it cannot finish. Empty: nothing fails.
+    static FAIL_WRITE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+/// Makes the next writes of this registry value fail on this thread; an
+/// empty name lifts it. Test builds only.
+#[cfg(test)]
+pub fn fail_next_write_of(name: &str) {
+    FAIL_WRITE.with(|fail| *fail.borrow_mut() = (!name.is_empty()).then(|| name.to_string()));
+}
 pub fn read_wide(value: *const u16) -> String {
     if value.is_null() {
         return String::new();
@@ -142,6 +154,10 @@ impl Store {
             .unwrap_or_default()
     }
     pub fn write_text(&self, name: &str, value: &str) -> Result<(), String> {
+        #[cfg(test)]
+        if FAIL_WRITE.with(|fail| fail.borrow().as_deref() == Some(name)) {
+            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
+        }
         let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
             .create_subkey(&self.key)
             .map_err(|e| e.to_string())?;
