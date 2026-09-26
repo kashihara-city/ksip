@@ -37,6 +37,7 @@ try {
     # anchor. That only registers when the lab's authority is installed there,
     # which lab.json states for each PBX.
     $trusted=(Get-KsipLab).features.windows_trust
+    $storeResult='skipped'
     if($null -eq $trusted -or $trusted){
         Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null
         (Value-Id 'ca_file').SetValue('')
@@ -51,10 +52,12 @@ try {
         if(!(Test-Path (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/windows-trust.pem'))){throw 'windows-trust.pem was not written'}
         Wait-Text 'transport-label' '^TLS$' | Out-Null
         "PASS: 認証局を指定しなくてもWindowsの証明書ストアで検証して登録した"
+        $storeResult=$true
     } else {
         'NOTE: この PBX の証明書は Windows の証明書ストアにつながらないので、認証局を指定しない登録は確かめない（features.windows_trust=false）'
     }
-    @{version=$version;transport='tls';verifiedCertificate=$true;mediaEncrypted=$true;windowsStoreVerified=$true} | ConvertTo-Json |
+    # The report says what was checked and what was skipped, not just "true".
+    @{version=$version;transport='tls';verifiedCertificate=$true;mediaEncrypted=$true;windowsStoreVerified=$storeResult} | ConvertTo-Json |
         Set-Content -Encoding utf8 "$root/temp/reports/app-tls-v$version.json"
     'PASS: real KSIP over SIP/TLS with a verified certificate and SRTP media'
 } finally {

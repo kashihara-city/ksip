@@ -209,16 +209,17 @@ fn serve_named(name: &str, deliver: impl Fn(String) + Send + 'static) {
     });
 }
 
-/// Registers or removes the `ksip:` protocol for this user. The command points
-/// at the running executable, so a folder that has been moved fixes itself.
-pub fn register(enabled: bool) -> Result<(), String> {
+/// Registers or removes a URL protocol (`ksip`, or a test profile's own
+/// `ksip-test`) for this user. The command points at the running executable,
+/// so a folder that has been moved fixes itself.
+pub fn register(enabled: bool, scheme: &str) -> Result<(), String> {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS};
     use winreg::RegKey;
     let classes = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags(r"Software\Classes", KEY_ALL_ACCESS)
         .map_err(|e| e.to_string())?;
     if !enabled {
-        return match classes.delete_subkey_all("ksip") {
+        return match classes.delete_subkey_all(scheme) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -226,7 +227,7 @@ pub fn register(enabled: bool) -> Result<(), String> {
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe = exe.to_string_lossy().to_string();
-    let (protocol, _) = classes.create_subkey("ksip").map_err(|e| e.to_string())?;
+    let (protocol, _) = classes.create_subkey(scheme).map_err(|e| e.to_string())?;
     protocol
         .set_value("", &"URL:KSIP Protocol".to_string())
         .map_err(|e| e.to_string())?;

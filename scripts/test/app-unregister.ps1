@@ -48,6 +48,13 @@ try {
     Wait-Text 'registration' '着信しません' | Out-Null
     'PASS: 解除中はサーバーと通信方式を出さない'
 
+    # An automatic reason to restart the engine (here: the devices are read
+    # again) does not undo what the person chose.
+    Click-Id 'refresh-devices'
+    Start-Sleep -Seconds 4
+    if(!(Test-Class 'registration' 'reg-unregistered')){throw 'A device refresh registered the phone again'}
+    'PASS: 機器の再読込でも勝手に再登録しない'
+
     # A call placed while unregistered never reaches the window. The caller
     # itself may still be answered, by the PBX's voicemail, so its result is
     # not looked at here.

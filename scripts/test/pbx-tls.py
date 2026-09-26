@@ -75,15 +75,21 @@ def main():
     bad=ROOT/'temp/build/wrong-ca.pem'
     bad.parent.mkdir(parents=True,exist_ok=True)
     bad.write_bytes((ROOT/lab()['server_certificate']).read_bytes())
+    # The phone gives up when no REGISTER_OK comes; that alone could also mean
+    # the engine did not start or the server was not reached. The engine's log
+    # has to show the connection made and the certificate turned down.
     rejected=None
     try:
         rejected=Phone('tls-bad',strict,18574,19000,transport='TLS',mediaenc='srtp-mand',ca_file=str(bad))
-        assert 'REGISTER_OK' not in rejected.log_text(), '誤ったCAでも登録できてしまいました'
     except RuntimeError:
         pass
     finally:
         if rejected:rejected.close()
-    print('PASS: 認証局が違う証明書は拒否される',flush=True)
+    text=(ROOT/'temp/build/ksip-integration/tls-bad/engine.log').read_text(encoding='utf-8',errors='replace')
+    assert 'REGISTER_OK' not in text, '誤ったCAでも登録できてしまいました'
+    assert 'tls: connect' in text, 'TLS の接続に至っていません（サーバーに届いていないか、エンジンが起動していません）'
+    assert 'certificate verify failed' in text, '証明書の検証で断られた形跡がありません'
+    print('PASS: 認証局が違う証明書は拒否される（検証失敗の記録あり）',flush=True)
     report['rejects_wrong_ca']=True
     (ROOT/f'temp/reports/pbx-tls-{PBX}-v{version()}.json').write_text(json.dumps(report,indent=2)+'\n')
     print('PASS: SIP over TLS with a verified certificate, SRTP required, and DTLS media',flush=True)

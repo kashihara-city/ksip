@@ -29,7 +29,36 @@ def tracked():
     return [line for line in listing.splitlines() if line]
 
 
+def findings(line):
+    """What in one line looks like a secret, minus what an allowed value covers.
+
+    The allow list is matched by position, not by line: a permitted example
+    address or a dependency hash on the same line as a real address does not
+    hide the real one."""
+    allowed = [match.span() for pattern in ALLOWED for match in pattern.finditer(line)]
+    found = []
+    for reason, pattern in PATTERNS:
+        for match in pattern.finditer(line):
+            if any(start <= match.start() and match.end() <= end for start, end in allowed):
+                continue
+            found.append((reason, match.group(0)))
+    return found
+
+
+def selftest():
+    """The scanner on made-up lines: an allowed value beside a forbidden one hides nothing."""
+    assert findings("server = 192.0.2.10") == []
+    assert findings('"sha256": "' + "ab" * 32 + '"') == []
+    assert [reason for reason, _ in findings("192.0.2.10 and 10.1.2.3 on one line")] == ["私有IPアドレス"]
+    assert [reason for reason, _ in findings('"sha256": "' + "ab" * 32 + '" host pbx.intra')] == ["社内ホスト名"]
+    assert findings("loopback 127.0.0.1 only") == []
+    print("self-test: allowed values do not hide a neighbour")
+
+
 def main():
+    if "--self-test" in sys.argv:
+        selftest()
+        return
     problems = []
     for name in tracked():
         if name in SKIP or pathlib.Path(name).suffix.lower() in BINARY:
@@ -39,11 +68,8 @@ def main():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for number, line in enumerate(text.splitlines(), 1):
-            for reason, pattern in PATTERNS:
-                for found in pattern.findall(line):
-                    if any(allowed.search(line) for allowed in ALLOWED):
-                        continue
-                    problems.append("%s:%d %s: %s" % (name, number, reason, found))
+            for reason, found in findings(line):
+                problems.append("%s:%d %s: %s" % (name, number, reason, found))
     if problems:
         print("\n".join(problems))
         raise SystemExit("公開してはいけない情報が追跡対象にあります: %d件" % len(problems))

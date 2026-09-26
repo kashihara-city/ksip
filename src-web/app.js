@@ -178,7 +178,16 @@ const buttonTitle=b=>b.title||defaultTitle(b.kind)||b.number;
 // A URI may be written between angle brackets; the engine reports it bare.
 const address=text=>String(text||'').trim().replace(/^<\s*/,'').replace(/\s*>$/,'');
 const watchState=number=>state.parking?.find(slot=>slot.number===address(number))?.state||'UNKNOWN';
+// One question at a time: a request that arrives while another is on screen
+// waits for that answer, so that one OK never answers two, and the text on
+// screen is always the request being decided.
+let asking=Promise.resolve(false);
 function ask(message){
+  const turn=()=>askNow(message);
+  asking=asking.then(turn,turn);
+  return asking;
+}
+function askNow(message){
   // The page's own confirm() is prefixed with the origin, which means nothing
   // to the person reading it, so the question is asked inside the window.
   return new Promise(resolve=>{
@@ -249,8 +258,20 @@ function renderHistory(){
   if(!history.length){const empty=document.createElement('div');empty.className='history-empty';empty.textContent=t(historyRows.length?'HISTORY_NO_MATCH':'HISTORY_EMPTY');panel.append(empty);return;}
   for(const item of history){const row=document.createElement('div');row.className='history-row';row.title=t('HISTORY_DIAL_HINT');row.addEventListener('dblclick',()=>dialHistory(item.peer));const direction=document.createElement('strong');direction.textContent=t(item.direction);const time=document.createElement('time');time.textContent=new Date(item.ended_at*1000).toLocaleString(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});const cell=document.createElement('div');cell.className='history-peer-cell';const peer=document.createElement('span');peer.className='history-peer';const number=historyNumber(item.peer);peer.textContent=number;if(item.name){const who=document.createElement('span');who.className='history-name';who.textContent=item.name;cell.append(who);}cell.append(peer);if(item.peer)cell.append(copyButton(number));if(item.recording)cell.append(playButton(item.recording),locationButton(item.recording));const meta=document.createElement('span');meta.className='history-meta'+(item.outcome&&item.outcome!=='HISTORY_ELSEWHERE'?' history-outcome':'');meta.textContent=item.outcome?t(item.outcome):durationText(item.duration||0);row.append(direction,time,cell,meta);panel.append(row);}
 }
+// A history row keeps the far end as the engine reported it: a SIP URI with
+// the host, port and parameters of that call. Redialling someone on the
+// account's own server dials the user part as a number, as the dial box
+// would; anyone elsewhere, or a user part that is a name rather than a
+// number, is dialled as the bare URI, so that the row and the call agree on
+// who is being called. The port and parameters belonged to the old call.
 function dialHistory(peer){
-  dial((peer||'').replace(/^sip:/i,'').split(/[;@]/)[0]);
+  const text=address(peer);
+  const match=/^(sips?):([^@;]+)(?:@([^;]+?))?(?::\d+)?(?:;.*)?$/i.exec(text);
+  if(!match){dial(text);return;}
+  const scheme=match[1].toLowerCase(),user=match[2],host=(match[3]||'').replace(/:\d+$/,'');
+  const own=!host||host.toLowerCase()===String(state.account.server||'').toLowerCase();
+  const number=/^\+?[0-9*#]+$/.test(user);
+  dial(own&&number?user:host?`${scheme}:${user}@${host}`:user);
 }
 // Every way of placing a call ends here: the dial box, a button, the history
 // and a link. The selected line is used while it is free, otherwise the free

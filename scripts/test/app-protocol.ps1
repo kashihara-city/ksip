@@ -125,14 +125,16 @@ try {
     Stop-KsipApp $app; Stop-KsipEngine
     $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
-    $command=(Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\ksip\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
+    # A test profile registers ksip-test:, never the real ksip: of this user.
+    $command=(Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\ksip-test\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
     if($command -notlike "*$([IO.Path]::GetFullPath($exe))*"){throw "The protocol command is $command"}
-    'PASS: 設定をONにするとksip:を登録する'
+    if((Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\ksip\shell\open\command' -ErrorAction SilentlyContinue).'(default)' -like "*$([IO.Path]::GetFullPath($exe))*"){throw 'The test build took over the real ksip: registration'}
+    'PASS: 設定をONにすると登録する（テストのプロファイルでは ksip-test:）'
     Set-Policy 'browser_integration' 'false'
     Stop-KsipApp $app; Stop-KsipEngine
     $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
-    if(Test-Path 'HKCU:\Software\Classes\ksip'){throw 'The registration is still there'}
+    if(Test-Path 'HKCU:\Software\Classes\ksip-test'){throw 'The registration is still there'}
     'PASS: 設定をOFFにすると登録を消す'
 
     Send-Link 'APP_QUIT'

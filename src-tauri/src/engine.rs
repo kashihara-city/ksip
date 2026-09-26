@@ -366,6 +366,12 @@ pub struct Snapshot {
     /// Do not disturb: incoming calls are refused as busy while this is on.
     #[serde(default)]
     pub dnd: bool,
+    /// The person asked to be unregistered. Automatic reconnects (a changed
+    /// address, a device that came back) leave the phone that way; only a
+    /// connect asked for, or a saved setting, registers again. Part of the
+    /// phone's state, so that the window can say so too.
+    #[serde(default)]
+    pub unregistered_by_choice: bool,
     pub recording_call: String,
     pub history_sequence: u64,
     pub parking: Vec<ParkingInfo>,
@@ -1154,6 +1160,7 @@ impl AppState {
                 registration: "UNCONFIGURED".into(),
                 recording_call: String::new(),
                 dnd: false,
+                unregistered_by_choice: false,
                 history_sequence: 0,
                 parking: vec![],
                 audio_processing_stats: None,
@@ -1441,7 +1448,9 @@ impl AppState {
                 }
             }
         };
-        if !taken {
+        // Restarting the engine would register again; someone who unregistered
+        // on purpose keeps the devices they have until they connect themselves.
+        if !taken && !self.snapshot().unregistered_by_choice {
             self.connect()?;
         }
         Ok(())
@@ -2168,7 +2177,10 @@ impl AppState {
         let Ok(settings) = self.settings() else {
             return;
         };
-        if let Err(e) = crate::protocol::register(settings.browser_integration) {
+        // A test profile registers a scheme of its own, so that a test never
+        // removes or redirects the registration the person's real KSIP has.
+        let scheme = if self.store.target.starts_with("KSIP/Test/") { "ksip-test" } else { "ksip" };
+        if let Err(e) = crate::protocol::register(settings.browser_integration, scheme) {
             self.log(LOG_APP, format!("ksip: browser integration {e}"));
         }
     }
@@ -2203,6 +2215,10 @@ impl AppState {
             return Err(message("APP_CLOSING"));
         }
         self.ensure_idle()?;
+        // A connect is asked for (the button, a saved setting) or follows an
+        // automatic reason that checked first; either way the phone is wanted
+        // registered from here on.
+        self.view.lock().unwrap().unregistered_by_choice = false;
         let mut account = self
             .store
             .read_account()?
@@ -2536,6 +2552,9 @@ impl AppState {
         if name == "dnd" {
             self.log(LOG_APP, if value == "on" { message("DND_ON") } else { message("DND_OFF") });
         }
+        if name == "unregister" {
+            self.view.lock().unwrap().unregistered_by_choice = true;
+        }
         if name == "dial" {
             self.lines
                 .lock()
@@ -2737,6 +2756,10 @@ impl AppState {
             Err(_) => return,
         };
         if settings.network_adapter.trim().is_empty() || !self.snapshot().running {
+            return;
+        }
+        // Unregistered on purpose: a new address changes nothing about that.
+        if self.snapshot().unregistered_by_choice {
             return;
         }
         let Ok(current) = crate::native::adapter_address(settings.network_adapter.trim()) else {
