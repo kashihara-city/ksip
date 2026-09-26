@@ -420,8 +420,10 @@ pub fn call_outcome(state: &str, incoming: bool, reason: &str, dnd: bool) -> Str
     let code: u16 = reason.split_whitespace().next().and_then(|c| c.parse().ok()).unwrap_or(0);
     match code {
         486 | 600 => message("HISTORY_BUSY"),
-        404 | 484 => message("HISTORY_NOT_FOUND"),
-        480 | 502 | 503 | 604 => message("HISTORY_UNAVAILABLE"),
+        // 604 says the number exists nowhere (RFC 3261), which is what a caller
+        // hears as "no such number", the same as 404; 3CX answers it for one.
+        404 | 484 | 604 => message("HISTORY_NOT_FOUND"),
+        480 | 502 | 503 => message("HISTORY_UNAVAILABLE"),
         403 | 603 => message("HISTORY_DECLINED"),
         408 => message("HISTORY_NO_ANSWER"),
         0 | 487 => message("HISTORY_CANCELLED"),
@@ -3214,6 +3216,7 @@ mod tests {
         assert_eq!(call_outcome("ESTABLISHED", false, "Connection reset", false), "");
         assert_eq!(call_outcome("OUTGOING", false, "486 Busy Here", false), message("HISTORY_BUSY"));
         assert_eq!(call_outcome("RINGING", false, "404 Not Found", false), message("HISTORY_NOT_FOUND"));
+        assert_eq!(call_outcome("OUTGOING", false, "604 Does Not Exist Anywhere", false), message("HISTORY_NOT_FOUND"));
         assert_eq!(call_outcome("OUTGOING", false, "480 Temporarily Unavailable", false), message("HISTORY_UNAVAILABLE"));
         assert_eq!(call_outcome("OUTGOING", false, "603 Decline", false), message("HISTORY_DECLINED"));
         assert_eq!(call_outcome("OUTGOING", false, "408 Request Timeout", false), message("HISTORY_NO_ANSWER"));
