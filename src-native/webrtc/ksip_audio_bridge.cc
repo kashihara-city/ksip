@@ -2,6 +2,7 @@
 #include "ksip_audio_bridge_internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "api/audio/audio_device.h"
@@ -308,16 +310,24 @@ struct ksip_audio final : public webrtc::AudioTransport {
       return -1;
     }
     frames_out = ksip_audio_internal::InterleavedSamples(frames, channels);
-    ksip_audio_render_cb callback;
-    void *arg;
-    {
-      std::lock_guard<std::mutex> lock(callback_mutex);
-      callback = render_callback;
-      arg = render_arg;
-    }
     std::vector<int16_t> mono48(kFrames10Ms, 0);
-    const bool callback_error =
-        callback && callback(arg, mono48.data(), mono48.size());
+    bool callback_error = false;
+    {
+      // The in-flight lock comes first, then the callback is read: a detach
+      // that cleared it before this point is not seen with a stale argument,
+      // and one that clears it after waits for this call to end.
+      std::lock_guard<std::mutex> in_flight(render_call_mutex);
+      render_call_thread.store(std::this_thread::get_id());
+      ksip_audio_render_cb callback;
+      void *arg;
+      {
+        std::lock_guard<std::mutex> lock(callback_mutex);
+        callback = render_callback;
+        arg = render_arg;
+      }
+      callback_error = callback && callback(arg, mono48.data(), mono48.size());
+      render_call_thread.store(std::thread::id{});
+    }
     if (callback_error)
       std::fill(mono48.begin(), mono48.end(), 0);
 
@@ -366,15 +376,20 @@ struct ksip_audio final : public webrtc::AudioTransport {
         rate, static_cast<uint32_t>(channels));
     if (process_result != webrtc::AudioProcessing::kNoError)
       return process_result;
-    ksip_audio_capture_cb callback;
-    void *arg;
     {
-      std::lock_guard<std::mutex> lock(callback_mutex);
-      callback = capture_callback;
-      arg = capture_arg;
+      std::lock_guard<std::mutex> in_flight(capture_call_mutex);
+      capture_call_thread.store(std::this_thread::get_id());
+      ksip_audio_capture_cb callback;
+      void *arg;
+      {
+        std::lock_guard<std::mutex> lock(callback_mutex);
+        callback = capture_callback;
+        arg = capture_arg;
+      }
+      if (callback)
+        callback(arg, mono48.data(), mono48.size(), capture_time_ns.value_or(0));
+      capture_call_thread.store(std::thread::id{});
     }
-    if (callback)
-      callback(arg, mono48.data(), mono48.size(), capture_time_ns.value_or(0));
     return 0;
   }
 
@@ -387,6 +402,16 @@ struct ksip_audio final : public webrtc::AudioTransport {
   webrtc::scoped_refptr<webrtc::AudioProcessing> apm;
   webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
   std::mutex callback_mutex;
+  // Held by the audio thread for the whole of a callback. A detach clears
+  // the callback under callback_mutex and then takes this lock once, so that
+  // it returns only when no call with the old argument is still running; the
+  // caller is about to free what that argument points to. The thread id is
+  // kept so that a detach from inside the callback itself does not wait on
+  // its own lock.
+  std::mutex render_call_mutex;
+  std::mutex capture_call_mutex;
+  std::atomic<std::thread::id> render_call_thread{};
+  std::atomic<std::thread::id> capture_call_thread{};
   std::mutex device_mutex;
   std::string recording_name;
   std::string recording_id;
@@ -524,17 +549,33 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
   }
   return 0;
 }
+namespace {
+// Clears a callback and returns once no call of it is still running, so that
+// the caller may free the argument. Called from the callback's own thread it
+// only clears, since the call in flight is the caller itself.
+void ClearAndDrain(std::mutex &callback_mutex, std::mutex &call_mutex,
+    std::atomic<std::thread::id> &call_thread, auto &callback, void *&arg) {
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex);
+    callback = nullptr; arg = nullptr;
+  }
+  if (call_thread.load() == std::this_thread::get_id()) return;
+  std::lock_guard<std::mutex> in_flight(call_mutex);
+}
+}  // namespace
 extern "C" void ksip_audio_stop_playout(ksip_audio *audio) {
   if (!audio) return;
   if (audio->adm->Playing()) audio->adm->StopPlayout();
-  std::lock_guard<std::mutex> lock(audio->callback_mutex);
-  audio->render_callback = nullptr; audio->render_arg = nullptr;
+  ClearAndDrain(audio->callback_mutex, audio->render_call_mutex, audio->render_call_thread,
+                audio->render_callback, audio->render_arg);
 }
 extern "C" void ksip_audio_detach_playout(ksip_audio *audio) {
   if (!audio) return;
-  // Without a callback the stream renders silence until the next start.
-  std::lock_guard<std::mutex> lock(audio->callback_mutex);
-  audio->render_callback = nullptr; audio->render_arg = nullptr;
+  // Without a callback the stream renders silence until the next start. The
+  // caller frees the argument next, so a callback running right now is
+  // waited for before this returns.
+  ClearAndDrain(audio->callback_mutex, audio->render_call_mutex, audio->render_call_thread,
+                audio->render_callback, audio->render_arg);
 }
 extern "C" int ksip_audio_playout_running(ksip_audio *audio) {
   return audio && audio->adm->Playing();
@@ -577,14 +618,15 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
 extern "C" void ksip_audio_stop_recording(ksip_audio *audio) {
   if (!audio) return;
   if (audio->adm->Recording()) audio->adm->StopRecording();
-  std::lock_guard<std::mutex> lock(audio->callback_mutex);
-  audio->capture_callback = nullptr; audio->capture_arg = nullptr;
+  ClearAndDrain(audio->callback_mutex, audio->capture_call_mutex, audio->capture_call_thread,
+                audio->capture_callback, audio->capture_arg);
 }
 extern "C" void ksip_audio_detach_recording(ksip_audio *audio) {
   if (!audio) return;
   // Without a callback the captured frames are dropped until the next start.
-  std::lock_guard<std::mutex> lock(audio->callback_mutex);
-  audio->capture_callback = nullptr; audio->capture_arg = nullptr;
+  // As with the playout, the callback in flight is waited for.
+  ClearAndDrain(audio->callback_mutex, audio->capture_call_mutex, audio->capture_call_thread,
+                audio->capture_callback, audio->capture_arg);
 }
 extern "C" int ksip_audio_recording_running(ksip_audio *audio) {
   return audio && audio->adm->Recording();
