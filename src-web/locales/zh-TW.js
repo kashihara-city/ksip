@@ -315,7 +315,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SOUND_RINGBACK:'回鈴音',
       SETTINGS_SOUND_RINGBACK_FORMAT:'回鈴音請指定 48 kHz 單聲道的 WAV',
       SETTINGS_TITLE:'設定',
-      SETTINGS_TLS_HINT:'選擇 TLS 時連接埠通常是 5061。SDES 會把金鑰放在信令中，因此必須與 TLS 搭配才有意義。連線對象的憑證一律驗證：指定憑證時只信任該憑證授權單位，留空則使用 Windows 的「受信任的根憑證授權單位」。中繼憑證由連線對象提供，不作為信任起點。',
+      SETTINGS_TLS_HINT:'選擇 TLS 時連接埠通常是 5061。SDES 會把金鑰放在信令中，因此必須與 TLS 搭配才有意義。OSRTP 以未加密的設定檔提出同樣的金鑰，對方不回金鑰時就以明文通話（從明文過渡到加密期間使用；這種通話會以紅字顯示「未加密」）。連線對象的憑證一律驗證：指定憑證時只信任該憑證授權單位，留空則使用 Windows 的「受信任的根憑證授權單位」。中繼憑證由連線對象提供，不作為信任起點。',
       SETTINGS_TRANSPORT:'連線方式',
       SETTINGS_TRANSPORT_UDP:'UDP（未加密）',
       SETTINGS_TRAY_AFTER_CALL:'通話結束後回到系統匣',

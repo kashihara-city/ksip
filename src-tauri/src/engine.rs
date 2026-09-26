@@ -298,7 +298,12 @@ impl Settings {
     /// baresip's media encryption name, or None when calls stay in the clear.
     pub fn mediaenc(&self) -> Option<&str> {
         match self.media_encryption.as_str() {
-            "sdes" => Some("srtp"),
+            // RFC 8643 (OSRTP): the keys ride in RTP/AVP, and a peer that returns
+            // none gets a plain call. For the move from plain to encrypted.
+            "osrtp" => Some("srtp"),
+            // RFC 4568: the keys ride in RTP/SAVP, and a call that cannot be
+            // encrypted does not go through rather than falling back to plain RTP.
+            "sdes" => Some("srtp-mand"),
             "dtls" => Some("dtls_srtp"),
             _ => None,
         }
@@ -2171,8 +2176,9 @@ impl AppState {
             let _operation = self.operations.lock().unwrap();
             self.ensure_idle()?;
             Self::validate(&settings)?;
-            // SDES puts the keys in the signalling, so it needs TLS to mean anything.
-            if settings.mediaenc() == Some("srtp") && settings.sip_transport() != "TLS" {
+            // SDES puts the keys in the signalling, so it needs TLS to mean anything;
+            // RFC 8643 asks the same of OSRTP with SDES keys.
+            if matches!(settings.media_encryption.as_str(), "sdes" | "osrtp") && settings.sip_transport() != "TLS" {
                 return Err(message("SETTINGS_SDES_NEEDS_TLS"));
             }
             let ca = settings.ca_file.trim();

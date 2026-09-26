@@ -315,7 +315,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SOUND_RINGBACK:'Ringback',
       SETTINGS_SOUND_RINGBACK_FORMAT:'The ringback sound must be a 48 kHz mono WAV',
       SETTINGS_TITLE:'Settings',
-      SETTINGS_TLS_HINT:'With TLS the port is usually 5061. SDES carries its keys in the signalling, so it only means something together with TLS. The server certificate is always verified: against the chosen authority, or, when none is chosen, against the Windows trusted root authorities. Intermediate certificates come from the server and are not trust anchors.',
+      SETTINGS_TLS_HINT:'With TLS the port is usually 5061. SDES carries its keys in the signalling, so it only means something together with TLS. OSRTP offers the same keys on the unencrypted profile and talks in the clear when the peer returns none (for the move from plain to encrypted calls; such a call shows "unencrypted" in red). The server certificate is always verified: against the chosen authority, or, when none is chosen, against the Windows trusted root authorities. Intermediate certificates come from the server and are not trust anchors.',
       SETTINGS_TRANSPORT:'Transport',
       SETTINGS_TRANSPORT_UDP:'UDP (not encrypted)',
       SETTINGS_TRAY_AFTER_CALL:'Return to the tray after a call',

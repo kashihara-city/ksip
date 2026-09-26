@@ -315,7 +315,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SOUND_RINGBACK:'呼出音',
       SETTINGS_SOUND_RINGBACK_FORMAT:'呼出音は48 kHzモノラルのWAVを指定してください',
       SETTINGS_TITLE:'設定',
-      SETTINGS_TLS_HINT:'TLSを選ぶとポートは通常5061です。SDESは鍵を信号に載せるため、TLSと組み合わせないと意味がありません。接続先の証明書は常に検証します。証明書を指定するとその認証局だけを信頼し、空欄ならWindowsの「信頼されたルート証明機関」を使います。中間証明書は接続先が送るものを使い、信頼の起点にはしません。',
+      SETTINGS_TLS_HINT:'TLSを選ぶとポートは通常5061です。SDESは鍵を信号に載せるため、TLSと組み合わせないと意味がありません。OSRTPは同じ鍵を暗号化なしのプロファイルで提示し、相手が鍵を返さなければ平文で通話します（平文から暗号化へ移行する間の設定。平文になった通話は「暗号化なし」を赤で出します）。接続先の証明書は常に検証します。証明書を指定するとその認証局だけを信頼し、空欄ならWindowsの「信頼されたルート証明機関」を使います。中間証明書は接続先が送るものを使い、信頼の起点にはしません。',
       SETTINGS_TRANSPORT:'接続方式',
       SETTINGS_TRANSPORT_UDP:'UDP（暗号化なし）',
       SETTINGS_TRAY_AFTER_CALL:'通話が終わったらタスクトレイへ戻す',

@@ -138,7 +138,9 @@ const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)
 const NOISE_LEVEL_NAMES={low:'SETTINGS_NS_LOW',moderate:'SETTINGS_NS_MODERATE',high:'SETTINGS_NS_HIGH',very_high:'SETTINGS_NS_VERY_HIGH'};
 const count=value=>Number.isFinite(value)?value.toLocaleString(language):'—';
 const codecNames={opus:'Opus',G722:'G.722',PCMU:'G.711 μ-law',PCMA:'G.711 A-law'};
-const encryptionNames={srtp:'SRTP（SDES）',dtls_srtp:'SRTP（DTLS）'};
+const encryptionNames={'srtp-mand':'SRTP（SDES）',srtp:'SRTP（OSRTP）',dtls_srtp:'SRTP（DTLS）'};
+// OSRTP falls back to plain RTP by design; that is the one case the footer says in red.
+function fellBack(call){return !!(call&&call.codec&&!call.secure&&state.media_encryption==='srtp');}
 function codecName(reported){
   const [name,rate]=reported.split(' ');
   const hz=parseInt(rate,10);
@@ -312,7 +314,7 @@ function render(){
   const processing=state.settings,noiseOn=!!NOISE_LEVEL_NAMES[processing.noise_suppression],processingOn=!!processing.aec||!!processing.high_pass||noiseOn||!!processing.agc;
   $('processing-labels').textContent=['AEC '+(processing.aec?'ON':'OFF'),'HPF '+(processing.high_pass?'ON':'OFF'),'NS '+(noiseOn?t(NOISE_LEVEL_NAMES[processing.noise_suppression]):'OFF'),'AGC '+(processing.agc?'ON':'OFF')].join(' · ');
   // A codec and an encryption belong to a call, so outside one this stays empty.
-  $('codec-label').textContent=callSummary(current());
+  $('codec-label').textContent=callSummary(current());$('codec-label').classList.toggle('unencrypted',fellBack(current()));
   const metrics=state.audio_processing_stats;
   const showMetrics=processingOn&&!!state.aec_active&&state.calls.some(call=>call.state==='ESTABLISHED')&&!!metrics;
   $('aec-metrics').hidden=!showMetrics;
