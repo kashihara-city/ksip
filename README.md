@@ -73,12 +73,12 @@ SIPサーバーによっては、通話1から通話2への転送（SIPのREFER�
 
 先頭はローカル日時、続く `[ ]` はその行がどこから来たかを表します。4種類あります。
 
-| タグ     | 由来                                                             | 主な中身                                                                                                                                                 |
-| -------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `engine` | 音声エンジンの標準出力・標準エラーを本体が1行ずつ取り込んだもの  | baresip本体のメッセージ、SIPメッセージ全文（`ksip sip >` `ksip sip <`）、音声デバイス（`wasapi/…`）、WebRTCの音声処理（`(…cc:行):`）、録音（`postlab:`） |
-| `event`  | 音声エンジンが制御チャネルで本体へ送る通知を、本体が整形したもの | `REGISTERING`、`REGISTER_OK`、`CALL_ESTABLISHED`、`CALL_CLOSED` など大文字で始まる行                                                                     |
+| タグ     | 由来                                                             | 主な中身                                                                                                                                                                                       |
+| -------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `engine` | 音声エンジンの標準出力・標準エラーを本体が1行ずつ取り込んだもの  | baresip本体のメッセージ、SIPメッセージ全文（`ksip sip >` `ksip sip <`）、音声デバイス（`wasapi/…`）、WebRTCの音声処理（`(…cc:行):`）、録音（`postlab:`）                                       |
+| `event`  | 音声エンジンが制御チャネルで本体へ送る通知を、本体が整形したもの | `REGISTERING`、`REGISTER_OK`、`CALL_ESTABLISHED`、`CALL_CLOSED` など大文字で始まる行                                                                                                           |
 | `app`    | 本体そのもの                                                     | 画面に出したエラーと同じ文言、音声エンジンに渡したマイク・スピーカー（`ksip: microphone …` `ksip: speaker …`）、終了指示から音声エンジンが終わるまでの時間、異常終了や制御接続の切断、パニック |
-| `ui`     | 画面（WebView）                                                  | 操作や定期取得の失敗、スクリプトエラー。同じ文言は1分に1回までにまとめます                                                                               |
+| `ui`     | 画面（WebView）                                                  | 操作や定期取得の失敗、スクリプトエラー。同じ文言は1分に1回までにまとめます                                                                                                                     |
 
 ## 設定画面で設定できること
 
@@ -187,24 +187,24 @@ ksip.exe ksip:ANSWER
 パスワード以外の設定はこちらです。
 値ごとのレジストリ値（いずれもREG_SZ）は次のとおりです。設定画面から保存したときも、この形で書き戻します。
 
-| 値名                  | 意味                                                                                                                                                    | 値が無いとき                |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `server`              | SIPサーバーのホスト名かIPアドレス。半角英数字と `.` `-` のみ、253文字以内                                                                               | `127.0.0.1`                 |
-| `port`                | SIPサーバーのポート。1〜65535                                                                                                                           | `5060`                      |
-| `extension`           | 内線番号。半角英数字と `_` `.` `+` `-` のみ、100文字以内                                                                                                | `auth_user` と同じ値を使う  |
-| `button_<n>_title`    | カスタムボタン n（1〜6。7〜30は拡張ボタン）のタイトル。40文字以内。空なら番号を出す（`dnd`・`mwi` は表示言語の「着信拒否」「留守番電話」）              | 番号を出す                  |
-| `button_<n>_kind`     | ボタン n の機能。`transfer`＝転送、`dial`＝ダイヤル（BLF付き）、`park`＝パーク保留（BLF付き）、`open`＝リンクを開く、`dnd`＝着信拒否、`mwi`＝留守番電話 | 空（ボタンを出さない）      |
-| `button_<n>_number`   | ボタン n の番号。数字と `*` `#`（先頭に `+` も可）で30文字以内、または `sip:` で始まるSIP URI。`open` では `http://` か `https://` のURL                | 空                          |
-| `button_<n>_transfer` | `park` のときだけ。番号が空きのときに通話中の相手を転送する先。空なら `button_<n>_number` へ転送                                                        | 番号と同じ                  |
-| `button_<n>_pickup`   | `dial` と `park` のとき。番号が使用中のときに発信する先（ダイヤル先。ピックアップ番号など）。空なら `button_<n>_number` へ発信                          | 番号と同じ                  |
-| `transport`           | SIPの信号に使う方式。`udp` か `tls`。設定画面で切り替えると、ポートが既定値のときだけ5060と5061を入れ替えます                                           | `udp`（暗号化しない）       |
-| `media_encryption`    | 音声の暗号化。`sdes`＝SRTP（鍵を信号に載せる）、`dtls`＝SRTP（鍵をメディア経路で交換）                                                                  | 暗号化しない                |
-| `codecs`              | 使う音声コーデックと順位。`opus`・`G722`・`PCMU`・`PCMA` を提示する順にカンマ区切りで並べる。書かないものは使わない。名前の重複と知らない名前は保存しない | 4つ全部をこの順で提示       |
-| `ca_file`             | 信頼する認証局の証明書（PEM）のパス。400文字以内                                                                                                        | Windowsの証明書ストアで検証 |
-| `browser_integration` | `ksip:` のリンクを受け付けるか。`true`・`1`・`yes`・`on` でON。ONのとき、起動時と設定保存時に `HKCU\Software\Classes\ksip` へ登録し、OFFにすると消す    | 受け付けない                |
+| 値名                  | 意味                                                                                                                                                                                                                                                                                                                                     | 値が無いとき                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `server`              | SIPサーバーのホスト名かIPアドレス。半角英数字と `.` `-` のみ、253文字以内                                                                                                                                                                                                                                                                | `127.0.0.1`                 |
+| `port`                | SIPサーバーのポート。1〜65535                                                                                                                                                                                                                                                                                                            | `5060`                      |
+| `extension`           | 内線番号。半角英数字と `_` `.` `+` `-` のみ、100文字以内                                                                                                                                                                                                                                                                                 | `auth_user` と同じ値を使う  |
+| `button_<n>_title`    | カスタムボタン n（1〜6。7〜30は拡張ボタン）のタイトル。40文字以内。空なら番号を出す（`dnd`・`mwi` は表示言語の「着信拒否」「留守番電話」）                                                                                                                                                                                               | 番号を出す                  |
+| `button_<n>_kind`     | ボタン n の機能。`transfer`＝転送、`dial`＝ダイヤル（BLF付き）、`park`＝パーク保留（BLF付き）、`open`＝リンクを開く、`dnd`＝着信拒否、`mwi`＝留守番電話                                                                                                                                                                                  | 空（ボタンを出さない）      |
+| `button_<n>_number`   | ボタン n の番号。数字と `*` `#`（先頭に `+` も可）で30文字以内、または `sip:` で始まるSIP URI。`open` では `http://` か `https://` のURL                                                                                                                                                                                                 | 空                          |
+| `button_<n>_transfer` | `park` のときだけ。番号が空きのときに通話中の相手を転送する先。空なら `button_<n>_number` へ転送                                                                                                                                                                                                                                         | 番号と同じ                  |
+| `button_<n>_pickup`   | `dial` と `park` のとき。番号が使用中のときに発信する先（ダイヤル先。ピックアップ番号など）。空なら `button_<n>_number` へ発信                                                                                                                                                                                                           | 番号と同じ                  |
+| `transport`           | SIPの信号に使う方式。`udp` か `tls`。設定画面で切り替えると、ポートが既定値のときだけ5060と5061を入れ替えます                                                                                                                                                                                                                            | `udp`（暗号化しない）       |
+| `media_encryption`    | 音声の暗号化。`sdes`＝SRTP必須（RFC 4568。鍵を信号に載せ、RTP/SAVPで提示する。暗号化できない相手とは通話しない）、`osrtp`＝SRTPを試す（RFC 8643。同じ鍵をRTP/AVPで提示し、相手が鍵を返さなければ平文で通話する。平文から暗号化へ移行する間の設定で、平文になった通話は「暗号化なし」を赤で出す）、`dtls`＝SRTP（鍵をメディア経路で交換） | 暗号化しない                |
+| `codecs`              | 使う音声コーデックと順位。`opus`・`G722`・`PCMU`・`PCMA` を提示する順にカンマ区切りで並べる。書かないものは使わない。名前の重複と知らない名前は保存しない                                                                                                                                                                                | 4つ全部をこの順で提示       |
+| `ca_file`             | 信頼する認証局の証明書（PEM）のパス。400文字以内                                                                                                                                                                                                                                                                                         | Windowsの証明書ストアで検証 |
+| `browser_integration` | `ksip:` のリンクを受け付けるか。`true`・`1`・`yes`・`on` でON。ONのとき、起動時と設定保存時に `HKCU\Software\Classes\ksip` へ登録し、OFFにすると消す                                                                                                                                                                                     | 受け付けない                |
 
 `ca_file` を指定する場合はそのファイルで、指定がない場合は、Windowsの「信頼されたルート証明機関」の証明書で検証します。Windows の信頼されていない証明書ストアや、CTL による用途制限は反映されません。期限切れの証明書と、エンジンの TLS ライブラリが読めない証明書は、検証に使用しません。
-`media_encryption` に `sdes` を選ぶ場合は `transport` を `tls` にしてください。SDESは鍵を信号に載せるため、信号が平文では意味がありません（保存時に拒否します）。
+`media_encryption` に `sdes` か `osrtp` を選ぶ場合は `transport` を `tls` にしてください。SDESは鍵を信号に載せるため、信号が平文では意味がありません（保存時に拒否します）。
 
 下の表の項目は、このキーの `Settings` 値（REG_SZ）にJSONオブジェクト1つとして入ります。
 **キーが無い場合と、空の値を保存した場合は同じ扱いです。** どちらも「値が無いとき」の欄のとおりに動くため、初回起動時にキーが無くても動きます。
@@ -234,7 +234,7 @@ ksip.exe ksip:ANSWER
 | `tray_after_call`      | 整数   | 通話が終わって通話1・通話2の両方が通話中でなくなってから、ウィンドウをタスクトレイへしまうまでの秒数。-1〜3600。途中で着信や発信があれば取りやめ | `-1`（しまわない）                                    |
 | `language`             | 文字列 | 画面の言語。`ja`・`en`・`zh-TW`                                                                                                                  | 空欄。Windowsの表示言語に合わせ、対応が無ければ日本語 |
 | `sound_ring`           | 文字列 | 着信音に使うWAVのパス。400文字以内                                                                                                               | 内蔵音を鳴らす                                        |
-| `sound_ringback`       | 文字列 | 呼出音に使うWAVのパス。48 kHzモノラルに限り、保存時に確認する                                                                                                                            | 内蔵音を鳴らす                                        |
+| `sound_ringback`       | 文字列 | 呼出音に使うWAVのパス。48 kHzモノラルに限り、保存時に確認する                                                                                    | 内蔵音を鳴らす                                        |
 | `sound_busy`           | 文字列 | 話中に使うWAVのパス                                                                                                                              | 内蔵音を鳴らす                                        |
 | `sound_notfound`       | 文字列 | 宛先なしに使うWAVのパス                                                                                                                          | 内蔵音を鳴らす                                        |
 | `sound_error`          | 文字列 | エラーに使うWAVのパス                                                                                                                            | 内蔵音を鳴らす                                        |
@@ -271,6 +271,8 @@ Windowsの通知は、アプリの識別子（AUMID）をたどって表示名�
 
 ## 開発に関する方針
 
+以下は利用者・管理者向けではなく、開発やテストに関する記述です。
+
 - ビルド手順は固定し、再現可能なビルドを目指します。（ネイティブは `scripts/build/native.ps1`、本体は `scripts/build/app.ps1`）
 - 依存は公式の取得元から取り、lockとハッシュで固定します。公開から7日未満の版は追加しません。更新したら `scripts/test/supply-chain.py` を通します。
 - `src-web/` はHTML・CSS・最小限のvanilla JavaScriptのままにし、npm依存を追加しません。
@@ -295,7 +297,7 @@ src-native/          KSIP固有のC/C++ソースとビルド定義
 scripts/dev-env.ps1  MSVCツールチェーンとPATH。ビルド・テストの共通土台
 scripts/deps/        固定版の依存を取得する。ネットワーク必須、依存更新時のみ
 scripts/build/       取得済みの依存からビルドする。オフライン、毎回
-scripts/test/        テスト。app-・asterisk-・loopback-で対向先を示す
+scripts/test/        テスト。app-・pbx-・loopback-で対向先を示す。run.py で全部を順に流す
 ```
 
 ビルド用の一時生成物、テスト結果、キャッシュ、展開した依存ソースはすべて `temp/` に作られ、Git管理しません。
@@ -352,7 +354,7 @@ python -X utf8 scripts/test/build-paths.py
 
 ## テスト
 
-テストの共通部品は `test/sip_fixture.py`（SIP端末の起動と制御、資格情報、通話確立）、`test/app_fixture.py`（使い捨てプロファイルと対向端末）、`test/app-fixture.ps1`・`test/ui-automation.ps1`（アプリの起動・終了とUIAutomation操作）です。製品のバージョンは `src-tauri/Cargo.toml` から読むため、版を上げてもテスト側の修正は要りません。
+テストの共通部品は `test/sip_fixture.py`（SIP端末の起動と制御、資格情報、通話確立、`lab.json` の読み取り）、`test/app_fixture.py`（使い捨てプロファイルと対向端末）、`test/app-fixture.ps1`・`test/ui-automation.ps1`（アプリの起動・終了とUIAutomation操作）です。製品のバージョンは `src-tauri/Cargo.toml` から読むため、版を上げてもテスト側の修正は要りません。
 
 テスト用の使い捨てプロファイルは `KashiharaCity\ksip\Test\<プロファイル名>` に作られ、終了時に削除します。
 
@@ -373,7 +375,7 @@ python -X utf8 scripts/test/line-endings.py
 
 `test/audio-devices.py` にはWindowsの実音声デバイスが必要です。
 
-`test/no-secrets.py` は、Gitが追跡しているファイルに私有IPアドレス・社内ホスト名・秘密らしき文字列・鍵や証明書の中身が混ざっていないかを調べます。開発用サーバーの接続先はリポジトリに置かず `test-pbx/local-asterisk/` から読む決まりで、この検査がそれを守ります。
+`test/no-secrets.py` は、Gitが追跡しているファイルに私有IPアドレス・社内ホスト名・秘密らしき文字列・鍵や証明書の中身が混ざっていないかを調べます。開発用サーバーの接続先はリポジトリに置かず `test-pbx/` から読む決まりで、この検査がそれを守ります。
 
 `test/build-paths.py` は、ビルドした `release/ksip.exe` に組んだ機械の絶対パス（利用者のフォルダ、リポジトリの場所、cargoのレジストリ）が残っていないかを調べ、結果を `temp/reports/build-paths.json` に残します。`test/line-endings.py` は、`src-web/` の追跡ファイルが作業ツリーでCRLFであることを確かめます。改行がexeへ届くのはここだけです。どちらも数秒で終わります。
 
@@ -383,7 +385,21 @@ python -X utf8 scripts/test/line-endings.py
 
 ### 開発用SIPサーバーが要るテスト
 
-`asterisk-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `test-pbx/local-asterisk/lab.json` から読みます。`test-pbx/` はGit管理外なので、公開されるのは手順だけです。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
+```powershell
+python -X utf8 scripts/test/pbx-transfer.py
+python -X utf8 scripts/test/pbx-codec.py
+python -X utf8 scripts/test/pbx-tls.py
+python -X utf8 scripts/test/pbx-osrtp.py
+python -X utf8 scripts/test/pbx-pai.py
+python -X utf8 scripts/test/pbx-record-switch.py
+python -X utf8 scripts/test/pbx-playback.py
+python -X utf8 scripts/test/pbx-live-aec.py
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
+```
+
+開発には Asterisk 22.11.0（codec_opus 1.3.0、`res_pjsip_rfc3326` を読み込む）と FreeSWITCH 1.11.3 を使いました。
+
+`pbx-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `test-pbx/<フォルダー>/lab.json` から読みます。フォルダーは環境変数 `KSIP_TEST_PBX` で選び、既定は `local-asterisk` です（`test-pbx/` はGit管理外なので、公開されるのは手順だけです）。同じテストをAsteriskとFreeSWITCHの両方に対して流せるように、PBXごとの約束事（番号や証明書）はすべて `lab.json` に書きます。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
 
 ```json
 {
@@ -391,32 +407,45 @@ python -X utf8 scripts/test/line-endings.py
   "port": 5060,
   "tls_host": "<TLSで使うホスト名>",
   "tls_port": 5061,
-  "server_certificate": "test-pbx/local-asterisk/<サーバー証明書>.crt",
+  "server_certificate": "test-pbx/<フォルダー>/<サーバー証明書>.crt",
+  "ca_certificate": "test-pbx/<フォルダー>/<CA証明書>.crt",
   "accounts": [
-    { "extension": "1001", "password": "<パスワード>" },
-    { "extension": "1002", "password": "<パスワード>" },
-    { "extension": "1003", "password": "<パスワード>" },
-    { "extension": "1004", "password": "<パスワード>", "dtls": true }
-  ]
+    { "extension": "1001", "password": "<パスワード>", "encryption": "osrtp" },
+    { "extension": "1002", "password": "<パスワード>", "encryption": "osrtp" },
+    { "extension": "1003", "password": "<パスワード>", "encryption": "osrtp" },
+    { "extension": "1004", "password": "<パスワード>", "encryption": "dtls" },
+    { "extension": "1005", "password": "<パスワード>", "encryption": "sdes" }
+  ],
+  "numbers": {
+    "playback": "9001",
+    "park_slots": ["701", "702", "703"],
+    "park_prefix": "*",
+    "group": "7000",
+    "voicemail": "*97",
+    "voicemail_direct_prefix": "8",
+    "unassigned": "1999",
+    "park_watch": "{slot}"
+  },
+  "features": { "connected_identity": true }
 }
 ```
 
-`accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`asterisk-record-switch` は3件目も使い、`asterisk-tls` は `"dtls": true` を付けた内線でDTLS-SRTPの通話をします。TLSのテストは `test-pbx/local-asterisk/LocalCA.crt`（サーバー証明書を発行した認証局）も使います。
+`accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`pbx-record-switch` は3件目も使います。`encryption` はサーバー側でその内線がどう振る舞うかで、`none`（平文）、`osrtp`（鍵をRTP/AVPで提示し、平文も受ける。Asteriskの `media_encryption_optimistic=yes`）、`sdes`（SRTP必須）、`dtls`（DTLS-SRTP必須）のどれかです。先頭3件は平文で使うので `none` か `osrtp` にします。`pbx-tls` は `sdes` の内線と `dtls` の内線を使い、`pbx-osrtp` は `osrtp` の内線があるときだけ動きます（FreeSWITCHはOSRTPの提示に規格どおりの応答を返さないので、その開発機では `none` にしてあります）。`ca_certificate` はTLSの検証に使う認証局の証明書で、省略するとそのフォルダーの `LocalCA.crt` です。別のPBXと同じ認証局を指してもかまいません（FreeSWITCHの開発機はAsteriskと同じ認証局が発行した証明書を使っています）。`numbers` はサーバー側の約束事で、省略した項目は上の値になります。`park_watch` は駐車枠のBLFで購読する相手で、Asteriskは枠の番号そのもの、FreeSWITCHは `sip:park+{slot}@{server}`（valet parkingが公開する名前）です。`features` には、そのPBXが持たない振る舞いを `false` で書きます。対応するテストは「SKIP:」と理由を出して正常終了するか、その段だけ「NOTE:」と出して先へ進みます。`connected_identity` は保留取得時に相手の番号を P-Asserted-Identity で知らせること、`windows_trust` はそのサーバー証明書がWindowsの証明書ストアの認証局につながることです（FreeSWITCHの開発機では `connected_identity` が `false`）。
 
-開発にはAsterisk 22.11.0（codec_opus 1.3.0）を使いました。サーバー側には、自動応答して音を流す `9001`、`*701` で保留し `701` で取り出せるパークロット（res_parking）、各内線の `hint`、DTLSの内線に `use_avpf=yes` が要ります。`app-*.ps1` は実行中にアプリを前面へ出すので、KSIPを起動したままでは実行できません。
+サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。
+
+`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices` があります。`-Folder` で別の場所の `ksip.exe`（公開版など）を対象にできます。そのフォルダーには `ksip.exe` と版付きの `ksip-v<版>.exe` の両方を置きます。
+
+### まとめて流す
 
 ```powershell
-python -X utf8 scripts/test/asterisk-transfer.py
-python -X utf8 scripts/test/asterisk-codec.py
-python -X utf8 scripts/test/asterisk-tls.py
-python -X utf8 scripts/test/asterisk-pai.py
-python -X utf8 scripts/test/asterisk-record-switch.py
-python -X utf8 scripts/test/asterisk-playback.py
-python -X utf8 scripts/test/asterisk-live-aec.py
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
+python -X utf8 scripts/test/run.py
+python -X utf8 scripts/test/run.py --group offline --group loopback
+python -X utf8 scripts/test/run.py --group pbx --group app --pbx local-freeswitch
+python -X utf8 scripts/test/run.py --group app --folder temp/build/ci-ksip
 ```
 
-`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices` があり、同じ形で実行します。
+`scripts/test/run.py` は全部を上の順（対向不要 → ループバック → PBX → アプリ）で1本ずつ流し、`temp/reports/run-<日時>-<PBX>/` に1本ごとのログと `summary.txt`（PASS / FAIL / SKIP と所要時間）を残します。`--only <ファイル名>` で選んだものだけ流せます。テストの間に3秒置くのは、前のアプリが終了して `ksip.exe` を手放すのを待つためです。
 
 ### ローカルの2プロセスだけで行うテスト
 
