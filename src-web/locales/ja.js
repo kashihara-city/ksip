@@ -151,6 +151,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       GAIN_APPLIED:'ソフト増幅 {0}',
       HANGUP:'切断',
       HEADER_ACTIONS:'アプリ操作',
+      JOURNAL_WRITE_FAILED:'ログや通話履歴をファイルに書けません: {0}',
+      JOURNAL_WRITE_RECOVERED:'ログや通話履歴をファイルに書けるようになりました',
       HISTORY_BUSY:'話中',
       HISTORY_CALL:'通話',
       HISTORY_CANCELLED:'中止',

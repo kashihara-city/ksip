@@ -151,6 +151,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       GAIN_APPLIED:'軟體增益 {0}',
       HANGUP:'掛斷',
       HEADER_ACTIONS:'應用程式操作',
+      JOURNAL_WRITE_FAILED:'無法將記錄或通話紀錄寫入檔案：{0}',
+      JOURNAL_WRITE_RECOVERED:'記錄與通話紀錄已可再次寫入檔案',
       HISTORY_BUSY:'忙線',
       HISTORY_CALL:'通話',
       HISTORY_CANCELLED:'已取消',

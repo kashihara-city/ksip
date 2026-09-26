@@ -1,10 +1,50 @@
 """Fail closed on unpinned/untrusted/too-new dependencies; retain audit evidence."""
+import pathlib,tarfile
 import datetime,hashlib,json,pathlib,re,subprocess,tomllib,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 # Nothing published in the last seven days is accepted, whenever this runs.
 CUTOFF=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=7)
 def get(url):return json.load(urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'ksip-audit/0.1'}),timeout=40))
 def old(date):return datetime.datetime.fromisoformat(date.replace('Z','+00:00'))<=CUTOFF
+# What is built is the unpacked tree, not the archive, so the tree is compared
+# with the verified archive file by file. Only what scripts/build/patch-baresip.py
+# writes (PATCHED) or adds (ADDED) may differ; anything else is a change nobody
+# asked for. The WebRTC checkout is a git tree, and there the same rule reads:
+# only what scripts/build/patch-webrtc.py touches may show up in git status.
+PATCHED={'re':{'cmake/re-config.cmake','src/sipevent/subscribe.c'},
+         'baresip':{'src/main.c','CMakeLists.txt'}}
+ADDED={'baresip':('modules/ksip_audio/','modules/postlab/','modules/ksip/')}
+WEBRTC_TOUCHED={'BUILD.gn','modules/audio_device/win/core_audio_utility_win.cc',
+                'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc','ksip_bridge/'}
+def tree_differences(name,archive,tree):
+    """The files of an unpacked tree that are not as the archive has them, patches aside."""
+    if not tree.exists():return []
+    expected={}
+    with tarfile.open(archive) as tar:
+        for member in tar.getmembers():
+            parts=pathlib.PurePosixPath(member.name).parts
+            if member.isfile() and len(parts)>1:
+                expected['/'.join(parts[1:])]=hashlib.sha256(tar.extractfile(member).read()).hexdigest()
+    patched=PATCHED.get(name,set());added=ADDED.get(name,())
+    problems=[]
+    for path in sorted(p for p in tree.rglob('*') if p.is_file()):
+        rel=path.relative_to(tree).as_posix()
+        if rel in patched or rel.startswith(added):continue
+        if rel not in expected:problems.append(f'{name}: {rel} is not in the pinned archive')
+        elif expected[rel]!=hashlib.sha256(path.read_bytes()).hexdigest():problems.append(f'{name}: {rel} differs from the pinned archive')
+    for rel in expected:
+        if rel not in patched and not (tree/rel).is_file():problems.append(f'{name}: {rel} is missing from the unpacked tree')
+    return problems
+def checkout_differences(source):
+    """Changes in the WebRTC checkout beyond what the bridge patch makes."""
+    if not (source/'.git').exists():return []
+    status=subprocess.check_output(['git','status','--porcelain'],cwd=source,text=True,encoding='utf-8')
+    problems=[]
+    for line in status.splitlines():
+        path=line[3:].strip().replace('\\','/')
+        if path in WEBRTC_TOUCHED or any(path.startswith(t) for t in WEBRTC_TOUCHED if t.endswith('/')):continue
+        problems.append(f'google-webrtc: {line.strip()} is a change the bridge patch does not make')
+    return problems
 def main():
     (ROOT/'temp/reports').mkdir(parents=True,exist_ok=True)
     evidence={'cutoff':CUTOFF.isoformat(),'rust':[],'npm':[],'native':[]}
@@ -39,7 +79,11 @@ def main():
         else:
             digest=hashlib.sha256((ROOT/'deps'/f'{name}.tar.gz').read_bytes()).hexdigest()
             assert digest==p['sha256'],name
+            problems=tree_differences(name,ROOT/'deps'/f'{name}.tar.gz',ROOT/'temp/vendor'/name)
+            assert not problems,'\n'.join(problems)
         evidence['native'].append({'name':name,**p})
+    problems=checkout_differences(ROOT/'temp/w/src')
+    assert not problems,'\n'.join(problems)
     (ROOT/'temp/reports/dependency-evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
     print('Age, registry, lock/hash checks passed:',{k:len(v) for k,v in evidence.items() if isinstance(v,list)})
     # cargo-audit reads the same lock and reports RustSec advisories. It is a

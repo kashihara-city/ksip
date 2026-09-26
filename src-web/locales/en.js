@@ -151,6 +151,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       GAIN_APPLIED:'Software gain {0}',
       HANGUP:'Hang up',
       HEADER_ACTIONS:'Application actions',
+      JOURNAL_WRITE_FAILED:'The log or the call history could not be written to its file: {0}',
+      JOURNAL_WRITE_RECOVERED:'The log and the call history can be written to their files again',
       HISTORY_BUSY:'Busy',
       HISTORY_CALL:'Call',
       HISTORY_CANCELLED:'Cancelled',

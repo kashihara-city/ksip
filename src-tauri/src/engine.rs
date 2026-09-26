@@ -795,6 +795,9 @@ struct Logs {
     /// How many lines the file keeps after a rewrite, which happens once it
     /// holds twice as many.
     file_limit: usize,
+    /// Whether the last attempt to write the file failed. The unwritten lines
+    /// stay in `entries` meanwhile, and are tried again with the next ones.
+    write_failed: bool,
 }
 impl Logs {
     /// Takes stock of the file as it is. Nothing is read back: the tab shows
@@ -811,6 +814,7 @@ impl Logs {
             file_lines,
             offset,
             file_limit: LOG_LIMIT,
+            write_failed: false,
         }
     }
     /// The detail log keeps ten times as many lines in the file.
@@ -832,22 +836,42 @@ impl Logs {
     /// Brings the file and the tab up to date with each other: lines another
     /// process appended come in, the lines of this one go out. Appending only
     /// what is new, at most once a second, is what keeps SIP tracing cheap.
-    fn sync(&mut self, data: &Path) {
+    /// A write that fails (a full disk, a file held by another program) keeps
+    /// the lines as unwritten, so the next sync carries them along with the
+    /// new ones; the tab loses nothing but the oldest once it is full. The
+    /// error is returned only when the writing has just started failing, so
+    /// the caller can say so once rather than every second; the recovery is
+    /// noted in the log itself.
+    fn sync(&mut self, data: &Path) -> Result<(), String> {
         self.flushed = Instant::now();
         let path = data.join(LOG_FILE);
         self.take_foreign(&path);
         if self.unwritten > 0 {
             let bytes = lines(self.entries.iter().skip(self.entries.len() - self.unwritten));
             let _ = std::fs::create_dir_all(data);
-            if append(&path, &bytes).is_ok() {
-                self.offset += bytes.len() as u64;
-                self.file_lines += self.unwritten;
+            match append(&path, &bytes) {
+                Ok(()) => {
+                    self.offset += bytes.len() as u64;
+                    self.file_lines += self.unwritten;
+                    self.unwritten = 0;
+                    if self.write_failed {
+                        self.write_failed = false;
+                        self.push(LogLine::new(AppState::stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
+                    }
+                }
+                Err(e) => {
+                    let first = !self.write_failed;
+                    self.write_failed = true;
+                    if first {
+                        return Err(err(e));
+                    }
+                }
             }
-            self.unwritten = 0;
         }
         if self.file_lines > 2 * self.file_limit {
             self.shorten(&path);
         }
+        Ok(())
     }
     /// Keeps the file's last lines, up to the limit. The file rather than the
     /// tab is the source: after a start the tab holds only this run, and the
@@ -986,6 +1010,10 @@ struct History {
     rows: Vec<CallHistory>,
     sequence: u64,
     file_lines: usize,
+    /// Rows the file does not have yet, oldest first: what could not be
+    /// appended is kept and tried again with the next rows, or at the next
+    /// flush, rather than being lost with the call state it was made from.
+    pending: Vec<CallHistory>,
 }
 impl History {
     /// Reads the file, oldest first, into the tab's order.
@@ -1006,20 +1034,33 @@ impl History {
             rows,
             sequence: 0,
             file_lines,
+            pending: Vec::new(),
         }
     }
     /// The calls that ended since the last look, in the order the tab shows
-    /// them; the file, being oldest first, gets them the other way round.
+    /// them. The tab gets them at once; the file, being oldest first, gets
+    /// them the other way round, together with whatever is still waiting.
     fn add(&mut self, data: &Path, ended: Vec<CallHistory>) -> Result<(), String> {
-        let path = data.join(HISTORY_FILE);
-        std::fs::create_dir_all(data).map_err(err)?;
-        append(&path, &lines(ended.iter().rev())).map_err(err)?;
-        self.file_lines += ended.len();
-        for entry in ended.into_iter().rev() {
-            self.rows.insert(0, entry);
+        for entry in ended.iter().rev() {
+            self.rows.insert(0, entry.clone());
         }
         self.rows.truncate(HISTORY_LIMIT);
         self.sequence += 1;
+        self.pending.extend(ended.into_iter().rev());
+        let excess = self.pending.len().saturating_sub(HISTORY_LIMIT);
+        self.pending.drain(..excess);
+        self.flush(data)
+    }
+    /// Writes the rows still waiting for the file, if any.
+    fn flush(&mut self, data: &Path) -> Result<(), String> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let path = data.join(HISTORY_FILE);
+        std::fs::create_dir_all(data).map_err(err)?;
+        append(&path, &lines(self.pending.iter())).map_err(err)?;
+        self.file_lines += self.pending.len();
+        self.pending.clear();
         if self.file_lines > 2 * HISTORY_LIMIT {
             if let Ok((_, kept)) = keep_last_lines(&path, HISTORY_LIMIT) {
                 self.file_lines = kept;
@@ -1029,6 +1070,7 @@ impl History {
     }
     fn clear(&mut self, data: &Path) -> Result<(), String> {
         self.rows.clear();
+        self.pending.clear();
         self.sequence += 1;
         self.file_lines = 0;
         std::fs::create_dir_all(data).map_err(err)?;
@@ -1277,7 +1319,8 @@ impl AppState {
         };
         let line = text.replace(['\r', '\n'], " ");
         logs.push(LogLine::new(Self::stamp(), LOG_APP, line));
-        logs.sync(&self.data);
+        // A write that fails is kept and said by the periodic sync in snapshot().
+        let _ = logs.sync(&self.data);
     }
     fn log(&self, source: &str, s: String) {
         let mut v = self.view.lock().unwrap();
@@ -1309,7 +1352,7 @@ impl AppState {
         let mut logs = self.logs.lock().unwrap();
         logs.push(LogLine::new(Self::stamp(), source, s));
         if logs.flushed.elapsed() >= Duration::from_secs(1) {
-            logs.sync(&self.data);
+            let _ = logs.sync(&self.data);
         }
     }
     pub fn clear_logs(&self) {
@@ -1396,14 +1439,22 @@ impl AppState {
             .map_err(|e| message_with("RECORDING_OPEN_FAILED", [crate::message::split(&e).1.join(" ")]))
     }
     pub fn snapshot(&self) -> Snapshot {
-        {
+        let journal = {
             // The file is written from log(), so a quiet moment would leave the
             // last lines only in memory, and what another process appended
             // unseen. Polling keeps both moving.
             let mut logs = self.logs.lock().unwrap();
             if logs.flushed.elapsed() >= Duration::from_secs(1) {
-                logs.sync(&self.data);
+                logs.sync(&self.data)
+            } else {
+                Ok(())
             }
+        };
+        // Rows the history could not write earlier get another try; the first
+        // failure of either file is said once, in the log and in the window.
+        let history = self.history.lock().unwrap().flush(&self.data);
+        for e in [journal, history].into_iter().filter_map(Result::err) {
+            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
         }
         // An engine that has gone without being asked is noticed here once:
         // its handle is taken out, so the next look finds nothing to report.
@@ -2717,7 +2768,7 @@ impl AppState {
         v.registration = "DISCONNECTED".into();
         v.recording_call.clear();
         drop(v);
-        self.logs.lock().unwrap().sync(&self.data);
+        let _ = self.logs.lock().unwrap().sync(&self.data);
         Ok(())
     }
     pub fn open_licenses(&self) -> Result<(), String> {
@@ -3398,7 +3449,7 @@ mod tests {
         let mut logs = Logs::open(&dir);
         logs.push(LogLine::new("t1".into(), LOG_APP, "one".into()));
         logs.push(LogLine::new("t2".into(), LOG_APP, "two".into()));
-        logs.sync(&dir);
+        logs.sync(&dir).unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
         assert_eq!(written.lines().count(), 2, "{written}");
         assert!(written.lines().all(|l| l.starts_with('{') && l.ends_with('}')));
@@ -3406,7 +3457,7 @@ mod tests {
         // and this process's own new line is appended after it.
         append_log(&dir, "protocol ksip:x could not be handed over".into());
         logs.push(LogLine::new("t3".into(), LOG_APP, "three".into()));
-        logs.sync(&dir);
+        logs.sync(&dir).unwrap();
         let texts: Vec<&str> = logs.entries.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, ["one", "two", "protocol ksip:x could not be handed over", "three"]);
         assert_eq!(logs.sequence, 4);
@@ -3414,7 +3465,7 @@ mod tests {
         // Nothing is written when nothing is new, and the file is only rewritten
         // once it holds twice the limit, then with what the tab holds.
         let size = std::fs::metadata(&path).unwrap().len();
-        logs.sync(&dir);
+        logs.sync(&dir).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().len(), size);
         // Lines arrive in bursts between syncs; the file grows past twice the
         // limit on the third burst and is then written afresh.
@@ -3422,7 +3473,7 @@ mod tests {
         for i in 0..3 * burst {
             logs.push(LogLine::new("t".into(), LOG_APP, format!("line {i}")));
             if (i + 1) % burst == 0 {
-                logs.sync(&dir);
+                logs.sync(&dir).unwrap();
                 let lines = std::fs::read_to_string(&path).unwrap().lines().count();
                 assert_eq!(lines, if i + 1 < 3 * burst { 4 + i + 1 } else { LOG_LIMIT }, "after line {i}");
             }
@@ -3441,12 +3492,12 @@ mod tests {
         for i in 0..3 * burst {
             logs.push(LogLine::new("t".into(), LOG_APP, format!("more {i}")));
             if (i + 1) % burst == 0 {
-                logs.sync(&dir);
+                logs.sync(&dir).unwrap();
             }
         }
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), LOG_LIMIT + 3 * burst);
         logs.set_detail(false);
-        logs.sync(&dir);
+        logs.sync(&dir).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), LOG_LIMIT);
         logs.clear(&dir);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
@@ -3478,6 +3529,44 @@ mod tests {
         assert_eq!(recording_name("2026-09-23T14:30:12+09:00", ""), "2026-09-23_14-30-12_call.wav");
     }
 
+    #[test]
+    fn lines_that_could_not_be_written_wait_for_the_next_sync() {
+        let dir = std::env::temp_dir().join(format!("ksip-journal-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A folder where the file should be: every append fails.
+        std::fs::create_dir_all(dir.join(LOG_FILE)).unwrap();
+        std::fs::create_dir_all(dir.join(HISTORY_FILE)).unwrap();
+        let mut logs = Logs::open(&dir);
+        logs.push(LogLine::new("2026-09-26T22:00:00+09:00".into(), LOG_APP, "first".into()));
+        logs.push(LogLine::new("2026-09-26T22:00:01+09:00".into(), LOG_APP, "second".into()));
+        assert!(logs.sync(&dir).is_err(), "the first failure is reported");
+        assert_eq!(logs.unwritten, 2, "the lines wait");
+        assert!(logs.sync(&dir).is_ok(), "the same failure is not reported again");
+        assert_eq!(logs.unwritten, 2);
+        let mut history = History::open(&dir);
+        let row = |n: u64| CallHistory { ended_at: n, direction: "OUTGOING".into(), peer: format!("sip:{n}@pbx"), name: String::new(), duration: 1, recording: String::new(), outcome: String::new() };
+        assert!(history.add(&dir, vec![row(1)]).is_err());
+        assert_eq!(history.rows.len(), 1, "the tab shows the row all the same");
+        assert_eq!(history.pending.len(), 1, "the row waits for the file");
+        // The way is clear again: everything that waited is written, in order,
+        // and the log notes its own recovery.
+        std::fs::remove_dir(dir.join(LOG_FILE)).unwrap();
+        std::fs::remove_dir(dir.join(HISTORY_FILE)).unwrap();
+        assert!(logs.sync(&dir).is_ok());
+        assert_eq!(logs.unwritten, 1, "the recovery note itself is written with the next sync");
+        assert!(logs.sync(&dir).is_ok());
+        assert_eq!(logs.unwritten, 0);
+        let written = std::fs::read_to_string(dir.join(LOG_FILE)).unwrap();
+        assert_eq!(written.lines().count(), 3);
+        assert!(written.lines().next().unwrap().contains("first"));
+        assert!(written.lines().last().unwrap().contains("JOURNAL_WRITE_RECOVERED"));
+        assert!(history.add(&dir, vec![row(2)]).is_ok());
+        assert!(history.pending.is_empty());
+        let reread = History::open(&dir);
+        assert_eq!(reread.rows.iter().map(|r| r.ended_at).collect::<Vec<_>>(), vec![2, 1], "both rows, newest first");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn the_call_history_is_appended_to_and_read_back_newest_first() {
         let dir = std::env::temp_dir().join(format!("ksip-history-test-{}", std::process::id()));

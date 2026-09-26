@@ -2,7 +2,7 @@
 Uses only fixed installed/build outputs. No downloads or package resolution.
 """
 from pathlib import Path
-import hashlib,json,os,re,shutil,subprocess,tomllib,zipfile
+import hashlib,json,os,re,shutil,subprocess,sys,tomllib,zipfile
 ROOT=Path(__file__).resolve().parents[2]
 VERSION=tomllib.loads((ROOT/'src-tauri/Cargo.toml').read_text(encoding='utf-8'))['package']['version']
 EXE_NAME=f'ksip-v{VERSION}.exe'
@@ -21,17 +21,27 @@ def notices(src,dst,recursive=False):
 def main():
     # Do not overwrite a user's data if they have used the output folder.
     if (OUT/'data').exists():raise RuntimeError('Output has user data; package into a new workspace or relocate the used folder first.')
+    # A fresh staging folder every time: nothing from an earlier run can stay behind.
+    shutil.rmtree(OUT,ignore_errors=True)
     OUT.mkdir(parents=True,exist_ok=True)
     executable=OUT.parent/EXE_NAME
     copy(ROOT/'release'/EXE_NAME,executable)
     copy(ROOT/'temp/build/third-party-notices.txt',OUT/'THIRD_PARTY_NOTICES.txt')
-    for directory in ['.cargo','src-web','src-native','scripts','licenses']:
-        for p in (ROOT/directory).rglob('*'):
-            if p.is_file() and '__pycache__' not in p.parts:copy(p,OUT/p.relative_to(ROOT))
-    for p in (ROOT/'src-tauri').rglob('*'):
-        if p.is_file() and not {'target','gen'}.intersection(p.relative_to(ROOT/'src-tauri').parts):copy(p,OUT/p.relative_to(ROOT))
-    for n in ['README.md','LICENSE','.gitignore','.gitattributes','deps/native-sources.lock.json']:
-        copy(ROOT/n,OUT/n)
+    # The source is exactly what Git tracks: no untracked file in a source folder
+    # is picked up, and nothing tracked (the pinned toolchain included) is left out.
+    tracked=[n for n in subprocess.check_output(['git','ls-files','-z'],cwd=ROOT).decode('utf-8').split('\0') if n]
+    for n in tracked:
+        if (ROOT/n).is_file():copy(ROOT/n,OUT/n)
+    # Where this source came from, for whoever compares it with the repository.
+    origin={'version':VERSION,
+            'commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+            'describe':subprocess.check_output(['git','describe','--tags','--always','--dirty'],cwd=ROOT,text=True).strip(),
+            'uncommitted_changes':bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip()),
+            'tracked_files':len(tracked),
+            'rust_toolchain':(ROOT/'rust-toolchain.toml').read_text(encoding='utf-8'),
+            'python':sys.version.split()[0]}
+    (OUT/'reports').mkdir(parents=True,exist_ok=True)
+    (OUT/'reports/source-origin.json').write_text(json.dumps(origin,indent=2)+'\n',encoding='utf-8')
     # Native libraries include notices from bundled third-party source trees.
     for name in ['baresip','re']:
         notices(ROOT/'temp/vendor'/name,OUT/'licenses/native'/name,True)
