@@ -46,7 +46,7 @@ def main():
     # The DTLS extension: the keys are exchanged on the media path, not in the signalling.
     # A PBX without DTLS-SRTP (3CX) has no such extension, and this step alone is skipped.
     if not has_account('dtls'):
-        print(f'SKIP: DTLS-SRTPの内線が無いので鍵交換の確認は飛ばす（{PBX} の lab.json の accounts に "encryption": "dtls" が無い）',flush=True)
+        print(f'NOTE: DTLS-SRTPの内線が無いので鍵交換の確認は飛ばす（{PBX} の lab.json の accounts に "encryption": "dtls" が無い）',flush=True)
         report['dtls']='skipped'
     else:
         dtls=None
