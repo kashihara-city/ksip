@@ -19,7 +19,8 @@ def main():
     # The extension the PBX requires SRTP on is called from and called into.
     a=caller=None
     try:
-        a=Phone('tls-a',strict,18570,18980,transport='TLS',mediaenc='srtp-mand',ca_file=str(CA))
+        # The detail log is on for this phone: the SDES keys it carries in SDP must not reach the log.
+        a=Phone('tls-a',strict,18570,18980,transport='TLS',mediaenc='srtp-mand',ca_file=str(CA),extra_config='ksip_detail_log yes')
         text=a.log_text()
         assert 'REGISTER_FAIL' not in text, 'TLSで登録できませんでした'
         assert re.search(r'\{0/TLS/v4\}|/TLS/',text), 'TLSで登録した形跡がありません'
@@ -33,6 +34,12 @@ def main():
         report['cryptosuite']=match[1]
         a.action('hangup',call);a.wait(lambda s:not s['calls'])
         print(f"PASS: SRTP必須の内線から発信して暗号化された (cryptosuite={match[1]})",flush=True)
+        # With the detail log on, the SIP trace shows the crypto lines but never the key material (RFC 4568 inline:<key>).
+        traced=[l for l in a.log_text().splitlines() if 'a=crypto:' in l]
+        assert traced, '詳細ログに SDP の a=crypto 行が出ていません'
+        assert all('inline:***' in l for l in traced), '詳細ログに SRTP の鍵が残っています'
+        assert not re.search(r'inline:[A-Za-z0-9+/]{20,}',a.log_text()), '詳細ログに SRTP の鍵が残っています'
+        print('PASS: 詳細ログでも SRTP の鍵は伏せられる',flush=True)
         # The PBX offers RTP/SAVP with keys to that extension, whoever calls it.
         caller=Phone('tls-caller',configured[1],18572,18990)
         _,remote=connect(caller,a,strict['extension'])

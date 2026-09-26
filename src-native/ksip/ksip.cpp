@@ -128,21 +128,34 @@ std::string sip_header(const uint8_t *packet,size_t length,const char *name) {
     return {};
 }
 void log_sip_message(bool tx,const uint8_t *packet,size_t length) {
-    // Credentials never reach the log: digest headers are replaced before printing.
+    // Secrets never reach the log: digest headers are replaced before printing,
+    // together with any folded continuation lines of theirs (RFC 3261 7.3.1),
+    // and so are the SRTP keys an SDP body carries in a=crypto (RFC 4568),
+    // which SDES and OSRTP put in the signalling. The file this goes to
+    // outlives the call, and a key in it would unlock a captured recording.
     static const char *secrets[]={"authorization","proxy-authorization","www-authenticate","proxy-authenticate"};
     std::string text(reinterpret_cast<const char*>(packet),length);
+    bool hiding=false;
     for(size_t pos=0;pos<text.size();) {
         size_t end=text.find("\r\n",pos);
         if(end==std::string::npos)end=text.size();
         std::string line=text.substr(pos,end-pos);
+        pos=end+2;
+        if(!line.empty() && (line[0]==' ' || line[0]=='\t')) {
+            if(hiding)continue;
+        }
+        else hiding=false;
         auto colon=line.find(':');
         if(colon!=std::string::npos) {
             std::string name=line.substr(0,colon);
             for(auto &ch:name)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-            for(auto secret:secrets)if(name==secret){line=line.substr(0,colon)+": ***";break;}
+            for(auto secret:secrets)if(name==secret){line=line.substr(0,colon)+": ***";hiding=true;break;}
+        }
+        if(line.compare(0,9,"a=crypto:")==0) {
+            auto key=line.find(" inline:");
+            if(key!=std::string::npos)line=line.substr(0,key)+" inline:***";
         }
         if(!line.empty())info("ksip sip %s %s\n",tx?">":"<",line.c_str());
-        pos=end+2;
     }
 }
 void sip_trace(bool tx,enum sip_transp tp,const sa*,const sa*,const uint8_t *packet,size_t length,void*) {
