@@ -205,6 +205,77 @@ impl Default for Settings {
         }
     }
 }
+/// How SIP is carried, as the `transport` setting names it. TCP is as
+/// unencrypted as UDP; only TLS protects the signalling, and with it the
+/// keys that SDES and OSRTP put there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transport {
+    Udp,
+    Tcp,
+    Tls,
+}
+impl Transport {
+    /// Reads the setting's text: `udp`, `tcp`, `tls`, or empty for the
+    /// historic UDP. Anything else is not a transport this version knows.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "" | "udp" => Some(Self::Udp),
+            "tcp" => Some(Self::Tcp),
+            "tls" => Some(Self::Tls),
+            _ => None,
+        }
+    }
+    /// What baresip's configuration calls it.
+    pub fn engine_name(self) -> &'static str {
+        match self {
+            Self::Udp => "UDP",
+            Self::Tcp => "TCP",
+            Self::Tls => "TLS",
+        }
+    }
+    pub fn encrypts_signalling(self) -> bool {
+        self == Self::Tls
+    }
+}
+/// How the media is encrypted, as the `media_encryption` setting names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaEncryption {
+    /// Plain RTP.
+    None,
+    /// RFC 4568: the keys ride in the signalling and the media is RTP/SAVP; a
+    /// call that cannot be encrypted does not go through.
+    Sdes,
+    /// RFC 8643: the same keys offered in RTP/AVP, and a peer that returns none
+    /// gets a plain call. For the move from plain to encrypted.
+    Osrtp,
+    /// RFC 5763: the keys are exchanged on the media path itself.
+    Dtls,
+}
+impl MediaEncryption {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "" => Some(Self::None),
+            "sdes" => Some(Self::Sdes),
+            "osrtp" => Some(Self::Osrtp),
+            "dtls" => Some(Self::Dtls),
+            _ => None,
+        }
+    }
+    /// baresip's mediaenc module, or None for plain RTP.
+    pub fn engine_name(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Sdes => Some("srtp-mand"),
+            Self::Osrtp => Some("srtp"),
+            Self::Dtls => Some("dtls_srtp"),
+        }
+    }
+    /// Whether the keys travel in the signalling, which then has to be
+    /// encrypted to mean anything (RFC 4568; RFC 8643 section 4).
+    pub fn keys_in_signalling(self) -> bool {
+        matches!(self, Self::Sdes | Self::Osrtp)
+    }
+}
 impl Settings {
     /// Values a group policy can set one at a time. They live in their own
     /// registry values rather than inside the settings document. The buttons
@@ -271,16 +342,19 @@ impl Settings {
         }
         numbers
     }
-    /// The SIP transport baresip should use. Empty means the historic UDP;
-    /// TCP is as unencrypted as UDP, only TLS protects the signalling.
-    pub fn sip_transport(&self) -> &str {
-        if self.transport.eq_ignore_ascii_case("tls") {
-            "TLS"
-        } else if self.transport.eq_ignore_ascii_case("tcp") {
-            "TCP"
-        } else {
-            "UDP"
-        }
+    /// The transport the setting names. The setting is checked by `validate`
+    /// before the engine is started, so an unknown value is never reached here;
+    /// were it, UDP is what the historic empty value meant.
+    pub fn transport(&self) -> Transport {
+        Transport::parse(&self.transport).unwrap_or(Transport::Udp)
+    }
+    /// The SIP transport as baresip's configuration names it.
+    pub fn sip_transport(&self) -> &'static str {
+        self.transport().engine_name()
+    }
+    /// The media encryption the setting names; see `transport` for the fallback.
+    pub fn media_encryption(&self) -> MediaEncryption {
+        MediaEncryption::parse(&self.media_encryption).unwrap_or(MediaEncryption::None)
     }
     /// The codecs the app can offer, by the names the setting uses, in the
     /// order they are offered when the setting names none.
@@ -307,18 +381,9 @@ impl Settings {
             list
         }
     }
-    /// baresip's media encryption name, or None when calls stay in the clear.
-    pub fn mediaenc(&self) -> Option<&str> {
-        match self.media_encryption.as_str() {
-            // RFC 8643 (OSRTP): the keys ride in RTP/AVP, and a peer that returns
-            // none gets a plain call. For the move from plain to encrypted.
-            "osrtp" => Some("srtp"),
-            // RFC 4568: the keys ride in RTP/SAVP, and a call that cannot be
-            // encrypted does not go through rather than falling back to plain RTP.
-            "sdes" => Some("srtp-mand"),
-            "dtls" => Some("dtls_srtp"),
-            _ => None,
-        }
+    /// baresip's media encryption module name, or None when calls stay in the clear.
+    pub fn mediaenc(&self) -> Option<&'static str> {
+        self.media_encryption().engine_name()
     }
     pub const SOUND_KEYS: [&'static str; 5] = ["ring", "ringback", "busy", "notfound", "error"];
     /// The chosen replacement for each built-in sound, in SOUND_KEYS order.
@@ -1645,17 +1710,16 @@ impl AppState {
         // version knows. An unknown one is refused rather than read as UDP or
         // as no encryption: these come from a policy as well as from the
         // dialog, and a typo there must not quietly turn the encryption off.
-        if !matches!(s.transport.as_str(), "" | "udp" | "tcp" | "tls") {
+        let Some(transport) = Transport::parse(&s.transport) else {
             return Err(message("SETTINGS_TRANSPORT_INVALID"));
-        }
-        if !matches!(s.media_encryption.as_str(), "" | "sdes" | "osrtp" | "dtls") {
+        };
+        let Some(media) = MediaEncryption::parse(&s.media_encryption) else {
             return Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID"));
-        }
-        // SDES puts the keys in the signalling, so it needs TLS to mean anything;
-        // RFC 8643 asks the same of OSRTP with SDES keys. Checked here, so that
-        // settings that never passed through the dialog cannot start the
-        // engine with the keys on a plain transport.
-        if matches!(s.media_encryption.as_str(), "sdes" | "osrtp") && s.sip_transport() != "TLS" {
+        };
+        // Keys in the signalling need the signalling encrypted. Checked here,
+        // so that settings that never passed through the dialog cannot start
+        // the engine with the keys on a plain transport.
+        if media.keys_in_signalling() && !transport.encrypts_signalling() {
             return Err(message("SETTINGS_SDES_NEEDS_TLS"));
         }
         // Codec names from the known set, each at most once; none means all.
@@ -1928,7 +1992,7 @@ impl AppState {
         // or, without one, against everything Windows trusts. The Windows store
         // is written out for each start, because it can change at any time.
         let mut trust_note = None;
-        if s.sip_transport() == "TLS" {
+        if s.transport().encrypts_signalling() {
             let chosen = s.ca_file.trim();
             let trust = if chosen.is_empty() {
                 let store = crate::trust::windows_trust()?;
@@ -3120,6 +3184,25 @@ mod tests {
         assert!(sweep_recording_folder(&folder.join("missing")).is_empty());
         assert_eq!(partial_recording(Path::new("a/b.wav")), PathBuf::from("a/b.converting.mp3"));
         let _ = std::fs::remove_dir_all(&folder);
+    }
+    #[test]
+    fn transports_and_encryptions_are_read_from_the_settings_text() {
+        assert_eq!(Transport::parse(""), Some(Transport::Udp));
+        assert_eq!(Transport::parse(" TLS "), Some(Transport::Tls));
+        assert_eq!(Transport::parse("ssl"), None);
+        assert_eq!(Transport::Tcp.engine_name(), "TCP");
+        assert!(Transport::Tls.encrypts_signalling() && !Transport::Tcp.encrypts_signalling());
+        assert_eq!(MediaEncryption::parse(""), Some(MediaEncryption::None));
+        assert_eq!(MediaEncryption::parse("SDES"), Some(MediaEncryption::Sdes));
+        assert_eq!(MediaEncryption::parse("srtp"), None, "baresip's own name is not a setting");
+        assert_eq!(MediaEncryption::Sdes.engine_name(), Some("srtp-mand"));
+        assert_eq!(MediaEncryption::Osrtp.engine_name(), Some("srtp"));
+        assert_eq!(MediaEncryption::Dtls.engine_name(), Some("dtls_srtp"));
+        assert_eq!(MediaEncryption::None.engine_name(), None);
+        assert!(MediaEncryption::Sdes.keys_in_signalling() && MediaEncryption::Osrtp.keys_in_signalling());
+        assert!(!MediaEncryption::Dtls.keys_in_signalling());
+        let s = Settings { transport: "tls".into(), media_encryption: "osrtp".into(), ..Settings::default() };
+        assert_eq!((s.transport(), s.media_encryption(), s.sip_transport(), s.mediaenc()), (Transport::Tls, MediaEncryption::Osrtp, "TLS", Some("srtp")));
     }
     #[test]
     fn encryption_that_needs_tls_and_unknown_values_are_refused() {
