@@ -392,6 +392,7 @@ python -X utf8 scripts/test/pbx-tls.py
 python -X utf8 scripts/test/pbx-osrtp.py
 python -X utf8 scripts/test/pbx-pai.py
 python -X utf8 scripts/test/pbx-record-switch.py
+python -X utf8 scripts/test/pbx-early-media.py
 python -X utf8 scripts/test/pbx-playback.py
 python -X utf8 scripts/test/pbx-live-aec.py
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
@@ -424,6 +425,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
     "voicemail": "*97",
     "voicemail_direct_prefix": "8",
     "unassigned": "1999",
+    "early_media": "1006",
     "park_watch": "{slot}"
   },
   "features": { "connected_identity": true }
@@ -432,7 +434,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 
 `accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`pbx-record-switch` は3件目も使います。`encryption` はサーバー側でその内線がどう振る舞うかで、`none`（平文）、`osrtp`（鍵をRTP/AVPで提示し、平文も受ける。Asteriskの `media_encryption_optimistic=yes`）、`sdes`（SRTP必須）、`dtls`（DTLS-SRTP必須）のどれかです。先頭3件は平文で使うので `none` か `osrtp` にします。`pbx-tls` は `sdes` の内線と `dtls` の内線を使い、`pbx-osrtp` は `osrtp` の内線があるときだけ動きます（FreeSWITCHはOSRTPの提示に規格どおりの応答を返さないので、その開発機では `none` にしてあります）。`ca_certificate` はTLSの検証に使う認証局の証明書で、省略するとそのフォルダーの `LocalCA.crt` です。別のPBXと同じ認証局を指してもかまいません（FreeSWITCHの開発機はAsteriskと同じ認証局が発行した証明書を使っています）。`numbers` はサーバー側の約束事で、省略した項目は上の値になります。`park_watch` は駐車枠のBLFで購読する相手で、Asteriskは枠の番号そのもの、FreeSWITCHは `sip:park+{slot}@{server}`（valet parkingが公開する名前）です。`features` には、そのPBXが持たない振る舞いを `false` で書きます。対応するテストは「SKIP:」と理由を出して正常終了するか、その段だけ「NOTE:」と出して先へ進みます。`connected_identity` は保留取得時に相手の番号を P-Asserted-Identity で知らせること、`windows_trust` はそのサーバー証明書がWindowsの証明書ストアの認証局につながることです（FreeSWITCHの開発機では `connected_identity` が `false`）。
 
-サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。
+サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。任意で、応答前に183で音を流してから応答する番号（`early_media`。開発用Asteriskでは `Progress()` と `Playback(...,noanswer)` の後に `Answer()`）があれば、`pbx-early-media.py` がアーリーメディア中の録音の振る舞いを確かめます。無ければそのテストは飛ばします。
 
 `app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices` があります。`-Folder` で別の場所の `ksip.exe`（公開版など）を対象にできます。そのフォルダーには `ksip.exe` と版付きの `ksip-v<版>.exe` の両方を置きます。
 
