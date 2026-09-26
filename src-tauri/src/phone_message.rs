@@ -98,28 +98,6 @@ pub enum LinkBody {
     Exited(ExitStatus),
 }
 
-/// Who is told when a start (or a restart) has finished, and how.
-pub enum AfterStart {
-    /// The command that asked for it gets the result.
-    Reply(Reply<()>),
-    /// An automatic path: a failure goes in the banner as a polling error.
-    ReportError,
-    /// The first connect: a failure goes in the banner and the log.
-    ShowError,
-}
-/// Who is told when a stop has finished.
-pub enum AfterStop {
-    Nothing,
-    /// A start that got its engine up but not registered: the engine was
-    /// stopped again, and the start is answered with what went wrong.
-    Answer { then: AfterStart, result: Result<(), String> },
-}
-/// Who is told when the devices have been read again.
-pub enum AfterDevices {
-    Reply(Reply<()>),
-    /// The first look at the devices, followed by the first connect.
-    Initialize,
-}
 /// A started engine, with what its start decided.
 pub struct Ready {
     pub link: EngineLink,
@@ -128,39 +106,29 @@ pub struct Ready {
     pub notes: Vec<String>,
 }
 
-/// What work that ran outside the actor brings back. The actor decides;
-/// the work only reports.
+/// What work that ran outside the actor brings back. The flow that asked
+/// for it is waiting for exactly this; the actor decides, the work only
+/// reports.
 pub enum Work {
     /// The previous engine, if any, was stopped and a new one was started,
     /// or the start failed. `stopped` is how the previous one went.
     Started {
-        generation: u64,
         stopped: Option<Result<StopReport, String>>,
         /// Boxed: the started engine is the largest thing a message carries.
         result: Result<Box<Ready>, String>,
-        watched: String,
-        then: AfterStart,
     },
     /// An engine was stopped.
-    Stopped {
-        report: Result<StopReport, String>,
-        then: AfterStop,
-    },
+    Stopped(Result<StopReport, String>),
     /// The audio devices were read again.
-    Devices {
-        result: Result<Vec<Device>, String>,
-        then: AfterDevices,
-    },
+    Devices(Result<Vec<Device>, String>),
     /// The chosen adapter's address, as it is now; None when it has none.
+    /// Nobody waits for this one: the actor looks at it as it comes.
     Address {
         adapter: String,
         address: Option<String>,
     },
     /// The echo calibration has finished.
-    Calibrated {
-        result: Result<Calibration, String>,
-        reply: Reply<Calibration>,
-    },
+    Calibrated(Result<Calibration, String>),
 }
 
 /// Everything that reaches the actor's queue.

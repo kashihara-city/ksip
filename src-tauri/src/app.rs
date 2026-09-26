@@ -7,6 +7,7 @@ use crate::logs::{data_dir, Logs, LOG_APP};
 use crate::message::message_with;
 use crate::phone_actor::{PhoneHandle, Published};
 use crate::phone_message::Command;
+use std::sync::OnceLock;
 use crate::phone_state::{Mwi, Snapshot, Transfer};
 use crate::settings::Settings;
 use crate::storage::{Account, Store};
@@ -38,8 +39,12 @@ pub struct Services {
     /// Recordings being turned into MP3 at the moment.
     pub converting: Arc<AtomicU64>,
     /// The thread that writes the files that must keep their order (the
-    /// history), so that the phone never waits on the disk.
+    /// history) and keeps the log and the history files moving, so that
+    /// neither the phone nor the window waits on the disk.
     files: Sender<FileJob>,
+    /// The way to the phone, once it exists: what the files thread has to
+    /// say to the window goes through it.
+    phone: Arc<OnceLock<PhoneHandle>>,
 }
 /// What the file thread is asked to write.
 enum FileJob {
@@ -107,22 +112,33 @@ impl Services {
             history: Arc::new(Mutex::new(history)),
             converting: Arc::new(AtomicU64::new(0)),
             files,
+            phone: Arc::new(OnceLock::new()),
         };
         let writer = services.clone();
         thread::Builder::new()
             .name("files".into())
-            .spawn(move || {
-                for job in jobs {
-                    match job {
-                        FileJob::History(rows) => {
-                            // A row that cannot be written waits in the history
-                            // for the next try; the failure is on record here,
-                            // and the window hears of it from the next flush.
-                            if let Err(e) = writer.history.lock().unwrap().add(&writer.data, rows) {
-                                writer.log(LOG_APP, e);
-                            }
+            .spawn(move || loop {
+                match jobs.recv_timeout(Duration::from_secs(1)) {
+                    Ok(FileJob::History(rows)) => {
+                        // A row that cannot be written waits in the history
+                        // for the next try; the failure is on record here,
+                        // and the window hears of it from the next flush.
+                        if let Err(e) = writer.history.lock().unwrap().add(&writer.data, rows) {
+                            writer.log(LOG_APP, e);
                         }
                     }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                // Once a second the files move along: the log is written from
+                // log(), so a quiet moment would leave the last lines only in
+                // memory, and what another process appended unseen; rows the
+                // history could not write earlier get another try. The first
+                // failure of either file is said once, in the log and the window.
+                let journal = writer.logs.lock().unwrap().sync_if_due(&writer.data);
+                let history = writer.history.lock().unwrap().flush(&writer.data);
+                for e in [journal, history].into_iter().filter_map(Result::err) {
+                    writer.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
                 }
             })
             .expect("the file thread starts");
@@ -136,6 +152,19 @@ impl Services {
     pub fn add_history(&self, rows: Vec<CallHistory>) {
         if !rows.is_empty() {
             let _ = self.files.send(FileJob::History(rows));
+        }
+    }
+    /// Told once the phone actor exists, so that the services can reach the
+    /// window through it.
+    pub fn attach_phone(&self, phone: PhoneHandle) {
+        let _ = self.phone.set(phone);
+    }
+    /// Something the window should show. Before the phone exists, or after
+    /// it is gone, the log alone keeps it.
+    pub fn show_error(&self, error: String) {
+        match self.phone.get() {
+            Some(phone) => phone.send(Command::ShowError(error)),
+            None => self.log(LOG_APP, error),
         }
     }
     /// The folder everything the app writes goes into.
@@ -172,6 +201,7 @@ impl AppState {
     pub fn new() -> Self {
         let (services, initial) = Services::open();
         let (phone, published) = crate::phone_actor::spawn(services.clone(), initial);
+        services.attach_phone(phone.clone());
         Self {
             services,
             phone,
@@ -180,16 +210,9 @@ impl AppState {
         }
     }
     /// The phone as the actor last published it, with the counters of the
-    /// services laid over. Reading also moves the files along: the log's
-    /// last lines and the history rows that could not be written get their
-    /// turn, and the first failure of either file is said once, in the log
-    /// and in the window.
+    /// services laid over. A read and nothing else: the files are moved
+    /// along by the file thread, not by whoever looks.
     pub fn snapshot(&self) -> Snapshot {
-        let journal = self.services.logs.lock().unwrap().sync_if_due(&self.services.data);
-        let history = self.services.history.lock().unwrap().flush(&self.services.data);
-        for e in [journal, history].into_iter().filter_map(Result::err) {
-            self.phone.send(Command::ShowError(message_with("JOURNAL_WRITE_FAILED", [e])));
-        }
         let mut view = self.published.read();
         view.converting = self.services.converting.load(Ordering::Relaxed) as u32;
         view.log_sequence = self.services.logs.lock().unwrap().sequence();
