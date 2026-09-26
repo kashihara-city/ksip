@@ -34,7 +34,9 @@ if sys.argv[1]=='setup':
                  # A button in the panel beside the phone, which makes the window twice as wide.
                  ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number',n['playback']),
                  ('button_8_kind','dnd'),
-                 ('button_9_kind','mwi'),('button_9_number',n['voicemail'])]
+                 ('button_9_kind','mwi'),('button_9_number',n['voicemail']),
+                 # A dial without BLF: the peer's extension written with a separator, as an outside line would be.
+                 ('button_10_title','Speed'),('button_10_kind','speed'),('button_10_number',configured[1]['extension'][:2]+'-'+configured[1]['extension'][2:])]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.

@@ -423,6 +423,7 @@ function renderButtonBox(box,configured,c){
     let status,enabled,needsPhone=true;
     if(b.kind==='transfer'){status=fill('BUTTON_TRANSFER_TO',b.number);enabled=active;}
     else if(b.kind==='dial'){status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=freeLine;}
+    else if(b.kind==='speed'){status=b.number;enabled=freeLine;}
     else if(b.kind==='open'){status=b.number;enabled=true;needsPhone=false;}
     else if(b.kind==='dnd'){status=t(state.dnd?'DND_ON_STATUS':'DND_OFF_STATUS');enabled=true;}
     else if(b.kind==='mwi'){const m=state.mwi||{};status=m.new>0?fill('MWI_NEW',m.new):t('MWI_NONE');enabled=freeLine;}
@@ -447,7 +448,8 @@ async function useButton(n){
     return;
   }
   if(b.kind==='dnd'){await act('dnd','',state.dnd?'off':'on');return;}
-  if(b.kind==='mwi'){await dial(b.number);return;}
+  // A voicemail button and a dial without BLF simply call their number.
+  if(b.kind==='mwi'||b.kind==='speed'){await dial(b.number);return;}
   const c=current(),active=c?.state==='ESTABLISHED'&&!c.held,s=b.kind==='transfer'?'':watchState(b.number);
   if(b.kind==='transfer'){if(active)await act('blind_transfer',c.id,b.number);return;}
   if(b.kind==='park'&&active&&s==='IDLE'){await act('blind_transfer',c.id,b.transfer||b.number);return;}

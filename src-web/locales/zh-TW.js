@@ -80,6 +80,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       BUTTON_COUNT:'（已設定 {0} 個）',
       BUTTON_KIND:'功能',
       BUTTON_KIND_DIAL:'撥號（含 BLF）',
+      BUTTON_KIND_SPEED:'撥號（不含 BLF）',
       BUTTON_KIND_DND:'勿擾（DND）',
       BUTTON_KIND_MWI:'語音信箱（MWI）',
       BUTTON_KIND_NONE:'不使用',

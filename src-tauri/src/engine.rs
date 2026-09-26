@@ -77,7 +77,9 @@ pub struct Settings {
 #[serde(default)]
 pub struct CustomButton {
     pub title: String,
-    /// Empty (unused), `transfer`, `dial`, `park`, `open`, `dnd` or `mwi`.
+    /// Empty (unused), `transfer`, `dial`, `speed`, `park`, `open`, `dnd` or `mwi`.
+    /// `speed` is a dial nobody watches: no BLF, so the number may be an
+    /// outside line written with its separators.
     pub kind: String,
     pub number: String,
     /// For `park`: where the call in progress is sent while the watched
@@ -92,7 +94,7 @@ impl CustomButton {
     /// which appears while any of them is set.
     pub const MAIN: usize = 6;
     pub const COUNT: usize = 30;
-    pub const KINDS: [&'static str; 6] = ["transfer", "dial", "park", "open", "dnd", "mwi"];
+    pub const KINDS: [&'static str; 7] = ["transfer", "dial", "speed", "park", "open", "dnd", "mwi"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
     }
@@ -122,6 +124,11 @@ impl CustomButton {
     pub fn target_ok(text: &str) -> bool {
         let address = Self::address(text);
         address.is_empty() || dial_target(address).is_ok_and(|target| target == address)
+    }
+    /// A number for the `speed` kind, which nobody watches: anything the dial
+    /// box takes, so RFC 3966's separators and a `tel:` prefix may stay as written.
+    pub fn speed_ok(text: &str) -> bool {
+        dial_target(text).is_ok()
     }
     /// A web address for the `open` kind: the browser gets it, nothing else does.
     pub fn link_ok(text: &str) -> bool {
@@ -583,8 +590,9 @@ struct PhoneState {
 /// What the registrar is asked to call. A SIP URI is taken as written, one
 /// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
 /// to what the registrar dials: the visual separators of RFC 3966 (`-`, `.`,
-/// `(`, `)`) and spaces go, and what is left has to be digits, `*` and `#`,
-/// with `+` only in front. Letters are not a number; a name is written as a URI.
+/// `(`, `)`) and spaces go, as does a `tel:` scheme in front, and what is left
+/// has to be digits, `*` and `#`, with `+` only in front. Letters are not a
+/// number; a name is written as a URI.
 pub fn dial_target(text: &str) -> Result<String, String> {
     let address = CustomButton::address(text);
     if CustomButton::is_uri(address) {
@@ -592,7 +600,11 @@ pub fn dial_target(text: &str) -> Result<String, String> {
             .then(|| address.to_string())
             .ok_or_else(|| message("DIAL_TARGET_INVALID"));
     }
-    let number: String = address
+    let bare = address
+        .get(..4)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("tel:"))
+        .map_or(address, |_| &address[4..]);
+    let number: String = bare
         .chars()
         .filter(|c| !matches!(c, '-' | '.' | '(' | ')' | ' '))
         .collect();
@@ -1554,6 +1566,8 @@ impl AppState {
             } else if button.kind == "dnd" {
                 // A switch on the phone itself: nothing to name.
                 CustomButton::address(&button.number).is_empty()
+            } else if button.kind == "speed" {
+                CustomButton::speed_ok(&button.number)
             } else {
                 CustomButton::target_ok(&button.number)
                     && !(button.configured() && CustomButton::address(&button.number).is_empty())
@@ -2842,6 +2856,18 @@ mod tests {
         assert_eq!(odd.buttons[0].dial_target(), Some("61"));
         assert_eq!(odd.watched_numbers(), vec!["61", "sip:sales@pbx.example"]);
         assert!(AppState::validate(&with(vec![button("transfer", "sip:61@pbx with space", "")])).is_err());
+        // A dial without BLF is not watched, so its number may be written as the
+        // dial box takes it: RFC 3966 separators, a leading +, a tel: scheme.
+        // Letters are still no number, and an empty one is refused like any other.
+        let speed = with(vec![button("speed", "06-1234-5678", ""), button("dial", "1002", "")]);
+        assert!(AppState::validate(&speed).is_ok());
+        assert_eq!(speed.watched_numbers(), vec!["1002"]);
+        assert_eq!(speed.buttons[0].transfer_target(), None);
+        assert_eq!(speed.buttons[0].dial_target(), None);
+        assert!(AppState::validate(&with(vec![button("speed", "tel:+81-6-1234-5678", "")])).is_ok());
+        assert!(AppState::validate(&with(vec![button("speed", "<sip:sales@pbx.example>", "")])).is_ok());
+        assert!(AppState::validate(&with(vec![button("speed", "sales", "")])).is_err());
+        assert!(AppState::validate(&with(vec![button("speed", "", "")])).is_err());
         // A link button holds a web address and nothing the engine would dial.
         let page = with(vec![button("open", " https://pbx.example/extensions ", "")]);
         assert!(AppState::validate(&page).is_ok());
@@ -3061,6 +3087,8 @@ mod tests {
         assert_eq!(dial_target(" (06) 1234.5678 "), Ok("0612345678".into()));
         assert_eq!(dial_target("+81-6-1234-5678"), Ok("+81612345678".into()));
         assert_eq!(dial_target("*21#"), Ok("*21#".into()));
+        assert_eq!(dial_target("tel:+81-6-1234-5678"), Ok("+81612345678".into()));
+        assert_eq!(dial_target("TEL:(06) 1234-5678"), Ok("0612345678".into()));
         assert_eq!(dial_target("<sip:1001@pbx.example>"), Ok("sip:1001@pbx.example".into()));
         assert_eq!(dial_target("SIPS:1001@pbx.example"), Ok("SIPS:1001@pbx.example".into()));
         for wrong in ["", "+", "answer", "90 0a", "１２３", "12+34", "1_2", "sip:10 01@pbx", "sip:１@pbx"] {

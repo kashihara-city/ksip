@@ -80,6 +80,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       BUTTON_COUNT:'({0} set)',
       BUTTON_KIND:'Function',
       BUTTON_KIND_DIAL:'Dial (with BLF)',
+      BUTTON_KIND_SPEED:'Dial (without BLF)',
       BUTTON_KIND_DND:'Do not disturb (DND)',
       BUTTON_KIND_MWI:'Voicemail (MWI)',
       BUTTON_KIND_NONE:'Not used',

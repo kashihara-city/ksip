@@ -50,6 +50,14 @@ try {
     Click-Id 'custom-7';Wait-Class 'line-1' 'call-established'
     Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
     'PASS: 拡張ボタンは右側の欄に出て、窓が2倍の幅になり、発信できる'
+    # A dial without BLF: the number stays as written, with its separator, no
+    # watch state is shown, and pressing it calls the peer all the same.
+    $separated=$extension.Substring(0,2)+'-'+$extension.Substring(2)
+    Wait-Text 'custom-10' ([regex]::Escape($separated)) | Out-Null
+    if((Wait-Id 'custom-10').Current.Name -match '状態不明|使用中|空き'){throw 'A dial without BLF shows a watch state'}
+    Click-Id 'custom-10';Wait-Class 'line-1' 'call-established'
+    Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
+    'PASS: ダイヤル（BLFなし）は区切り付きの番号のまま発信できる'
     # Idle: the speed dial can be pressed, the park slot is free and waits for a
     # call, the transfer has nothing to send.
     Wait-NoClass 'custom-2' 'occupied'
