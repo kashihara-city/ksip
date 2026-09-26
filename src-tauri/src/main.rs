@@ -6,6 +6,7 @@ mod licenses;
 mod message;
 mod mp3;
 mod native;
+mod phone_state;
 mod protocol;
 mod shortcuts;
 mod storage;

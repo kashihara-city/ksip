@@ -6,8 +6,9 @@ $root=Split-Path (Split-Path $PSScriptRoot)
 Use-KsipBuild $Folder $PSBoundParameters.ContainsKey('Folder')
 $version=Get-KsipVersion
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
-# The buttons profile has the do-not-disturb button (custom-8).
-Start-KsipProfile 'buttons'
+# The buttons profile has the do-not-disturb button (custom-8); 'notray' keeps
+# the window from going to the tray between the stages here.
+Start-KsipProfile 'buttons notray'
 $app=$null
 function Count-History([string]$word){
     $text=(Text-Id 'call-history')

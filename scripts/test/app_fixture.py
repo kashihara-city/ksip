@@ -10,7 +10,11 @@ if sys.argv[1]=='setup':
     configured=accounts()
     # 'setup tls' points the profile at the TLS port and asks for encrypted media,
     # as the extension the PBX requires SRTP on; the plain profile is the first extension.
-    secure=len(sys.argv)>2 and sys.argv[2].strip()=='tls'
+    # The profile name may carry flags after a space: 'buttons notray' is the
+    # buttons profile without the return to the tray after a call.
+    tokens=(sys.argv[2] if len(sys.argv)>2 else '').split()
+    mode=tokens[0] if tokens else '';flags=set(tokens[1:])
+    secure=mode=='tls'
     where=lab()
     own=account_with('sdes','TLS/SRTPでのアプリのテスト') if secure else configured[0]
     put_account(TARGET,own)
@@ -22,7 +26,7 @@ if sys.argv[1]=='setup':
     # 'setup buttons' defines custom buttons: a speed dial to the peer, the lab's
     # first park slot, transfers to the playback number, a link, a panel button,
     # do not disturb and voicemail; the numbers come from lab.json.
-    if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':
+    if mode=='buttons':
         n=numbers();slot=n['park_slots'][0]
         policy+=[('button_1_title','Peer'),('button_1_kind','dial'),('button_1_number',configured[1]['extension']),
                  # The pickup target is named as well, so that the field is exercised; it is the slot itself here.
@@ -40,9 +44,9 @@ if sys.argv[1]=='setup':
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.
-        if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':general['tray_after_call']=10
+        if mode=='buttons' and 'notray' not in flags:general['tray_after_call']=10
         # 'setup missing-device' saves a microphone that no machine has.
-        if len(sys.argv)>2 and sys.argv[2].strip()=='missing-device':general['microphone']='{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}'
+        if mode=='missing-device':general['microphone']='{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}'
         winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(general))
         for name,value in policy:
             winreg.SetValueEx(key,name,0,winreg.REG_SZ,value)
