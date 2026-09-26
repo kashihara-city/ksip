@@ -380,7 +380,7 @@ function openSettings(){
   // The list shows the saved order first, ticked, then the rest unticked in the usual order.
   const codecOrder=(state.settings.codecs||'').split(',').map(s=>s.trim()).filter(Boolean),codecsInUse=codecOrder.length?codecOrder:CODEC_NAMES,codecList=$('codec-list');
   for(const name of [...codecsInUse,...CODEC_NAMES.filter(n=>!codecsInUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=codecsInUse.includes(name);}}
-  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;$('noise_suppression').value=state.settings.noise_suppression||'high';$('agc').checked=!!state.settings.agc;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
+  $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;$('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';$('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;$('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;$('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';$('auto_answer').checked=!!state.settings.auto_answer;$('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;$('noise_suppression').value=state.settings.noise_suppression||'high';$('agc').checked=!!state.settings.agc;$('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   $('settings-error').hidden=true;$('configuration').showModal();
 }
@@ -468,10 +468,19 @@ $('close-settings').addEventListener('click',()=>{$('password').value='';$('conf
 // A codec moves one row up or down; the rows' order is the order offered.
 $('codec-list').addEventListener('click',e=>{const button=e.target.closest('button[data-move]');if(!button)return;const row=button.closest('li'),list=row.parentElement;if(button.dataset.move==='-1'){if(row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);}else if(row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);});
 $('configuration').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});
+// SDES and OSRTP carry their keys in the signalling, so they are offered only
+// while the signalling is TLS; the note under the choice says so.
+function syncEncryptionChoices(){
+  const tls=$('transport').value==='tls',media=$('media_encryption');
+  for(const option of media.options){if(option.value==='sdes'||option.value==='osrtp'){option.hidden=!tls;option.disabled=!tls;}}
+  if(!tls&&(media.value==='sdes'||media.value==='osrtp'))media.value='';
+  const note=$('media-encryption-note');note.textContent=tls?'':t('SETTINGS_MEDIA_TLS_ONLY');note.hidden=tls;
+}
 $('transport').addEventListener('change',()=>{
   // 既定のポートを使っているときだけ、方式に合わせて入れ替える。
   const tls=$('transport').value==='tls',port=$('port');
   if(port.value.trim()===(tls?'5060':'5061'))port.value=tls?'5061':'5060';
+  syncEncryptionChoices();
 });
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that

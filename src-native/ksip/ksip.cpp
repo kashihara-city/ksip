@@ -287,7 +287,7 @@ int login(re_printf *pf, void*) {
     if (!err) {
         authority=std::string(server)+":"+std::to_string(port);
         // The transport belongs in the URI, the media encryption in the parameters.
-        sip_scheme=(transport && !str_casecmp(transport,"TLS")) ? "tls" : "udp";
+        sip_scheme=(transport && !str_casecmp(transport,"TLS")) ? "tls" : (transport && !str_casecmp(transport,"TCP")) ? "tcp" : "udp";
         // The codecs the app chose, in its order; a name this build does not
         // know is skipped, and none at all means every codec in the usual order.
         std::string codecs;

@@ -60,7 +60,7 @@ try {
     # Reconnecting registers again, and calls arrive as before.
     Click-Id 'reconnect'
     Wait-Class 'registration' 'reg-register_ok'
-    Wait-Text 'transport-label' '^(UDP|TLS)$' | Out-Null
+    Wait-Text 'transport-label' '^(UDP|TCP|TLS)$' | Out-Null
     Start-Caller
     Wait-Class 'line-1' 'call-incoming'
     Click-Id 'answer';Wait-Class 'line-1' 'call-established'

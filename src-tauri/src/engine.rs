@@ -262,10 +262,13 @@ impl Settings {
         }
         numbers
     }
-    /// The SIP transport baresip should use. Empty means the historic UDP.
+    /// The SIP transport baresip should use. Empty means the historic UDP;
+    /// TCP is as unencrypted as UDP, only TLS protects the signalling.
     pub fn sip_transport(&self) -> &str {
         if self.transport.eq_ignore_ascii_case("tls") {
             "TLS"
+        } else if self.transport.eq_ignore_ascii_case("tcp") {
+            "TCP"
         } else {
             "UDP"
         }

@@ -159,16 +159,17 @@ try {
     if(Text-Id 'codec-label'){throw 'The codec is still shown after the call ended'}
     Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null
     if((Value-Id 'password').Current.Value){throw 'Stored password returned to the UI'}
-    # Switching the transport moves a default port, and leaves any other port alone.
-    # The options are UDP first, then TLS.
+    # Switching to TLS (the third choice, after none-UDP and none-TCP) moves a
+    # default port, and leaves any other port alone.
+    # The choices are none (UDP), none (TCP), then TLS.
     $port=Value-Id 'port'
     if($port.Current.Value -ne '5060'){throw "Unexpected port $($port.Current.Value)"}
-    Select-Index 'transport' 1
+    Select-Index 'transport' 2
     if((Value-Id 'port').Current.Value -ne '5061'){throw 'TLS did not move the port to 5061'}
     Select-Index 'transport' 0
     if((Value-Id 'port').Current.Value -ne '5060'){throw 'UDP did not move the port back to 5060'}
     $port.SetValue('5080')
-    Select-Index 'transport' 1
+    Select-Index 'transport' 2
     if((Value-Id 'port').Current.Value -ne '5080'){throw 'A port that is not the default must stay'}
     Select-Index 'transport' 0
     $port.SetValue('5060')
