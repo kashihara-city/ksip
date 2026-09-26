@@ -653,6 +653,38 @@ fn automatic_answer_targets(
         .map(|call| call.id.clone())
         .collect()
 }
+/// The name a conversion writes under until it is finished. It keeps the
+/// `.mp3` extension, which is how the encoder picks its container, and is
+/// never what a finished recording is called.
+fn partial_recording(wav: &Path) -> PathBuf {
+    wav.with_extension("converting.mp3")
+}
+/// Tidies a recordings folder from earlier runs and says which WAVs still
+/// want converting: a WAV whose MP3 is there goes (the conversion went
+/// through, the WAV was in use at the time), a partial MP3 goes (its
+/// conversion never finished, and the WAV is still the recording), and a WAV
+/// without an MP3 is handed back. Nothing else is touched.
+fn sweep_recording_folder(folder: &Path) -> Vec<PathBuf> {
+    let mut leftover = Vec::new();
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return leftover;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if name.ends_with(".converting.mp3") {
+            let _ = std::fs::remove_file(&path);
+        } else if name.ends_with(".wav") {
+            if path.with_extension("mp3").is_file() {
+                let _ = std::fs::remove_file(&path);
+            } else {
+                leftover.push(path);
+            }
+        }
+    }
+    leftover
+}
 fn automatic_recording_target(enabled: bool, calls: &[CallInfo]) -> Option<String> {
     enabled
         .then(|| {
@@ -2342,8 +2374,12 @@ impl AppState {
     }
     /// Turns a recording that has just closed into an MP3, on a thread of
     /// its own with a lower priority, so that the next call is not disturbed.
-    /// The WAV goes once the MP3 is there; if it is being played just then,
-    /// it stays until the next start sweeps it away. A failure leaves the WAV.
+    /// The encoder writes under a partial name, and the real name appears
+    /// only once the file is finished: nothing reads a half-written MP3 as
+    /// the recording, and an exit in the middle leaves the WAV as the one
+    /// copy, which the next start converts. The WAV goes once the MP3 is
+    /// there; if it is being played just then, it stays until the next start
+    /// sweeps it away. A failure leaves the WAV.
     fn convert_recording(&self, wav: PathBuf) {
         let me = self.clone();
         me.converting.fetch_add(1, Ordering::Relaxed);
@@ -2352,31 +2388,29 @@ impl AppState {
             // SAFETY: the current thread's own priority is all that is touched.
             unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
             let mp3 = wav.with_extension("mp3");
+            let partial = partial_recording(&wav);
             let name = wav.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            match crate::mp3::transcode(&wav, &mp3) {
+            let finished = crate::mp3::transcode(&wav, &partial)
+                .and_then(|()| std::fs::rename(&partial, &mp3).map_err(|e| message_with("RECORDING_CONVERT_FAILED", [err(e)])));
+            match finished {
                 Ok(()) => match std::fs::remove_file(&wav) {
                     Ok(()) => me.log(LOG_APP, message_with("RECORDING_CONVERTED", [&name])),
                     Err(_) => me.log(LOG_APP, message_with("RECORDING_WAV_KEPT", [&name])),
                 },
                 Err(e) => {
-                    let _ = std::fs::remove_file(&mp3);
+                    let _ = std::fs::remove_file(&partial);
                     me.log(LOG_APP, e);
                 }
             }
             me.converting.fetch_sub(1, Ordering::Relaxed);
         });
     }
-    /// WAVs whose MP3 exists: the conversion went through but the WAV could
-    /// not go at the time, most likely because it was being played.
+    /// What earlier runs left in the recordings folder, at start: finished
+    /// conversions lose their WAV, unfinished ones lose their partial MP3, and
+    /// a WAV without an MP3 is converted now.
     fn sweep_recordings(&self) {
-        let Ok(entries) = std::fs::read_dir(self.data.join("recordings")) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")) && path.with_extension("mp3").is_file() {
-                let _ = std::fs::remove_file(&path);
-            }
+        for wav in sweep_recording_folder(&self.data.join("recordings")) {
+            self.convert_recording(wav);
         }
     }
     fn sync_auto_record(&self) -> Result<(), String> {
@@ -2599,6 +2633,13 @@ impl AppState {
         self.closing.store(true, Ordering::SeqCst);
         let _operation = self.operations.lock().unwrap();
         let _ = self.stop();
+        // A conversion still running gets a moment to finish. One that does not
+        // make it leaves its WAV and a partial MP3, and the next start converts
+        // the WAV again, so nothing is lost by leaving.
+        let end = Instant::now() + Duration::from_secs(5);
+        while self.converting.load(Ordering::Relaxed) > 0 && Instant::now() < end {
+            thread::sleep(Duration::from_millis(100));
+        }
     }
     /// The engine binds one address, so a new one means the binding is stale.
     /// Re-registering does not re-bind; only a restart does, and that is what
@@ -2826,6 +2867,47 @@ mod tests {
         assert!(rejected(Settings { noise_suppression: "loud".into(), ..Settings::default() }));
         assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
         assert!(AppState::validate(&Settings::default()).is_ok());
+    }
+    #[test]
+    fn the_recordings_folder_is_tidied_and_leftover_wavs_are_named() {
+        let folder = std::env::temp_dir().join(format!("ksip-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = |name: &str| {
+            std::fs::write(folder.join(name), b"x").unwrap();
+            folder.join(name)
+        };
+        // Finished: the WAV goes. Unfinished: the partial goes, the WAV is handed back.
+        // Never started: handed back. A finished MP3 alone stays as it is.
+        file("2026-09-26_10-00-00_1002.wav");
+        file("2026-09-26_10-00-00_1002.mp3");
+        file("2026-09-26_10-05-00_1003.wav");
+        file("2026-09-26_10-05-00_1003.converting.mp3");
+        file("2026-09-26_10-10-00_1004.wav");
+        file("2026-09-26_10-15-00_1005.mp3");
+        let leftover = sweep_recording_folder(&folder);
+        assert_eq!(
+            leftover,
+            vec![folder.join("2026-09-26_10-05-00_1003.wav"), folder.join("2026-09-26_10-10-00_1004.wav")]
+        );
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "2026-09-26_10-00-00_1002.mp3",
+                "2026-09-26_10-05-00_1003.wav",
+                "2026-09-26_10-10-00_1004.wav",
+                "2026-09-26_10-15-00_1005.mp3"
+            ]
+        );
+        assert!(sweep_recording_folder(&folder.join("missing")).is_empty());
+        assert_eq!(partial_recording(Path::new("a/b.wav")), PathBuf::from("a/b.converting.mp3"));
+        let _ = std::fs::remove_dir_all(&folder);
     }
     #[test]
     fn encryption_that_needs_tls_and_unknown_values_are_refused() {
