@@ -2,7 +2,9 @@
 //! and the links; what the engine link reports; and what work that ran
 //! outside the actor brings back. Every change to the phone's state starts
 //! as one of these, and they are handled one at a time, in order.
-use crate::audio::{Calibration, Volume};
+use crate::audio::{Calibration, Device, Volume};
+use crate::engine_config::AudioEndpoints;
+use crate::engine_link::{EngineLink, StopReport};
 use crate::settings::Settings;
 use crate::storage::Account;
 use serde_json::Value;
@@ -96,13 +98,74 @@ pub enum LinkBody {
     Exited(ExitStatus),
 }
 
-/// Everything that reaches the actor's queue.
-pub enum Message {
-    Command(Command),
-    Link(LinkMessage),
-    /// The echo calibration that ran outside the actor has finished.
+/// Who is told when a start (or a restart) has finished, and how.
+pub enum AfterStart {
+    /// The command that asked for it gets the result.
+    Reply(Reply<()>),
+    /// An automatic path: a failure goes in the banner as a polling error.
+    ReportError,
+    /// The first connect: a failure goes in the banner and the log.
+    ShowError,
+}
+/// Who is told when a stop has finished.
+pub enum AfterStop {
+    Nothing,
+    /// A start that got its engine up but not registered: the engine was
+    /// stopped again, and the start is answered with what went wrong.
+    Answer { then: AfterStart, result: Result<(), String> },
+}
+/// Who is told when the devices have been read again.
+pub enum AfterDevices {
+    Reply(Reply<()>),
+    /// The first look at the devices, followed by the first connect.
+    Initialize,
+}
+/// A started engine, with what its start decided.
+pub struct Ready {
+    pub link: EngineLink,
+    pub endpoints: AudioEndpoints,
+    pub address: String,
+    pub notes: Vec<String>,
+}
+
+/// What work that ran outside the actor brings back. The actor decides;
+/// the work only reports.
+pub enum Work {
+    /// The previous engine, if any, was stopped and a new one was started,
+    /// or the start failed. `stopped` is how the previous one went.
+    Started {
+        generation: u64,
+        stopped: Option<Result<StopReport, String>>,
+        /// Boxed: the started engine is the largest thing a message carries.
+        result: Result<Box<Ready>, String>,
+        watched: String,
+        then: AfterStart,
+    },
+    /// An engine was stopped.
+    Stopped {
+        report: Result<StopReport, String>,
+        then: AfterStop,
+    },
+    /// The audio devices were read again.
+    Devices {
+        result: Result<Vec<Device>, String>,
+        then: AfterDevices,
+    },
+    /// The chosen adapter's address, as it is now; None when it has none.
+    Address {
+        adapter: String,
+        address: Option<String>,
+    },
+    /// The echo calibration has finished.
     Calibrated {
         result: Result<Calibration, String>,
         reply: Reply<Calibration>,
     },
+}
+
+/// Everything that reaches the actor's queue.
+pub enum Message {
+    Command(Command),
+    Link(LinkMessage),
+    Work(Work),
 }

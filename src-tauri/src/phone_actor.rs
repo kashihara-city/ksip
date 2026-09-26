@@ -6,22 +6,26 @@
 //! them. The window reads a published copy of the snapshot, and everyone
 //! else sends a `Command` through a `PhoneHandle`.
 //!
+//! The actor decides and asks; it does not wait on the outside world.
 //! Requests to the engine are answered on the same queue, so the actor
 //! waits for an answer by taking what the link delivers ahead of it, in
-//! receive order, and sets everything else aside for afterwards. Work that
-//! takes long (the echo calibration, turning a recording into an MP3) runs
-//! on a thread of its own and reports back as a message.
-use crate::audio::{Calibration, Volume};
+//! receive order, and sets everything else aside for afterwards. Starting
+//! and stopping the engine process, reading the audio devices, asking the
+//! network for the adapter's address, the echo calibration and the writing
+//! of the history run on threads of their own and report back as `Work`.
+//! While the phone is being worked on (a restart, a settings change, a
+//! calibration) it is in maintenance: the engine refuses calls, and the
+//! operations that arrive wait in order for it to end.
 use crate::app::Services;
+use crate::audio::Calibration;
 use crate::engine_config::{endpoint_notes, AudioEndpoints};
-use crate::engine_link::{EngineLink, EngineReport};
+use crate::engine_link::{EngineLink, EngineReport, StopReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
-use crate::phone_state::{Mwi, Snapshot, Transfer};
+use crate::message::{message, message_with};
+use crate::phone_message::{AfterDevices, AfterStart, AfterStop, Command, LinkBody, LinkMessage, Message, Ready, Reply, Work};
+use crate::phone_state::{automatic_recording_target, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
 use crate::settings::{dial_target, validate, CustomButton, Settings};
-use crate::message::{message, message_with};
-use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Reply};
-use crate::phone_state::{automatic_recording_target, PhoneState};
 use crate::storage::Account;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -35,6 +39,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const POLL: Duration = Duration::from_millis(500);
 /// How long an answer from the engine is waited for.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(8);
+/// How long an operation waits for the phone to be free before it is
+/// dropped. A restart takes seconds at most; a calibration under a minute.
+const WAIT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The way in: sends commands to the actor. Cheap to clone.
 #[derive(Clone)]
@@ -97,18 +104,30 @@ struct Actor {
     published: Published,
     /// The engine, while one runs.
     link: Option<EngineLink>,
+    /// The generation of an engine being started on a worker, until the
+    /// worker reports; its first words are already this phone's.
+    starting: Option<u64>,
+    /// The engine being started lost its connection before it was taken.
+    starting_lost: bool,
+    /// An engine is being stopped on a worker.
+    stopping: bool,
     /// The generation whose exit is awaited after its connection was lost.
     watched: Option<u64>,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
+    /// A look at the adapter's address is under way.
+    probing: bool,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
-    /// Operations that arrived while the phone was in maintenance, run in
-    /// order once it ends; answered APP_CLOSING if the app leaves first.
-    deferred: VecDeque<Command>,
+    /// Operations that arrived while the phone was in maintenance, with
+    /// when they arrived: run in order once it ends, dropped after
+    /// WAIT_TIMEOUT, answered APP_CLOSING if the app leaves first.
+    deferred: VecDeque<(Instant, Command)>,
     /// Messages set aside while an answer was awaited, handled next.
     stash: VecDeque<Message>,
     closing: bool,
+    /// The shutdown waiting for the engine to be gone.
+    shutdown: Option<Reply<()>>,
     next_poll: Instant,
 }
 
@@ -122,12 +141,17 @@ impl Actor {
             view,
             published,
             link: None,
+            starting: None,
+            starting_lost: false,
+            stopping: false,
             watched: None,
             bound: String::new(),
+            probing: false,
             polling_error: String::new(),
             deferred: VecDeque::new(),
             stash: VecDeque::new(),
             closing: false,
+            shutdown: None,
             next_poll: Instant::now() + POLL,
         }
     }
@@ -154,16 +178,17 @@ impl Actor {
                 self.publish();
             }
             self.run_deferred();
-            if self.closing {
+            self.finish_shutdown();
+            if self.closing && self.shutdown.is_none() {
                 break;
             }
         }
-        for command in self.deferred.drain(..) {
-            Self::refuse(command);
+        for (_, command) in self.deferred.drain(..) {
+            Self::refuse(command, message("APP_CLOSING"));
         }
-        for message in self.stash.drain(..).chain(std::iter::from_fn(|| self.rx.try_recv().ok())) {
-            if let Message::Command(command) = message {
-                Self::refuse(command);
+        for left in self.stash.drain(..).chain(std::iter::from_fn(|| self.rx.try_recv().ok())) {
+            if let Message::Command(command) = left {
+                Self::refuse(command, message("APP_CLOSING"));
             }
         }
     }
@@ -177,7 +202,7 @@ impl Actor {
     /// them can begin maintenance again, and the rest wait for that too.
     fn run_deferred(&mut self) {
         while !self.phone.in_maintenance() && !self.closing {
-            let Some(command) = self.deferred.pop_front() else {
+            let Some((_, command)) = self.deferred.pop_front() else {
                 break;
             };
             self.handle_command(command);
@@ -187,15 +212,14 @@ impl Actor {
     fn publish(&self) {
         self.published.set(&self.view);
     }
-    /// Answers a command that will not be carried out because the app is leaving.
-    fn refuse(command: Command) {
-        let closing = message("APP_CLOSING");
+    /// Answers a command that will not be carried out.
+    fn refuse(command: Command, why: String) {
         match command {
-            Command::Connect(reply) | Command::RefreshDevices(reply) | Command::Shutdown(reply) => reply.send(Err(closing)),
-            Command::SaveConfiguration { reply, .. } | Command::SelectAudioDevice { reply, .. } => reply.send(Err(closing)),
-            Command::Action { reply, .. } => reply.send(Err(closing)),
-            Command::CalibrateAec { reply, .. } => reply.send(Err(closing)),
-            Command::SetVolume { reply, .. } => reply.send(Err(closing)),
+            Command::Connect(reply) | Command::RefreshDevices(reply) | Command::Shutdown(reply) => reply.send(Err(why)),
+            Command::SaveConfiguration { reply, .. } | Command::SelectAudioDevice { reply, .. } => reply.send(Err(why)),
+            Command::Action { reply, .. } => reply.send(Err(why)),
+            Command::CalibrateAec { reply, .. } => reply.send(Err(why)),
+            Command::SetVolume { reply, .. } => reply.send(Err(why)),
             Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) => {}
         }
     }
@@ -215,40 +239,31 @@ impl Actor {
                 true
             }
             Message::Link(link) => self.handle_link(link),
-            Message::Calibrated { result, reply } => {
-                self.leave_maintenance();
-                self.answer(reply, result);
+            Message::Work(work) => {
+                self.handle_work(work);
                 true
             }
         }
     }
     fn handle_command(&mut self, command: Command) {
+        if self.closing {
+            Self::refuse(command, message("APP_CLOSING"));
+            return;
+        }
         if self.phone.in_maintenance() && Self::is_operation(&command) {
-            self.deferred.push_back(command);
+            self.deferred.push_back((Instant::now(), command));
             return;
         }
         match command {
-            Command::Initialize => self.initialize(),
-            Command::Connect(reply) => {
-                let result = self.connect();
-                self.answer(reply, result);
-            }
+            Command::Initialize => self.read_devices(AfterDevices::Initialize),
+            Command::Connect(reply) => self.connect(AfterStart::Reply(reply)),
             Command::Action { name, id, value, line, reply } => {
                 let result = self.action(&name, &id, &value, line);
                 self.answer(reply, result);
             }
-            Command::SaveConfiguration { settings, account, reply } => {
-                let result = self.save_configuration(*settings, account);
-                self.answer(reply, result);
-            }
-            Command::SelectAudioDevice { kind, device, reply } => {
-                let result = self.select_audio_device(&kind, device);
-                self.answer(reply, result);
-            }
-            Command::RefreshDevices(reply) => {
-                let result = self.refresh_devices();
-                self.answer(reply, result);
-            }
+            Command::SaveConfiguration { settings, account, reply } => self.save_configuration(*settings, account, reply),
+            Command::SelectAudioDevice { kind, device, reply } => self.select_audio_device(&kind, device, reply),
+            Command::RefreshDevices(reply) => self.read_devices(AfterDevices::Reply(reply)),
             Command::CalibrateAec { microphone, speaker, careful, reply } => self.calibrate_aec(microphone, speaker, careful, reply),
             Command::SetVolume { kind, device, level, mute, reply } => {
                 let result = self.set_volume(&kind, &device, level, mute);
@@ -259,38 +274,57 @@ impl Actor {
             Command::ReportError(error) => self.report_error(error),
             Command::Shutdown(reply) => {
                 self.closing = true;
-                for command in self.deferred.drain(..) {
-                    Self::refuse(command);
+                self.shutdown = Some(reply);
+                for (_, command) in self.deferred.drain(..) {
+                    Self::refuse(command, message("APP_CLOSING"));
                 }
-                let _ = self.stop_engine();
+                // An engine being started is stopped once it reports; one that
+                // runs is stopped now. The answer waits for the engine to be gone.
+                if self.starting.is_none() && !self.stopping {
+                    self.begin_stop(AfterStop::Nothing);
+                }
+            }
+        }
+    }
+    /// The shutdown is answered once nothing of the engine is left.
+    fn finish_shutdown(&mut self) {
+        if self.closing && self.link.is_none() && self.starting.is_none() && !self.stopping {
+            if let Some(reply) = self.shutdown.take() {
                 self.answer(reply, Ok(()));
             }
         }
     }
-    /// What the link delivered. Only the engine the actor holds can change
-    /// the phone; the words of an earlier one are still worth their log line.
+    /// What the link delivered. Only the engine the actor holds, or the one
+    /// it is starting, can change the phone; the words of an earlier one are
+    /// still worth their log line.
     fn handle_link(&mut self, link: LinkMessage) -> bool {
-        let current = self.link.as_ref().map(EngineLink::generation) == Some(link.generation);
+        let held = self.link.as_ref().map(EngineLink::generation) == Some(link.generation);
+        let starting = self.starting == Some(link.generation);
         match link.body {
             LinkBody::Log(text) => {
-                let changed = current && self.derive_from_log(&text);
+                let changed = (held || starting) && self.derive_from_log(&text);
                 self.services.log(LOG_ENGINE, text);
                 changed
             }
             LinkBody::Event(event) => {
-                if current {
+                if held {
                     self.event(&event);
                 }
-                current
+                held
             }
             // An answer nobody waits for any more: it came after its time ran out.
             LinkBody::Response { .. } => false,
             LinkBody::Lost => {
-                if !current {
+                if starting {
+                    // Noted; the start reports next and finds its engine gone.
+                    self.starting_lost = true;
+                    return false;
+                }
+                if !held {
                     return false;
                 }
                 self.services.log(LOG_APP, message("ENGINE_CONTROL_LOST"));
-                let engine = self.link.take().expect("the current link");
+                let engine = self.link.take().expect("the held link");
                 self.close_calls_on_exit(None);
                 self.watched = Some(link.generation);
                 engine.watch_exit(self.tx.clone());
@@ -303,11 +337,66 @@ impl Actor {
                 self.watched = None;
                 let notice = message_with("ENGINE_EXITED", [status]);
                 // A reconnect may have come first; the exit is still on record.
-                if self.link.is_none() {
+                if self.link.is_none() && self.starting.is_none() {
                     self.view.error = notice.clone();
                 }
                 self.services.log(LOG_APP, notice);
                 true
+            }
+        }
+    }
+    /// What work that ran outside brings back.
+    fn handle_work(&mut self, work: Work) {
+        match work {
+            Work::Started { generation, stopped, result, watched, then } => {
+                let result = result.map(|ready| *ready);
+                if let Some(report) = stopped {
+                    self.log_stop(report);
+                }
+                if self.starting != Some(generation) {
+                    // Not the start under way: a leftover of one superseded.
+                    if let Ok(ready) = result {
+                        self.stop_link(ready.link, AfterStop::Nothing);
+                    }
+                    self.finish_start(then, Err(message("APP_CLOSING")));
+                    return;
+                }
+                self.starting = None;
+                let lost = std::mem::take(&mut self.starting_lost);
+                match result {
+                    Err(e) => {
+                        self.leave_maintenance();
+                        self.finish_start(then, Err(e));
+                    }
+                    Ok(ready) if self.closing => {
+                        self.stop_link(ready.link, AfterStop::Nothing);
+                        self.finish_start(then, Err(message("APP_CLOSING")));
+                    }
+                    Ok(ready) if lost => {
+                        self.stop_link(ready.link, AfterStop::Answer { then, result: Err(message("ENGINE_CONTROL_LOST")) });
+                    }
+                    Ok(ready) => self.take_started(ready, &watched, then),
+                }
+            }
+            Work::Stopped { report, then } => {
+                self.stopping = false;
+                self.log_stop(report);
+                match then {
+                    AfterStop::Nothing => {}
+                    AfterStop::Answer { then, result } => {
+                        self.leave_maintenance();
+                        self.finish_start(then, result);
+                    }
+                }
+            }
+            Work::Devices { result, then } => self.take_devices(result, then),
+            Work::Address { adapter, address } => {
+                self.probing = false;
+                self.follow_network(&adapter, address);
+            }
+            Work::Calibrated { result, reply } => {
+                self.leave_maintenance();
+                self.answer(reply, result);
             }
         }
     }
@@ -373,8 +462,9 @@ impl Actor {
             self.view.error = message("AUDIO_DEVICE_INIT_FAILED");
         }
     }
-    /// Once every poll interval: an engine that ended without being asked, the
-    /// engine's state, and the network the engine is bound to.
+    /// Once every poll interval: an engine that ended without being asked,
+    /// the engine's state, the network the engine is bound to, and the
+    /// operations that have waited too long.
     fn tick(&mut self) {
         if let Some(status) = self.link.as_mut().and_then(EngineLink::exited) {
             let engine = self.link.take().expect("the link that exited");
@@ -387,7 +477,22 @@ impl Actor {
             Err(e) => self.report_error(e),
             Ok(()) => self.clear_polling_error(),
         }
-        self.follow_network();
+        self.probe_network();
+        let now = Instant::now();
+        let mut kept = VecDeque::new();
+        let mut expired = Vec::new();
+        for (since, command) in self.deferred.drain(..) {
+            if now.duration_since(since) > WAIT_TIMEOUT {
+                expired.push(command);
+            } else {
+                kept.push_back((since, command));
+            }
+        }
+        self.deferred = kept;
+        for command in expired {
+            self.services.log(LOG_APP, message("OPERATION_WAIT_TIMEOUT"));
+            Self::refuse(command, message("OPERATION_WAIT_TIMEOUT"));
+        }
     }
     /// Sends a request and waits for its answer, taking what the link delivers
     /// ahead of it in order (events, log lines, the loss of the connection)
@@ -472,7 +577,7 @@ impl Actor {
                     self.show_error(message_with("CALL_NOT_CONNECTED", [&call.outcome]));
                 }
             }
-            self.services.history.lock().unwrap().add(&self.services.data, applied.ended)?;
+            self.services.add_history(applied.ended);
         }
         for id in applied.answer {
             let payload =
@@ -510,123 +615,213 @@ impl Actor {
             self.services.log(LOG_APP, format!("ksip: maintenance {value} not taken by the engine ({e})"));
         }
     }
-    fn initialize(&mut self) {
-        if let Err(e) = self.refresh_devices() {
-            self.show_error(e);
+    /// Hands a worker a job whose result comes back on the queue.
+    fn work(&self, job: impl FnOnce() -> Work + Send + 'static) {
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let _ = tx.send(Message::Work(job()));
+        });
+    }
+    // ---- devices
+    /// Reads the devices on a worker; `take_devices` gets the list.
+    fn read_devices(&mut self, then: AfterDevices) {
+        self.work(move || Work::Devices { result: crate::audio::devices(), then });
+    }
+    /// The devices are in. When the engine runs and no call is going on, it
+    /// is given the saved ones: a device that was unplugged and put back, or
+    /// a new Windows default, is only picked up that way. A saved device
+    /// that has come back is taken into use, and one that has gone gives way
+    /// to the default; the engine is only restarted when it does not take
+    /// the change.
+    fn take_devices(&mut self, result: Result<Vec<crate::audio::Device>, String>, then: AfterDevices) {
+        let devices = match result {
+            Ok(devices) => devices,
+            Err(e) => return self.finish_devices(then, Err(e)),
+        };
+        self.view.devices = devices;
+        // The phone is being worked on already: the new list is enough for
+        // now, the devices reach the engine with its next start.
+        if self.link.is_none() || self.phone.in_maintenance() || self.enter_maintenance().is_err() {
+            return self.finish_devices(then, Ok(()));
         }
-        if !self.view.error.is_empty() {
-            return;
+        let taken = match self.services.settings() {
+            Err(e) => {
+                self.leave_maintenance();
+                return self.finish_devices(then, Err(e));
+            }
+            Ok(settings) => match self.apply_audio_endpoints(&settings) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.services.log(
+                        LOG_APP,
+                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
+                    );
+                    false
+                }
+            },
+        };
+        self.leave_maintenance();
+        // Restarting the engine would register again; someone who unregistered
+        // on purpose keeps the devices they have until they connect themselves.
+        if !taken && !self.view.unregistered_by_choice {
+            let then = match then {
+                AfterDevices::Reply(reply) => AfterStart::Reply(reply),
+                AfterDevices::Initialize => AfterStart::ShowError,
+            };
+            return self.connect(then);
         }
-        if self.view.account.has_password {
-            if let Err(e) = self.connect() {
-                self.show_error(e);
+        self.finish_devices(then, Ok(()));
+    }
+    fn finish_devices(&mut self, then: AfterDevices, result: Result<(), String>) {
+        match then {
+            AfterDevices::Reply(reply) => self.answer(reply, result),
+            AfterDevices::Initialize => {
+                if let Err(e) = result {
+                    self.show_error(e);
+                }
+                if !self.view.error.is_empty() {
+                    return;
+                }
+                if self.view.account.has_password {
+                    self.connect(AfterStart::ShowError);
+                }
             }
         }
     }
-    fn connect(&mut self) -> Result<(), String> {
+    // ---- the engine
+    /// Starts the engine on the saved settings, stopping the one that runs.
+    /// The phone is in maintenance until the start has reported; what the
+    /// start decides is told through `then`.
+    fn connect(&mut self, then: AfterStart) {
         if self.closing {
-            return Err(message("APP_CLOSING"));
+            return self.finish_start(then, Err(message("APP_CLOSING")));
         }
-        self.enter_maintenance()?;
-        let result = self.connect_engine();
-        self.leave_maintenance();
-        result
+        if let Err(e) = self.enter_maintenance() {
+            return self.finish_start(then, Err(e));
+        }
+        if let Err((e, then)) = self.begin_restart(then) {
+            self.leave_maintenance();
+            self.finish_start(then, Err(e));
+        }
     }
-    fn connect_engine(&mut self) -> Result<(), String> {
+    /// Everything of a restart that is decided here, before the worker takes
+    /// over: the account and settings, the calls that end with the engine,
+    /// the window's view of a phone that is connecting.
+    fn begin_restart(&mut self, then: AfterStart) -> Result<(), (String, AfterStart)> {
         // A connect is asked for (the button, a saved setting) or follows an
         // automatic reason that checked first; either way the phone is wanted
         // registered from here on.
         self.view.unregistered_by_choice = false;
-        let mut account = self
-            .services
-            .store
-            .read_account()?
-            .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
-        account.validate()?;
-        let settings = self.services.settings()?;
-        // What is stored may not have passed through the dialog (a policy, a
-        // hand-edited registry, an older version's values), so it is checked
-        // here as well before the engine is started with it.
-        validate(&settings)?;
-        // The engine takes thirty comma-separated numbers to watch, empty ones included.
-        let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
-        watched.resize(CustomButton::COUNT, String::new());
-        let watched = watched.join(",");
-        self.stop_engine()?;
+        let prepared = (|| -> Result<(Account, Settings, String), String> {
+            let mut account = self
+                .services
+                .store
+                .read_account()?
+                .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
+            account.validate()?;
+            let settings = self.services.settings()?;
+            // What is stored may not have passed through the dialog (a policy, a
+            // hand-edited registry, an older version's values), so it is checked
+            // here as well before the engine is started with it.
+            validate(&settings)?;
+            // The engine takes thirty comma-separated numbers to watch, empty ones included.
+            let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
+            watched.resize(CustomButton::COUNT, String::new());
+            Ok((account, settings, watched.join(",")))
+        })();
+        let (account, settings, watched) = match prepared {
+            Ok(prepared) => prepared,
+            Err(e) => return Err((e, then)),
+        };
+        // The old engine is asked to close what it holds while it can still
+        // answer; the process is the worker's to end.
+        let old = self.release_link();
+        self.services.logs.lock().unwrap().set_detail(settings.detail_log);
         // The window shows what the engine is actually running with, so a
         // reconnect brings the saved settings forward as well.
-        self.view.settings = settings.clone();
-        self.start_engine(settings, &account)?;
-        if let Err(e) = self.request("ksip_login", "") {
-            let _ = self.stop_engine();
-            return Err(e);
-        }
-        if let Err(e) = self.request("ksip_parking", &watched) {
-            let _ = self.stop_engine();
-            return Err(e);
-        }
-        Ok(())
-    }
-    fn start_engine(&mut self, s: Settings, account: &Account) -> Result<(), String> {
-        validate(&s)?;
-        self.services.logs.lock().unwrap().set_detail(s.detail_log);
-        if self.link.is_some() {
-            return Err(message("ENGINE_ALREADY_RUNNING"));
-        }
-        let prepared = self.services.prepare_start(&s, account, &self.view.devices)?;
-        for note in prepared.notes {
-            self.services.log(LOG_APP, note);
-        }
-        self.bound = prepared.address;
-        self.take_endpoints(&prepared.endpoints);
-        {
-            let v = &mut self.view;
-            v.settings = s;
-            v.error.clear();
-            v.aec_active = false;
-            v.microphone_fallback = false;
-            v.recording = false;
-            v.calls.clear();
-            v.transfer = Transfer::default();
-            v.parking.clear();
-            v.registration = "CONNECTING".into();
-            v.recording_call.clear();
-        }
+        let v = &mut self.view;
+        v.settings = settings.clone();
+        v.error.clear();
+        v.aec_active = false;
+        v.microphone_fallback = false;
+        v.recording = false;
+        v.calls.clear();
+        v.transfer = Transfer::default();
+        v.parking.clear();
+        v.registration = "CONNECTING".into();
+        v.recording_call.clear();
         // A new engine: the calls of the old one are gone, and what the old
         // one may still say is told apart by generation.
         let generation = self.phone.new_engine();
-        let engine = EngineLink::start(prepared.plan, generation, self.tx.clone())?;
-        self.link = Some(engine);
-        self.view.running = true;
+        self.starting = Some(generation);
+        self.starting_lost = false;
+        let (services, devices, tx) = (self.services.clone(), self.view.devices.clone(), self.tx.clone());
+        self.work(move || {
+            let stopped = old.map(EngineLink::stop);
+            let result = services.prepare_start(&settings, &account, &devices).and_then(|prepared| {
+                EngineLink::start(prepared.plan, generation, tx).map(|link| {
+                    Box::new(Ready {
+                        link,
+                        endpoints: prepared.endpoints,
+                        address: prepared.address,
+                        notes: prepared.notes,
+                    })
+                })
+            });
+            Work::Started { generation, stopped, result, watched, then }
+        });
         Ok(())
     }
-    /// Stops the engine, if one runs. The calls still up get their rows,
-    /// since the engine takes them down with it.
-    fn stop_engine(&mut self) -> Result<(), String> {
+    /// The started engine is taken and registered.
+    fn take_started(&mut self, ready: Ready, watched: &str, then: AfterStart) {
+        for note in ready.notes {
+            self.services.log(LOG_APP, note);
+        }
+        self.bound = ready.address;
+        self.take_endpoints(&ready.endpoints);
+        self.link = Some(ready.link);
+        self.view.running = true;
+        let registered = self
+            .request("ksip_login", "")
+            .and_then(|_| self.request("ksip_parking", watched))
+            .map(|_| ());
+        match registered {
+            Ok(()) => {
+                self.leave_maintenance();
+                self.finish_start(then, Ok(()));
+            }
+            Err(e) => self.begin_stop(AfterStop::Answer { then, result: Err(e) }),
+        }
+    }
+    fn finish_start(&mut self, then: AfterStart, result: Result<(), String>) {
+        match then {
+            AfterStart::Reply(reply) => self.answer(reply, result),
+            AfterStart::ReportError => {
+                if let Err(e) = result {
+                    self.report_error(e);
+                }
+            }
+            AfterStart::ShowError => {
+                if let Err(e) = result {
+                    self.show_error(e);
+                }
+            }
+        }
+    }
+    /// Takes the engine out of the phone: it is asked to close what it
+    /// holds, the calls still up get their rows (the engine takes them down
+    /// with it), and the window shows the phone as disconnected. The process
+    /// itself is still to be ended, by the caller.
+    fn release_link(&mut self) -> Option<EngineLink> {
         if self.link.is_some() {
             let _ = self.request("lab_stop", "");
             // Parking dialog subscriptions keep baresip's SIP stack alive.
             // Release them before quit so shutdown does not hit the kill timeout.
             let _ = self.request("ksip_shutdown", "");
         }
-        if let Some(engine) = self.link.take() {
-            let rows = self.phone.engine_gone(self.view.dnd, now_secs());
-            if !rows.is_empty() {
-                if let Err(e) = self.services.history.lock().unwrap().add(&self.services.data, rows) {
-                    self.services.log(LOG_APP, e);
-                }
-            }
-            let report = engine.stop()?;
-            // How the engine went is part of the record: one that had to be
-            // ended was still waiting on something, usually a SIP request the
-            // server has not answered, and the window waited with it.
-            if report.forced {
-                self.services.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
-            } else {
-                let code = report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-                self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
-            }
-        }
+        let engine = self.link.take()?;
+        let rows = self.phone.engine_gone(self.view.dnd, now_secs());
+        self.services.add_history(rows);
         let v = &mut self.view;
         v.running = false;
         v.recording = false;
@@ -638,7 +833,35 @@ impl Actor {
         v.registration = "DISCONNECTED".into();
         v.recording_call.clear();
         let _ = self.services.logs.lock().unwrap().sync(&self.services.data);
-        Ok(())
+        Some(engine)
+    }
+    /// Stops the engine, if one runs, on a worker; `then` is told once it is gone.
+    fn begin_stop(&mut self, then: AfterStop) {
+        match self.release_link() {
+            Some(engine) => self.stop_link(engine, then),
+            None => self.handle_work(Work::Stopped { report: Err(String::new()), then }),
+        }
+    }
+    /// Ends an engine process that is no longer the phone's, on a worker.
+    fn stop_link(&mut self, engine: EngineLink, then: AfterStop) {
+        self.stopping = true;
+        self.work(move || Work::Stopped { report: engine.stop(), then });
+    }
+    /// How the engine went is part of the record: one that had to be ended
+    /// was still waiting on something, usually a SIP request the server has
+    /// not answered, and the window waited with it.
+    fn log_stop(&mut self, report: Result<StopReport, String>) {
+        match report {
+            Ok(report) if report.forced => {
+                self.services.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
+            }
+            Ok(report) => {
+                let code = report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+                self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
+            }
+            Err(e) if !e.is_empty() => self.services.log(LOG_APP, format!("ksip: the engine could not be stopped cleanly ({e})")),
+            Err(_) => {}
+        }
     }
     /// What has to happen when the engine is gone without being asked,
     /// whichever way it was noticed: the calls that were up get their history
@@ -666,11 +889,7 @@ impl Actor {
             v.error = error;
         }
         let rows = self.phone.engine_gone(dnd, now_secs());
-        if !rows.is_empty() {
-            if let Err(e) = self.services.history.lock().unwrap().add(&self.services.data, rows) {
-                self.services.log(LOG_APP, e);
-            }
-        }
+        self.services.add_history(rows);
         if let Some(wav) = recording {
             self.services.convert_recording(wav);
         }
@@ -700,43 +919,10 @@ impl Actor {
         self.take_endpoints(&endpoints);
         Ok(())
     }
-    /// Reads the devices again and, when no call is going on, gives the
-    /// engine the saved ones: a device that was unplugged and put back, or
-    /// a new Windows default, is only picked up that way.
-    fn refresh_devices(&mut self) -> Result<(), String> {
-        self.view.devices = crate::audio::devices()?;
-        if self.link.is_none() {
-            return Ok(());
+    fn select_audio_device(&mut self, kind: &str, device: String, reply: Reply<()>) {
+        if let Err(e) = self.enter_maintenance() {
+            return self.answer(reply, Err(e));
         }
-        // A saved device that has come back is taken into use, and one that
-        // has gone gives way to the default; the engine is only restarted
-        // when it does not take the change.
-        if self.enter_maintenance().is_err() {
-            return Ok(());
-        }
-        let taken = (|| -> Result<bool, String> {
-            let settings = self.services.settings()?;
-            Ok(match self.apply_audio_endpoints(&settings) {
-                Ok(()) => true,
-                Err(e) => {
-                    self.services.log(
-                        LOG_APP,
-                        format!("ksip: the engine did not take the audio devices ({e}), restarting it"),
-                    );
-                    false
-                }
-            })
-        })();
-        self.leave_maintenance();
-        // Restarting the engine would register again; someone who unregistered
-        // on purpose keeps the devices they have until they connect themselves.
-        if !taken? && !self.view.unregistered_by_choice {
-            self.connect()?;
-        }
-        Ok(())
-    }
-    fn select_audio_device(&mut self, kind: &str, device: String) -> Result<(), String> {
-        self.enter_maintenance()?;
         let outcome = (|| -> Result<bool, String> {
             if !matches!(kind, "microphone" | "speaker")
                 || (device != "default"
@@ -769,10 +955,11 @@ impl Actor {
             Ok(false)
         })();
         self.leave_maintenance();
-        if outcome? {
-            return Ok(());
+        match outcome {
+            Err(e) => self.answer(reply, Err(e)),
+            Ok(true) => self.answer(reply, Ok(())),
+            Ok(false) => self.connect(AfterStart::Reply(reply)),
         }
-        self.connect()
     }
     /// The calibration plays and records for a while, so it runs on a thread
     /// of its own; the phone is in maintenance until it reports back.
@@ -781,13 +968,12 @@ impl Actor {
             self.answer(reply, Err(e));
             return;
         }
-        let tx = self.tx.clone();
-        thread::spawn(move || {
-            let result = crate::audio::calibrate_aec(&microphone, &speaker, careful);
-            let _ = tx.send(Message::Calibrated { result, reply });
+        self.work(move || Work::Calibrated {
+            result: crate::audio::calibrate_aec(&microphone, &speaker, careful),
+            reply,
         });
     }
-    fn set_volume(&mut self, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
+    fn set_volume(&mut self, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<crate::audio::Volume, String> {
         let mut result =
             crate::audio::volume(kind, device, level.map(|value| value.min(100) as u8), mute)?;
         if let Some(level) = level {
@@ -818,8 +1004,14 @@ impl Actor {
         }
         Ok(result)
     }
-    fn save_configuration(&mut self, settings: Settings, mut account: Account) -> Result<(), String> {
-        self.enter_maintenance()?;
+    /// Saves the settings and the account, and answers; whether the engine
+    /// then comes up on the new settings is a separate matter, told in the
+    /// window's own error line, so that the dialog can close on what did
+    /// succeed.
+    fn save_configuration(&mut self, settings: Settings, mut account: Account, reply: Reply<()>) {
+        if let Err(e) = self.enter_maintenance() {
+            return self.answer(reply, Err(e));
+        }
         let saved = (|| -> Result<(), String> {
             validate(&settings)?;
             let ca = settings.ca_file.trim();
@@ -854,15 +1046,15 @@ impl Actor {
             Ok(())
         })();
         self.leave_maintenance();
-        saved?;
-        // Saved. Whether the engine then comes up on the new settings is a
-        // separate matter, told in the window's own error line, so that the
-        // dialog can close on what did succeed.
-        if let Err(e) = self.connect() {
-            self.report_error(e);
+        match saved {
+            Err(e) => self.answer(reply, Err(e)),
+            Ok(()) => {
+                self.answer(reply, Ok(()));
+                self.connect(AfterStart::ReportError);
+            }
         }
-        Ok(())
     }
+    // ---- recording
     fn start_recording(&mut self, id: &str) -> Result<(), String> {
         // The folder appears next to the executable the first time something is recorded.
         let folder = self.services.data.join("recordings");
@@ -932,6 +1124,7 @@ impl Actor {
         }
         Ok(())
     }
+    // ---- the window's operations
     fn action(&mut self, name: &str, id: &str, value: &str, line: u8) -> Result<String, String> {
         if !matches!(
             name,
@@ -1034,24 +1227,39 @@ impl Actor {
         }
         Ok(result)
     }
+    // ---- the network
+    /// Asks a worker for the chosen adapter's address, once per look, while
+    /// the engine runs on an adapter and is wanted registered.
+    fn probe_network(&mut self) {
+        let adapter = self.view.settings.network_adapter.trim().to_string();
+        if adapter.is_empty()
+            || self.probing
+            || self.closing
+            || self.link.is_none()
+            || self.starting.is_some()
+            || self.view.unregistered_by_choice
+        {
+            return;
+        }
+        self.probing = true;
+        self.work(move || {
+            let address = crate::native::adapter_address(&adapter).ok();
+            Work::Address { adapter, address }
+        });
+    }
     /// The engine binds one address, so a new one means the binding is stale.
     /// Re-registering does not re-bind; only a restart does, and that is what
     /// the reconnect does. A call is never cut short for this.
-    fn follow_network(&mut self) {
-        let Ok(settings) = self.services.settings() else {
+    fn follow_network(&mut self, adapter: &str, address: Option<String>) {
+        let Some(current) = address else {
             return;
         };
-        if settings.network_adapter.trim().is_empty() || self.link.is_none() {
-            return;
-        }
-        // Unregistered on purpose: a new address changes nothing about that.
-        if self.view.unregistered_by_choice {
-            return;
-        }
-        let Ok(current) = crate::native::adapter_address(settings.network_adapter.trim()) else {
-            return;
-        };
-        if self.bound == current {
+        if adapter != self.view.settings.network_adapter.trim()
+            || self.link.is_none()
+            || self.phone.in_maintenance()
+            || self.view.unregistered_by_choice
+            || self.bound == current
+        {
             return;
         }
         if !self.phone.calls().is_empty() {
@@ -1062,10 +1270,9 @@ impl Actor {
             LOG_APP,
             format!("ksip: adapter address changed, reconnecting on {current}"),
         );
-        if let Err(e) = self.connect() {
-            self.report_error(e);
-        }
+        self.connect(AfterStart::ReportError);
     }
+    // ---- the banner
     /// Everything the banner shows also belongs in the log, so that a report
     /// made afterwards still explains what the user saw.
     fn show_error(&mut self, error: String) {
@@ -1138,6 +1345,17 @@ mod tests {
         assert!(a.view.error.is_empty());
     }
     #[test]
+    fn the_first_words_of_an_engine_being_started_count_and_its_loss_is_noted() {
+        let mut a = actor();
+        a.starting = Some(3);
+        let line = |body| LinkMessage { generation: 3, seq: 1, body };
+        assert!(a.handle_link(line(LinkBody::Log("Google WebRTC ADM + APM initialized (processing enabled)".into()))));
+        assert!(a.view.aec_active);
+        assert!(!a.handle_link(line(LinkBody::Lost)));
+        assert!(a.starting_lost, "the start finds its engine gone when it reports");
+        assert!(a.view.error.is_empty(), "nothing is said until the start reports");
+    }
+    #[test]
     fn operations_wait_for_maintenance_to_end_and_run_in_order() {
         let mut a = actor();
         a.phone.begin_maintenance().unwrap();
@@ -1156,21 +1374,58 @@ mod tests {
         assert_eq!(second_rx.recv().unwrap(), Err(message("ACTION_ARGUMENT_INVALID")));
     }
     #[test]
-    fn leaving_answers_what_was_still_waiting() {
+    fn an_operation_that_waited_too_long_is_dropped() {
+        let mut a = actor();
+        a.phone.begin_maintenance().unwrap();
+        let (reply, rx) = Reply::channel();
+        a.handle_command(Command::Action { name: "hangup".into(), id: String::new(), value: String::new(), line: 1, reply });
+        a.deferred[0].0 = Instant::now() - WAIT_TIMEOUT - Duration::from_secs(1);
+        a.tick();
+        assert!(a.deferred.is_empty());
+        assert_eq!(rx.recv().unwrap(), Err(message("OPERATION_WAIT_TIMEOUT")));
+    }
+    #[test]
+    fn leaving_answers_what_was_still_waiting_once_the_engine_is_gone() {
         let mut a = actor();
         a.phone.begin_maintenance().unwrap();
         let (waiting, waiting_rx) = Reply::channel();
         a.handle_command(Command::Connect(waiting));
         let (done, done_rx) = Reply::channel();
         a.handle_command(Command::Shutdown(done));
-        assert_eq!(done_rx.recv().unwrap(), Ok(()));
         assert_eq!(waiting_rx.recv().unwrap(), Err(message("APP_CLOSING")));
         assert!(a.closing);
+        // No engine: nothing to stop, so the shutdown is answered at once.
+        a.finish_shutdown();
+        assert_eq!(done_rx.recv().unwrap(), Ok(()));
+        assert!(a.shutdown.is_none());
+        // Whatever comes afterwards is refused.
+        let (late, late_rx) = Reply::channel();
+        a.handle_command(Command::Connect(late));
+        assert_eq!(late_rx.recv().unwrap(), Err(message("APP_CLOSING")));
     }
     #[test]
-    fn a_call_is_refused_while_the_phone_is_worked_on_and_the_engine_is_asked_first() {
+    fn a_start_that_fails_ends_the_maintenance_and_answers() {
         let mut a = actor();
-        // Without an engine there is nothing to ask; the rule alone applies.
+        a.phone.begin_maintenance().unwrap();
+        a.starting = Some(1);
+        let (reply, rx) = Reply::channel();
+        a.handle_work(Work::Started { generation: 1, stopped: None, result: Err("no exe".into()), watched: String::new(), then: AfterStart::Reply(reply) });
+        assert_eq!(rx.recv().unwrap(), Err("no exe".into()));
+        assert!(a.starting.is_none());
+        assert!(!a.phone.in_maintenance());
+    }
+    #[test]
+    fn a_connect_while_leaving_is_refused_before_anything_is_read() {
+        let mut a = actor();
+        a.closing = true;
+        let (reply, rx) = Reply::channel();
+        a.connect(AfterStart::Reply(reply));
+        assert_eq!(rx.recv().unwrap(), Err(message("APP_CLOSING")));
+        assert!(a.starting.is_none());
+    }
+    #[test]
+    fn maintenance_is_entered_and_left_without_an_engine() {
+        let mut a = actor();
         assert!(a.enter_maintenance().is_ok());
         assert!(a.phone.in_maintenance());
         a.leave_maintenance();

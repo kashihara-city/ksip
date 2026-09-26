@@ -2,7 +2,7 @@
 //! files, the store, the log, the history, the conversions), and the state
 //! the window side is given, which only connects: a way to send commands to
 //! the phone actor and a way to read the snapshot it publishes.
-use crate::history::History;
+use crate::history::{CallHistory, History};
 use crate::logs::{data_dir, Logs, LOG_APP};
 use crate::message::message_with;
 use crate::phone_actor::{PhoneHandle, Published};
@@ -15,6 +15,7 @@ use std::{
     process::Command as Process,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Sender},
         Arc, Mutex,
     },
     thread,
@@ -36,6 +37,13 @@ pub struct Services {
     pub history: Arc<Mutex<History>>,
     /// Recordings being turned into MP3 at the moment.
     pub converting: Arc<AtomicU64>,
+    /// The thread that writes the files that must keep their order (the
+    /// history), so that the phone never waits on the disk.
+    files: Sender<FileJob>,
+}
+/// What the file thread is asked to write.
+enum FileJob {
+    History(Vec<CallHistory>),
 }
 impl Services {
     /// Opens the store, the log and the history, and makes the snapshot the
@@ -91,17 +99,44 @@ impl Services {
             audio_processing_stats: None,
             mwi: Mwi::default(),
         };
+        let (files, jobs) = mpsc::channel();
         let services = Self {
             data,
             store,
             logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(history)),
             converting: Arc::new(AtomicU64::new(0)),
+            files,
         };
+        let writer = services.clone();
+        thread::Builder::new()
+            .name("files".into())
+            .spawn(move || {
+                for job in jobs {
+                    match job {
+                        FileJob::History(rows) => {
+                            // A row that cannot be written waits in the history
+                            // for the next try; the failure is on record here,
+                            // and the window hears of it from the next flush.
+                            if let Err(e) = writer.history.lock().unwrap().add(&writer.data, rows) {
+                                writer.log(LOG_APP, e);
+                            }
+                        }
+                    }
+                }
+            })
+            .expect("the file thread starts");
         if !view.error.is_empty() {
             services.log(LOG_APP, view.error.clone());
         }
         (services, view)
+    }
+    /// Hands the rows of calls that ended to the file thread, in order. The
+    /// tab sees them as soon as they are written into the history.
+    pub fn add_history(&self, rows: Vec<CallHistory>) {
+        if !rows.is_empty() {
+            let _ = self.files.send(FileJob::History(rows));
+        }
     }
     /// The folder everything the app writes goes into.
     pub fn data(&self) -> &Path {
