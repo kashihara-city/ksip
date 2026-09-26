@@ -90,8 +90,6 @@ bool dnd=false;
 // The app reads the counts out of it.
 struct sipsub *mwi_sub=nullptr;
 std::string mwi_summary, own_user;
-// Callers turned away while do not disturb was on, until the app has read them.
-std::vector<std::string> refused;
 void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); refer_armed=false; refer_waiting.clear(); tmr_cancel(&refer_timer); }
 // A button may name a full SIP URI instead of a number; it is passed on as it
 // is, and only has to be one line of visible ASCII.
@@ -399,8 +397,9 @@ void event(bevent_ev ev, bevent *e, void*) {
         if (refer_waiting.empty()) tmr_start(&refer_timer,0,send_refer,nullptr);
     }
     if (ev==BEVENT_CALL_INCOMING && dnd) {
+        // The app hears of it through CALL_INCOMING and the CALL_CLOSED that
+        // follows, with these words; the state reply carries no list of its own.
         info("ksip: dnd, incoming call refused as busy\n");
-        refused.push_back(call_peeruri(c) ? call_peeruri(c) : "");
         ua_hangup(bevent_get_ua(e),c,486,"Busy Here");
         return;
     }
@@ -465,12 +464,6 @@ int state(re_printf *pf, void*) {
     odict_entry_add(od,"registration",ODICT_STRING,registration.c_str());
     odict_entry_add(od,"dnd",ODICT_BOOL,dnd?1:0);
     odict_entry_add(od,"mwi_summary",ODICT_STRING,mwi_summary.c_str());
-    odict *turned=nullptr;
-    if(!odict_alloc(&turned,4)) {
-        for(auto &peer:refused)odict_entry_add(turned,"",ODICT_STRING,peer.c_str());
-        odict_entry_add(od,"refused",ODICT_ARRAY,turned);mem_deref(turned);
-    }
-    refused.clear();
     odict_entry_add(od,"transport",ODICT_STRING,registered_transport.c_str());
     odict_entry_add(od,"media_encryption",ODICT_STRING,media_encryption.c_str());
     unsigned index=0;

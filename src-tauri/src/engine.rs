@@ -410,15 +410,46 @@ pub struct CallHistory {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub outcome: String,
 }
+/// The calls that came and went between two polls: announced by the engine,
+/// closed since, and in neither the previous snapshot nor the current one.
+/// Returns their id, history direction, peer and closing words, taking them
+/// out of both maps. Announcements of calls that were seen and have gone are
+/// dropped as well (their rows came from the snapshots), so the map holds
+/// only calls that are up or have yet to appear.
+fn instant_calls(
+    announced: &mut HashMap<String, (String, String)>,
+    closed: &mut HashMap<String, String>,
+    previous: &[String],
+    current: &[String],
+) -> Vec<(String, String, String, String)> {
+    let mut instant: Vec<String> = announced
+        .keys()
+        .filter(|id| closed.contains_key(*id) && !previous.contains(id) && !current.contains(id))
+        .cloned()
+        .collect();
+    instant.sort();
+    let rows = instant
+        .into_iter()
+        .map(|id| {
+            let (direction, peer) = announced.remove(&id).unwrap_or_default();
+            let reason = closed.remove(&id).unwrap_or_default();
+            (id, direction, peer, reason)
+        })
+        .collect();
+    announced.retain(|id, _| current.contains(id) || (!previous.contains(id) && !closed.contains_key(id)));
+    rows
+}
 /// Names what happened to a call that closed without being talked on, from
 /// the state it was in and the engine's closing words (a SIP answer such
-/// as `486 Busy Here`, or a note of its own).
+/// as `486 Busy Here`, or a note of its own). An incoming call this phone
+/// answered with `Busy Here` itself was refused under do not disturb, even
+/// if the switch has been turned off since.
 pub fn call_outcome(state: &str, incoming: bool, reason: &str, dnd: bool) -> String {
     if state == "ESTABLISHED" {
         return String::new();
     }
     if incoming {
-        return if dnd {
+        return if dnd || reason.starts_with("Busy Here") {
             message("HISTORY_REFUSED")
         } else if answered_elsewhere(reason) {
             message("HISTORY_ELSEWHERE")
@@ -584,10 +615,6 @@ struct PhoneState {
     audio_processing_stats: Option<AudioProcessingStats>,
     #[serde(default)]
     mwi_summary: String,
-    /// Callers turned away by do not disturb since the last look: they never
-    /// show as calls, so the history hears of them here.
-    #[serde(default)]
-    refused: Vec<String>,
 }
 /// What the registrar is asked to call. A SIP URI is taken as written, one
 /// line of visible ASCII, which is all a SIP URI ever is. A number is reduced
@@ -1029,9 +1056,10 @@ pub struct AppState {
     recorded: Arc<Mutex<HashMap<String, String>>>,
     /// The engine's closing words for each call, by id, until the history takes them.
     closed: Arc<Mutex<HashMap<String, String>>>,
-    /// Outgoing calls the engine has announced, by id: their peer, so that a
-    /// call refused at once, between two polls, still gets its history row.
-    announced: Arc<Mutex<HashMap<String, String>>>,
+    /// Calls the engine has announced (CALL_OUTGOING, CALL_INCOMING), by id:
+    /// the history direction and the peer, so that a call that came and went
+    /// between two polls, never in a snapshot, still gets its history row.
+    announced: Arc<Mutex<HashMap<String, (String, String)>>>,
     converting: Arc<AtomicU64>,
     auto_answered: Arc<Mutex<HashSet<String>>>,
     logs: Arc<Mutex<Logs>>,
@@ -2012,9 +2040,16 @@ impl AppState {
                 self.closed.lock().unwrap().insert(id.into(), e["param"].as_str().unwrap_or("").into());
             }
         }
-        if kind == "CALL_OUTGOING" {
+        if let Some(direction) = match kind {
+            "CALL_OUTGOING" => Some("HISTORY_OUTGOING"),
+            "CALL_INCOMING" => Some("HISTORY_INCOMING"),
+            _ => None,
+        } {
             if let Some(id) = e["id"].as_str() {
-                self.announced.lock().unwrap().insert(id.into(), e["param"].as_str().unwrap_or("").into());
+                self.announced
+                    .lock()
+                    .unwrap()
+                    .insert(id.into(), (message(direction), e["param"].as_str().unwrap_or("").into()));
             }
         }
         let mut v = self.view.lock().unwrap();
@@ -2053,19 +2088,7 @@ impl AppState {
         let mut recorded = self.recorded.lock().unwrap();
         let mut closed = self.closed.lock().unwrap();
         let dnd = phone.dnd;
-        let mut ended: Vec<CallHistory> = phone
-            .refused
-            .iter()
-            .map(|peer| CallHistory {
-                ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-                direction: message("HISTORY_INCOMING"),
-                peer: peer.clone(),
-                name: String::new(),
-                duration: 0,
-                recording: String::new(),
-                outcome: message("HISTORY_REFUSED"),
-            })
-            .collect();
+        let mut ended: Vec<CallHistory> = Vec::new();
         ended.extend(previous
             .iter()
             .filter(|old| !phone.calls.iter().any(|call| call.id == old.id))
@@ -2081,29 +2104,26 @@ impl AppState {
                 recording: recorded.remove(&old.id).unwrap_or_default(),
                 outcome: call_outcome(&old.state, old.state == "INCOMING", &closed.remove(&old.id).unwrap_or_default(), dnd),
             }));
-        // An outgoing call answered with an error at once, between two polls,
-        // was never in a snapshot; its announcement and closing words still
-        // make a history row (and the notice that it did not connect).
+        // A call that came and went between two polls was never in a snapshot:
+        // an outgoing one answered with an error at once, an incoming one that
+        // stopped ringing within the interval, or one refused under do not
+        // disturb. Its announcement and closing words still make its history row.
+        let previous_ids: Vec<String> = previous.iter().map(|c| c.id.clone()).collect();
+        let current_ids: Vec<String> = phone.calls.iter().map(|c| c.id.clone()).collect();
         let mut announced = self.announced.lock().unwrap();
-        let instant: Vec<String> = closed
-            .keys()
-            .filter(|id| announced.contains_key(*id) && !previous.iter().any(|c| &c.id == *id) && !phone.calls.iter().any(|c| &c.id == *id))
-            .cloned()
-            .collect();
-        for id in instant {
-            let peer = announced.remove(&id).unwrap_or_default();
+        for (id, direction, peer, reason) in instant_calls(&mut announced, &mut closed, &previous_ids, &current_ids) {
             directions.remove(&id);
+            let incoming = direction == message("HISTORY_INCOMING");
             ended.push(CallHistory {
                 ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-                direction: message("HISTORY_OUTGOING"),
+                direction,
                 peer,
                 name: String::new(),
                 duration: 0,
                 recording: String::new(),
-                outcome: call_outcome("OUTGOING", false, &closed.remove(&id).unwrap_or_default(), dnd),
+                outcome: call_outcome(if incoming { "INCOMING" } else { "OUTGOING" }, incoming, &reason, dnd),
             });
         }
-        announced.retain(|id, _| phone.calls.iter().any(|call| call.id == *id) || !closed.contains_key(id));
         drop(announced);
         directions.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
         recorded.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
@@ -3364,8 +3384,39 @@ mod tests {
     }
 
     #[test]
+    fn calls_that_came_and_went_between_polls_get_their_row_once() {
+        let out = |peer: &str| (message("HISTORY_OUTGOING"), peer.to_string());
+        let inc = |peer: &str| (message("HISTORY_INCOMING"), peer.to_string());
+        // An outgoing call refused at once, an incoming one that stopped ringing
+        // within a poll, and one refused under do not disturb: none was ever in
+        // a snapshot, each gets one row with its closing words.
+        let mut announced: HashMap<String, (String, String)> =
+            [("o1".to_string(), out("sip:1002@pbx.example")), ("i1".to_string(), inc("sip:1003@pbx.example")), ("i2".to_string(), inc("sip:1004@pbx.example"))].into();
+        let mut closed: HashMap<String, String> =
+            [("o1".to_string(), "486 Busy Here".to_string()), ("i1".to_string(), "connection reset [108],SIP;cause=200".to_string()), ("i2".to_string(), "Busy Here".to_string())].into();
+        let rows = instant_calls(&mut announced, &mut closed, &[], &[]);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], ("i1".into(), message("HISTORY_INCOMING"), "sip:1003@pbx.example".into(), "connection reset [108],SIP;cause=200".into()));
+        assert_eq!(rows[2], ("o1".into(), message("HISTORY_OUTGOING"), "sip:1002@pbx.example".into(), "486 Busy Here".into()));
+        assert!(announced.is_empty() && closed.is_empty());
+        assert_eq!(call_outcome("INCOMING", true, &rows[0].3, false), message("HISTORY_ELSEWHERE"));
+        assert_eq!(call_outcome("INCOMING", true, &rows[1].3, false), message("HISTORY_REFUSED"));
+        assert_eq!(call_outcome("OUTGOING", false, &rows[2].3, false), message("HISTORY_BUSY"));
+        // A call that was in a snapshot gets its row from there: once it is gone,
+        // its announcement goes too, whether or not its closing words are still kept.
+        let mut announced: HashMap<String, (String, String)> = [("o2".to_string(), out("sip:1002@pbx.example"))].into();
+        let mut closed: HashMap<String, String> = HashMap::new();
+        assert!(instant_calls(&mut announced, &mut closed, &["o2".into()], &[]).is_empty());
+        assert!(announced.is_empty(), "a seen call's announcement is dropped when the call has gone");
+        // One still up, and one announced but not yet in a snapshot, are kept for later.
+        let mut announced: HashMap<String, (String, String)> = [("o3".to_string(), out("a")), ("o4".to_string(), out("b"))].into();
+        assert!(instant_calls(&mut announced, &mut HashMap::new(), &[], &["o3".into()]).is_empty());
+        assert_eq!(announced.len(), 2);
+    }
+    #[test]
     fn how_a_call_ended_is_named() {
         assert_eq!(call_outcome("ESTABLISHED", false, "Connection reset", false), "");
+        assert_eq!(call_outcome("INCOMING", true, "Busy Here", false), message("HISTORY_REFUSED"));
         assert_eq!(call_outcome("OUTGOING", false, "486 Busy Here", false), message("HISTORY_BUSY"));
         assert_eq!(call_outcome("RINGING", false, "404 Not Found", false), message("HISTORY_NOT_FOUND"));
         assert_eq!(call_outcome("OUTGOING", false, "604 Does Not Exist Anywhere", false), message("HISTORY_NOT_FOUND"));
