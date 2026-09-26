@@ -48,6 +48,26 @@ def park_watch(slot):
 def park_target(slot):
     """What a call is transferred to in order to park it on that slot."""
     return numbers()['park_prefix'] + slot
+def speech():
+    """A short recording with someone talking (48 kHz mono 16-bit WAV), for a
+    phone that has to be heard: a PBX may throw away a voicemail that holds
+    only silence (3CX does). It is a lab asset, shared by every PBX."""
+    path = ROOT / 'test-pbx/irodori-rusuden.wav'
+    assert path.is_file(), f'{path.relative_to(ROOT).as_posix()} が必要です（留守番電話に残す、声の入った短いWAV）'
+    return path
+def talking_source(seconds=40):
+    """An audio_source for a phone that keeps talking that long: the speech
+    file repeated into temp/build. A box plays its greeting before it records,
+    so a talker whose file ends early leaves it silence, which 3CX throws away."""
+    import wave
+    out = ROOT / 'temp/build/speech-long.wav'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(speech()), 'rb') as w:
+        params = w.getparams(); frames = w.readframes(w.getnframes())
+    seconds_each = max(1, w.getnframes() // params.framerate)
+    with wave.open(str(out), 'wb') as w:
+        w.setparams(params); w.writeframes(frames * (-(-seconds // seconds_each)))
+    return f'aufile,{out.as_posix()}'
 def ca_certificate():
     """The CA that issued the lab's TLS certificate, as lab.json names it
     (a path from the repository root; default the folder's LocalCA.crt)."""

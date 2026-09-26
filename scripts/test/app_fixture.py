@@ -1,6 +1,6 @@
 ﻿"""Set up a disposable UI profile, an auto-answer peer and a caller using the provided accounts."""
 import json,pathlib,sys,tempfile,time,winreg
-from sip_fixture import PBX,ROOT,Phone,account_with,accounts,ca_certificate,lab,numbers,park_target,park_watch,put_account,delete_account
+from sip_fixture import PBX,ROOT,Phone,account_with,accounts,ca_certificate,lab,numbers,park_target,park_watch,put_account,talking_source,delete_account
 BASE=ROOT/'temp/build/ksip-ui';BASE.mkdir(parents=True,exist_ok=True)
 PROFILE='test-ui-ksip'
 KEY='Software\\KashiharaCity\\ksip\\Test\\'+PROFILE
@@ -72,14 +72,16 @@ elif sys.argv[1]=='caller':
         (BASE/'caller-result.txt').write_text('ESTABLISHED' if established else 'NOT_ESTABLISHED')
     finally:caller.close()
 elif sys.argv[1]=='voicemail':
-    # Leaves a message in the phone's own box: the lab's 8100X records for 100X
-    # straight away, and the box's message-summary then reports one more.
+    # Leaves a message in the phone's own box: the lab's direct prefix + 100X
+    # records for 100X, and the box's message-summary then reports one more.
+    # The talker keeps talking and stays long enough for a PBX that plays a
+    # greeting first and drops a message with nothing said in it (3CX).
     configured=accounts()
-    talker=Phone('ui-talker',configured[1],18566,19000)
+    talker=Phone('ui-talker',configured[1],18566,19000,audio_source=talking_source())
     try:
         call=talker.action('dial',value=numbers()['voicemail_direct_prefix']+configured[0]['extension'])
         talker.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),20)
-        time.sleep(4)
+        time.sleep(15)
         talker.action('hangup',call)
         time.sleep(1)
     finally:talker.close()
