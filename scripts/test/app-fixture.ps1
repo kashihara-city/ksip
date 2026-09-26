@@ -12,6 +12,17 @@ function Start-KsipProfile([string]$mode = '') {
     python -X utf8 $script:KsipFixture setup $mode
     if ($LASTEXITCODE -ne 0) { throw 'Test profile setup failed' }
 }
+$script:KsipLab = $null
+function Get-KsipLab {
+    # The PBX the tests run against and its dialplan conventions (playback,
+    # park slots, group, voicemail, an unassigned number), from lab.json.
+    if (!$script:KsipLab) {
+        $json = python -X utf8 $script:KsipFixture lab
+        if ($LASTEXITCODE -ne 0) { throw 'lab.json could not be read' }
+        $script:KsipLab = $json | ConvertFrom-Json
+    }
+    $script:KsipLab
+}
 function Stop-KsipProfile {
     python -X utf8 $script:KsipFixture cleanup
     $env:KSIP_TEST_PROFILE = $script:KsipOldProfile

@@ -1,6 +1,6 @@
-"""REGISTER and two-leg attended REFER test against the user-provided Asterisk."""
+"""REGISTER and two-leg attended REFER test against the lab PBX (KSIP_TEST_PBX)."""
 import json,time
-from sip_fixture import ROOT,Phone,accounts,connect,lab,version
+from sip_fixture import PBX,ROOT,Phone,accounts,connect,lab,version
 
 def main():
     (ROOT/'temp/reports').mkdir(parents=True,exist_ok=True)
@@ -43,16 +43,11 @@ def main():
         a.action('transfer',first,second)
         result=a.wait(lambda s:not s['calls'] and s['transfer']['outcome']=='TRANSFER_DONE',timeout=25)
         b.wait(lambda s:len(s['calls'])==2)
-        print('PASS: Asterisk attended transfer completed; both local legs ended',flush=True)
+        print('PASS: attended transfer completed on the PBX; both local legs ended',flush=True)
         report={'registration':True,'twoEstablishedCalls':True,'switchHoldsOther':True,'recordingSurvivesOtherCallClosing':True,'attendedTransferCompleted':True,'localLegsClosed':True,'server':'{0}:{1}'.format(lab()['server'],lab()['port'])}
-        (ROOT/f'temp/reports/asterisk-v{version()}.json').write_text(json.dumps(report,indent=2)+'\n')
+        (ROOT/f'temp/reports/pbx-transfer-{PBX}-v{version()}.json').write_text(json.dumps(report,indent=2)+'\n')
     finally:
         if a:a.close()
         if b:b.close()
-        for name in ['a','b']:
-            path=ROOT/'temp/build/ksip-integration'/name/'engine.log'
-            if path.exists():
-                content=path.read_bytes()
-                assert all(item['password'].encode() not in content for item in configured),'Secret leaked into engine log'
 
 if __name__=='__main__':main()

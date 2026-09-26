@@ -1,11 +1,10 @@
-"""Codec negotiation against the user-provided Asterisk: Opus, G.722 and the fallback."""
+"""Codec negotiation against the lab PBX: Opus, G.722 and the fallback."""
 import json,re,time
-from sip_fixture import ROOT,Phone,accounts,connect,version
+from sip_fixture import PBX,ROOT,Phone,accounts,connect,skip_unless,version
 
 def negotiated(phone):
     """The encoder and decoder baresip settled on, read from its own log."""
-    phone.log.flush()
-    text=(phone.dir/'engine.log').read_bytes().decode('utf-8','replace').replace('\r','\n')
+    text=phone.log_text()
     encode=re.findall(r'Set audio encoder: (\S+) (\d+)Hz',text)
     decode=re.findall(r'Set audio decoder: (\S+) (\d+)Hz',text)
     assert encode and decode,'no codec was set'
@@ -16,7 +15,7 @@ def main():
     configured=accounts();report={}
     a=b=narrow=None
     try:
-        # Both sides offer the wideband codecs, so Asterisk should bridge Opus.
+        # Both sides offer the wideband codecs, so the PBX should bridge Opus.
         a=Phone('codec-a',configured[0],18566,18920)
         b=Phone('codec-b',configured[1],18568,18960)
         first,remote=connect(a,b,configured[1]['extension'])
@@ -35,8 +34,9 @@ def main():
         if a:a.close()
         if b:b.close()
     try:
-        # Asterisk negotiates each leg on its own, so a narrowband peer does not
-        # pull this side down: Asterisk transcodes between the two legs.
+        # A PBX that negotiates each leg on its own transcodes between them, so
+        # a narrowband peer does not pull this side down.
+        skip_unless('transcoding','相手がG.711でもこちらがOpusのままになるのはPBXが変換するときだけ')
         a=Phone('codec-a',configured[0],18566,18920)
         narrow=Phone('codec-narrow',configured[1],18568,18960,codecs=('g711',))
         first,remote=connect(a,narrow,configured[1]['extension'])
@@ -67,7 +67,7 @@ def main():
     finally:
         if a:a.close()
         if b:b.close()
-    (ROOT/f'temp/reports/asterisk-codec-v{version()}.json').write_text(json.dumps(report,indent=2)+'\n')
-    print('PASS: Asterisk codec negotiation, opus first and falling back in order',flush=True)
+    (ROOT/f'temp/reports/pbx-codec-{PBX}-v{version()}.json').write_text(json.dumps(report,indent=2)+'\n')
+    print('PASS: PBX codec negotiation, opus first and falling back in order',flush=True)
 
 if __name__=='__main__':main()

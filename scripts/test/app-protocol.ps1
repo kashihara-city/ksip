@@ -44,8 +44,9 @@ try {
     Wait-Class 'registration' 'reg-register_ok'
 
     # A link dials, and asks first while the confirmation is on.
-    Send-Link '9001'
-    Wait-Text 'confirm' '9001 に発信しますか' | Out-Null
+    $playback=(Get-KsipLab).numbers.playback
+    Send-Link $playback
+    Wait-Text 'confirm' "$playback に発信しますか" | Out-Null
     Click-Id 'confirm-ok'
     Wait-Class 'line-1' 'call-established'
     'PASS: リンクから確認を経て発信した'
@@ -58,9 +59,9 @@ try {
     $window=$app.MainWindowHandle
     $app.CloseMainWindow() | Out-Null
     Wait-Visible $window $false
-    Send-Link '9001'
+    Send-Link $playback
     Wait-Visible $window $true
-    Wait-Text 'confirm' '9001 に発信しますか' | Out-Null
+    Wait-Text 'confirm' "$playback に発信しますか" | Out-Null
     Click-Id 'confirm-ok'
     Wait-Class 'line-1' 'call-established'
     'PASS: タスクトレイにいても確認のためにウィンドウが出てくる'
@@ -77,7 +78,7 @@ try {
     Wait-Class 'line-1' 'call-idle'
     # The dial box is read once the call is over, since it is locked during one.
     $dialled=(Value-Id 'target').Current.Value
-    if($dialled -ne '9001'){throw "The dial box shows $dialled"}
+    if($dialled -ne $playback){throw "The dial box shows $dialled"}
     'PASS: 確認なしの設定では区切り文字と%20を除いてそのまま発信し、番号欄に残した'
 
     # A number with letters is refused before anything is dialled, and the

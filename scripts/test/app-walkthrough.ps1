@@ -21,7 +21,7 @@ try {
     Wait-Id 'open-sound-control' | Out-Null
     # A number the lab does not have: the PBX answers 404, which is said on the
     # screen and kept in the history in place of a duration.
-    (Value-Id 'target').SetValue('1999')
+    (Value-Id 'target').SetValue((Get-KsipLab).numbers.unassigned)
     Click-Id 'dial';Wait-Text 'error' '番号なし' | Out-Null
     Wait-Text 'call-history' '番号なし' | Out-Null;Wait-Class 'line-1' 'call-idle'
     'PASS: つながらない発信は理由が画面と履歴に出る'

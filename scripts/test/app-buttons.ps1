@@ -31,9 +31,10 @@ try {
     $extension=(Get-Content "$root/temp/build/ksip-ui/peer-extension.txt" -Raw).Trim()
     # The status is part of the button's name: its children are presentational.
     Wait-Text 'custom-1' ([regex]::Escape($extension)) | Out-Null
-    Wait-Text 'custom-2' '701' | Out-Null
-    Wait-Text 'custom-3' '9001' | Out-Null
-    Wait-Text 'custom-4' 'sip:9001@' | Out-Null
+    $lab=Get-KsipLab;$playback=$lab.numbers.playback;$slot=$lab.numbers.park_slots[0]
+    Wait-Text 'custom-2' $slot | Out-Null
+    Wait-Text 'custom-3' $playback | Out-Null
+    Wait-Text 'custom-4' "sip:$playback@" | Out-Null
     # The link button is usable without a call; it is not pressed here, because
     # that would open a browser on the machine running the test.
     Wait-Text 'custom-5' 'example.invalid' | Out-Null
@@ -41,7 +42,7 @@ try {
     'PASS: 設定したボタンだけが順に出る'
     # A button in the panel beside the phone: the window is twice as wide, the
     # panel holds the button, and it dials like any other.
-    Wait-Text 'custom-7' '9001' | Out-Null
+    Wait-Text 'custom-7' $playback | Out-Null
     $panel=Wait-Id 'extended-actions'
     if(!$panel.FindFirst([Windows.Automation.TreeScope]::Children,(New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty,'custom-7')))){throw 'The panel button is not in the panel'}
     $width=(Get-KsipRoot).Current.BoundingRectangle.Width
@@ -68,7 +69,7 @@ try {
     # Transfer: the peer is sent to the player and our leg ends.
     Click-Id 'custom-1';Wait-Class 'line-1' 'call-established'
     Click-Id 'custom-3';Wait-Class 'line-1' 'call-idle'
-    'PASS: 転送ボタンで相手を9001へ転送した'
+    "PASS: 転送ボタンで相手を再生番号 $playback へ転送した"
     # The same, with the target written as a full URI: the engine passes it on.
     Click-Id 'custom-1';Wait-Class 'line-1' 'call-established'
     Click-Id 'custom-4';Wait-Class 'line-1' 'call-idle'

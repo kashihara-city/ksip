@@ -1,27 +1,28 @@
-"""Verify the local Asterisk 9001 auto-answer RTP audio source."""
+"""Verify the lab PBX's auto-answer playback number as an RTP audio source."""
 from array import array
 import json
 import math
 import time
 import wave
 
-from sip_fixture import ROOT, Phone, accounts
+from sip_fixture import PBX, ROOT, Phone, accounts, numbers
 
 
 def main():
-    base = ROOT / "temp/build/asterisk-playback-test"
+    base = ROOT / "temp/build/pbx-playback-test"
     base.mkdir(parents=True, exist_ok=True)
     received = base / "received.wav"
     received.unlink(missing_ok=True)
     phone = Phone(
-        "asterisk-playback",
+        "pbx-playback",
         accounts()[0],
         17660,
         17900,
         f"aufile,{received.as_posix()}",
     )
     try:
-        call_id = phone.action("dial", value="9001")
+        playback = numbers()["playback"]
+        call_id = phone.action("dial", value=playback)
         phone.wait(
             lambda state: any(
                 call["id"] == call_id and call["state"] == "ESTABLISHED"
@@ -48,18 +49,18 @@ def main():
     assert rms > 100 and peak > 1000, (rms, peak)
     result = {
         "passed": True,
-        "extension": "9001",
+        "extension": playback,
         "sample_rate": 48000,
         "samples": len(samples),
         "seconds": round(len(samples) / 48000, 2),
         "rms": round(rms, 2),
         "peak": peak,
     }
-    (ROOT / "temp/reports/asterisk-playback-9001.json").write_text(
+    (ROOT / f"temp/reports/pbx-playback-{PBX}.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
-        f"PASS: Asterisk 9001 auto-answer audio, {result['seconds']} s, "
+        f"PASS: PBX {playback} auto-answer audio, {result['seconds']} s, "
         f"RMS {result['rms']}, peak {peak}"
     )
 

@@ -1,20 +1,23 @@
-"""Short real-device/Asterisk call that records native WebRTC APM statistics."""
+"""Short call to the lab PBX's playback number through the Windows default audio devices, recording native WebRTC APM statistics."""
 import json
 import math
 import time
 import winreg
 
-from sip_fixture import ROOT, Phone, accounts
+from sip_fixture import ROOT, Phone, accounts, numbers
 
 
 def selected_audio():
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\KashiharaCity\ksip") as key:
-        settings = json.loads(winreg.QueryValueEx(key, "Settings")[0])
-    microphone = settings["microphone"]
-    speaker = settings["speaker"]
-    for endpoint in (microphone, speaker):
-        assert endpoint and "\n" not in endpoint and "\r" not in endpoint
-    return microphone, speaker, int(settings.get("aec_delay_ms", 100))
+    """The Windows default microphone and speaker, so the test does not depend
+    on what one machine happens to have saved; the AEC delay still comes from
+    the saved settings when there are any."""
+    delay = 100
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\KashiharaCity\ksip") as key:
+            delay = int(json.loads(winreg.QueryValueEx(key, "Settings")[0]).get("aec_delay_ms", delay))
+    except OSError:
+        pass
+    return "default", "default", delay
 
 
 def finite(value):
@@ -40,7 +43,7 @@ def main():
     )
     samples = []
     try:
-        call_id = phone.action("dial", value="9001")
+        call_id = phone.action("dial", value=numbers()["playback"])
         phone.wait(
             lambda state: any(
                 call["id"] == call_id and call["state"] == "ESTABLISHED"

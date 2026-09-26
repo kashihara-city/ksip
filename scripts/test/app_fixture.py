@@ -1,35 +1,40 @@
 ﻿"""Set up a disposable UI profile, an auto-answer peer and a caller using the provided accounts."""
 import json,pathlib,sys,tempfile,time,winreg
-from sip_fixture import ROOT,Phone,accounts,lab,put_account,delete_account
+from sip_fixture import PBX,ROOT,Phone,account_with,accounts,ca_certificate,lab,numbers,park_target,park_watch,put_account,delete_account
 BASE=ROOT/'temp/build/ksip-ui';BASE.mkdir(parents=True,exist_ok=True)
 PROFILE='test-ui-ksip'
 KEY='Software\\KashiharaCity\\ksip\\Test\\'+PROFILE
 TARGET='KSIP/Test/'+PROFILE
 if sys.argv[1]=='setup':
     (BASE/'ready').unlink(missing_ok=True)
-    configured=accounts();put_account(TARGET,configured[0])
-    # 'setup tls' points the profile at the TLS port and asks for encrypted media.
+    configured=accounts()
+    # 'setup tls' points the profile at the TLS port and asks for encrypted media,
+    # as the extension the PBX requires SRTP on; the plain profile is the first extension.
     secure=len(sys.argv)>2 and sys.argv[2].strip()=='tls'
     where=lab()
-    address=(where['tls_host'],str(where['tls_port'])) if secure else (configured[0]['server'],str(configured[0]['port']))
-    policy=[('server',address[0]),('port',address[1]),('extension',configured[0]['extension'])]
+    own=account_with('sdes','TLS/SRTPでのアプリのテスト') if secure else configured[0]
+    put_account(TARGET,own)
+    address=(where['tls_host'],str(where['tls_port'])) if secure else (own['server'],str(own['port']))
+    policy=[('server',address[0]),('port',address[1]),('extension',own['extension'])]
     if secure:
         policy+=[('transport','tls'),('media_encryption','sdes'),
-                 ('ca_file',str(ROOT/'test-pbx/local-asterisk/LocalCA.crt'))]
-    # 'setup buttons' defines three custom buttons: a speed dial to the peer, a
-    # park slot the lab parks on *701 and picks up on 701, and a transfer to 9001.
+                 ('ca_file',str(ca_certificate()))]
+    # 'setup buttons' defines custom buttons: a speed dial to the peer, the lab's
+    # first park slot, transfers to the playback number, a link, a panel button,
+    # do not disturb and voicemail; the numbers come from lab.json.
     if len(sys.argv)>2 and sys.argv[2].strip()=='buttons':
+        n=numbers();slot=n['park_slots'][0]
         policy+=[('button_1_title','Peer'),('button_1_kind','dial'),('button_1_number',configured[1]['extension']),
                  # The pickup target is named as well, so that the field is exercised; it is the slot itself here.
-                 ('button_2_title','Park'),('button_2_kind','park'),('button_2_number','701'),('button_2_transfer','*701'),('button_2_pickup','701'),
-                 ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number','9001'),
+                 ('button_2_title','Park'),('button_2_kind','park'),('button_2_number',park_watch(slot)),('button_2_transfer',park_target(slot)),('button_2_pickup',slot),
+                 ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number',n['playback']),
                  # The same player named as a full URI in angle brackets, as some PBXs want it.
-                 ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:9001@'+where['server']+'>'),
+                 ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:'+n['playback']+'@'+where['server']+'>'),
                  ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
                  # A button in the panel beside the phone, which makes the window twice as wide.
-                 ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number','9001'),
+                 ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number',n['playback']),
                  ('button_8_kind','dnd'),
-                 ('button_9_kind','mwi'),('button_9_number','*97')]
+                 ('button_9_kind','mwi'),('button_9_number',n['voicemail'])]
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,KEY) as key:
         general=dict(sip_port=17560,rtp_port=17700,microphone='default',speaker='default',aec=True)
         # The buttons profile also asks for the window to go to the tray ten seconds after a call.
@@ -72,14 +77,14 @@ elif sys.argv[1]=='voicemail':
     configured=accounts()
     talker=Phone('ui-talker',configured[1],18566,19000)
     try:
-        call=talker.action('dial',value='8'+configured[0]['extension'])
+        call=talker.action('dial',value=numbers()['voicemail_direct_prefix']+configured[0]['extension'])
         talker.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),20)
         time.sleep(4)
         talker.action('hangup',call)
         time.sleep(1)
     finally:talker.close()
 elif sys.argv[1]=='group':
-    # Rings the lab's group 7000, which is the phone and the third account
+    # Rings the lab's ring group, which is the phone and the third account
     # together, from the peer's account. The third account takes the call
     # after the phone has rung a moment, so the PBX cancels the phone's ring
     # with a Reason header saying the call was completed elsewhere.
@@ -90,7 +95,7 @@ elif sys.argv[1]=='group':
     taker=Phone('ui-taker',configured[2],18570,19200)
     caller=Phone('ui-group-caller',configured[1],18572,19300)
     try:
-        call=caller.action('dial',value='7000')
+        call=caller.action('dial',value=numbers()['group'])
         ringing=taker.wait(lambda s:any(c['state']=='INCOMING' for c in s['calls']),20)
         time.sleep(3)
         for c in ringing['calls']:
@@ -102,6 +107,10 @@ elif sys.argv[1]=='group':
         result.write_text('TAKEN_ELSEWHERE')
     finally:
         caller.close();taker.close()
+elif sys.argv[1]=='lab':
+    # The lab's conventions for the PowerShell tests: which PBX, its numbers and
+    # the extensions in use (never the passwords).
+    print(json.dumps(dict(pbx=PBX,numbers=numbers(),extensions=[a['extension'] for a in accounts()],server=lab()['server'],features=lab().get('features',{})),ensure_ascii=False))
 elif sys.argv[1]=='cleanup':
     delete_account(TARGET)
     try:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,KEY)
