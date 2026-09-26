@@ -296,6 +296,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SAVE:'儲存並連線',
       SETTINGS_SAVE_HINT:'一般設定會儲存到登錄檔。儲存後會重新連線。',
       SETTINGS_SDES_NEEDS_TLS:'SDES 的 SRTP 請與 TLS 搭配使用',
+      SETTINGS_TRANSPORT_INVALID:'SIP 加密（transport）的值不正確，請使用 udp、tcp 或 tls',
+      SETTINGS_MEDIA_ENCRYPTION_INVALID:'語音加密（media_encryption）的值不正確，請使用空白、sdes、osrtp 或 dtls',
       SETTINGS_SECONDS:'秒',
       SETTINGS_SERVER:'伺服器',
       SETTINGS_SERVER_PLACEHOLDER:'例 192.0.2.10',

@@ -240,9 +240,11 @@ impl Settings {
         values
     }
     pub fn read_policy(&mut self, read: impl Fn(&str) -> String) {
-        self.transport = read("transport");
+        // A policy writes text by hand; the case and the surrounding blanks
+        // carry no meaning, and are not left to make a valid value look unknown.
+        self.transport = read("transport").trim().to_ascii_lowercase();
         self.ca_file = read("ca_file");
-        self.media_encryption = read("media_encryption");
+        self.media_encryption = read("media_encryption").trim().to_ascii_lowercase();
         self.codecs = read("codecs");
         // A policy writes text, and the ways of saying yes are worth accepting.
         self.browser_integration = matches!(
@@ -1530,6 +1532,23 @@ impl AppState {
         {
             return Err(message("SETTINGS_LANGUAGE_INVALID"));
         }
+        // The transport and the media encryption have to be values this
+        // version knows. An unknown one is refused rather than read as UDP or
+        // as no encryption: these come from a policy as well as from the
+        // dialog, and a typo there must not quietly turn the encryption off.
+        if !matches!(s.transport.as_str(), "" | "udp" | "tcp" | "tls") {
+            return Err(message("SETTINGS_TRANSPORT_INVALID"));
+        }
+        if !matches!(s.media_encryption.as_str(), "" | "sdes" | "osrtp" | "dtls") {
+            return Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID"));
+        }
+        // SDES puts the keys in the signalling, so it needs TLS to mean anything;
+        // RFC 8643 asks the same of OSRTP with SDES keys. Checked here, so that
+        // settings that never passed through the dialog cannot start the
+        // engine with the keys on a plain transport.
+        if matches!(s.media_encryption.as_str(), "sdes" | "osrtp") && s.sip_transport() != "TLS" {
+            return Err(message("SETTINGS_SDES_NEEDS_TLS"));
+        }
         // Codec names from the known set, each at most once; none means all.
         let mut named: Vec<String> = Vec::new();
         for name in s.codecs.split(',').map(str::trim).filter(|n| !n.is_empty()) {
@@ -2156,6 +2175,10 @@ impl AppState {
             .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
         account.validate()?;
         let settings = self.settings()?;
+        // What is stored may not have passed through the dialog (a policy, a
+        // hand-edited registry, an older version's values), so it is checked
+        // here as well before the engine is started with it.
+        Self::validate(&settings)?;
         // The engine takes thirty comma-separated numbers to watch, empty ones included.
         let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
         watched.resize(CustomButton::COUNT, String::new());
@@ -2195,11 +2218,6 @@ impl AppState {
             let _operation = self.operations.lock().unwrap();
             self.ensure_idle()?;
             Self::validate(&settings)?;
-            // SDES puts the keys in the signalling, so it needs TLS to mean anything;
-            // RFC 8643 asks the same of OSRTP with SDES keys.
-            if matches!(settings.media_encryption.as_str(), "sdes" | "osrtp") && settings.sip_transport() != "TLS" {
-                return Err(message("SETTINGS_SDES_NEEDS_TLS"));
-            }
             let ca = settings.ca_file.trim();
             if !ca.is_empty() && !std::path::Path::new(ca).is_file() {
                 return Err(message("SETTINGS_CA_FILE_MISSING"));
@@ -2808,6 +2826,30 @@ mod tests {
         assert!(rejected(Settings { noise_suppression: "loud".into(), ..Settings::default() }));
         assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
         assert!(AppState::validate(&Settings::default()).is_ok());
+    }
+    #[test]
+    fn encryption_that_needs_tls_and_unknown_values_are_refused() {
+        let with = |transport: &str, media: &str| Settings {
+            transport: transport.into(),
+            media_encryption: media.into(),
+            ..Settings::default()
+        };
+        for (transport, media) in [("", ""), ("udp", ""), ("tcp", "dtls"), ("tls", "sdes"), ("tls", "osrtp"), ("tls", "dtls")] {
+            assert!(AppState::validate(&with(transport, media)).is_ok(), "{transport} {media}");
+        }
+        // SDES and OSRTP carry their keys in the signalling: TLS or nothing.
+        for (transport, media) in [("", "sdes"), ("udp", "sdes"), ("tcp", "osrtp"), ("udp", "osrtp")] {
+            assert_eq!(AppState::validate(&with(transport, media)), Err(message("SETTINGS_SDES_NEEDS_TLS")), "{transport} {media}");
+        }
+        // A value this version does not know is refused, not read as the weak default.
+        assert_eq!(AppState::validate(&with("ssl", "")), Err(message("SETTINGS_TRANSPORT_INVALID")));
+        assert_eq!(AppState::validate(&with("tls", "srtp")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
+        assert_eq!(AppState::validate(&with("tls", "srtp-mand")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
+        // Policy text is normalised on the way in, so "TLS" and " sdes " are the known values.
+        let mut policy = Settings::default();
+        policy.read_policy(|key| match key { "transport" => " TLS ".into(), "media_encryption" => "SDES".into(), _ => String::new() });
+        assert_eq!((policy.transport.as_str(), policy.media_encryption.as_str()), ("tls", "sdes"));
+        assert!(AppState::validate(&policy).is_ok());
     }
     #[test]
     fn custom_buttons_are_checked_and_resolved() {

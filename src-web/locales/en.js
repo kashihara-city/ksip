@@ -296,6 +296,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SAVE:'Save and connect',
       SETTINGS_SAVE_HINT:'General settings are saved in the registry. Saving reconnects the phone.',
       SETTINGS_SDES_NEEDS_TLS:'SDES SRTP has to be used together with TLS',
+      SETTINGS_TRANSPORT_INVALID:'The SIP encryption (transport) value is not valid; use udp, tcp or tls',
+      SETTINGS_MEDIA_ENCRYPTION_INVALID:'The media encryption value is not valid; use empty, sdes, osrtp or dtls',
       SETTINGS_SECONDS:'seconds',
       SETTINGS_SERVER:'Server',
       SETTINGS_SERVER_PLACEHOLDER:'e.g. 192.0.2.10',

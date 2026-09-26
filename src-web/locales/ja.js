@@ -296,6 +296,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_SAVE:'保存して接続',
       SETTINGS_SAVE_HINT:'一般設定はレジストリへ保存します。保存すると電話を再接続します。',
       SETTINGS_SDES_NEEDS_TLS:'SDESのSRTPはTLSと組み合わせてください',
+      SETTINGS_TRANSPORT_INVALID:'SIPの暗号化（transport）の値が正しくありません。udp・tcp・tls のどれかにしてください',
+      SETTINGS_MEDIA_ENCRYPTION_INVALID:'音声の暗号化（media_encryption）の値が正しくありません。空・sdes・osrtp・dtls のどれかにしてください',
       SETTINGS_SECONDS:'秒',
       SETTINGS_SERVER:'サーバー',
       SETTINGS_SERVER_PLACEHOLDER:'例 192.0.2.10',
