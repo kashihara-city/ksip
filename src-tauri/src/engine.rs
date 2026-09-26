@@ -973,6 +973,9 @@ pub struct AppState {
     recorded: Arc<Mutex<HashMap<String, String>>>,
     /// The engine's closing words for each call, by id, until the history takes them.
     closed: Arc<Mutex<HashMap<String, String>>>,
+    /// Outgoing calls the engine has announced, by id: their peer, so that a
+    /// call refused at once, between two polls, still gets its history row.
+    announced: Arc<Mutex<HashMap<String, String>>>,
     converting: Arc<AtomicU64>,
     auto_answered: Arc<Mutex<HashSet<String>>>,
     logs: Arc<Mutex<Logs>>,
@@ -1080,6 +1083,7 @@ impl AppState {
             call_directions: Arc::new(Mutex::new(HashMap::new())),
             recorded: Arc::new(Mutex::new(HashMap::new())),
             closed: Arc::new(Mutex::new(HashMap::new())),
+            announced: Arc::new(Mutex::new(HashMap::new())),
             converting: Arc::new(AtomicU64::new(0)),
             auto_answered: Arc::new(Mutex::new(HashSet::new())),
             logs: Arc::new(Mutex::new(logs)),
@@ -1933,6 +1937,11 @@ impl AppState {
                 self.closed.lock().unwrap().insert(id.into(), e["param"].as_str().unwrap_or("").into());
             }
         }
+        if kind == "CALL_OUTGOING" {
+            if let Some(id) = e["id"].as_str() {
+                self.announced.lock().unwrap().insert(id.into(), e["param"].as_str().unwrap_or("").into());
+            }
+        }
         let mut v = self.view.lock().unwrap();
         if matches!(
             kind,
@@ -1997,6 +2006,30 @@ impl AppState {
                 recording: recorded.remove(&old.id).unwrap_or_default(),
                 outcome: call_outcome(&old.state, old.state == "INCOMING", &closed.remove(&old.id).unwrap_or_default(), dnd),
             }));
+        // An outgoing call answered with an error at once, between two polls,
+        // was never in a snapshot; its announcement and closing words still
+        // make a history row (and the notice that it did not connect).
+        let mut announced = self.announced.lock().unwrap();
+        let instant: Vec<String> = closed
+            .keys()
+            .filter(|id| announced.contains_key(*id) && !previous.iter().any(|c| &c.id == *id) && !phone.calls.iter().any(|c| &c.id == *id))
+            .cloned()
+            .collect();
+        for id in instant {
+            let peer = announced.remove(&id).unwrap_or_default();
+            directions.remove(&id);
+            ended.push(CallHistory {
+                ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                direction: message("HISTORY_OUTGOING"),
+                peer,
+                name: String::new(),
+                duration: 0,
+                recording: String::new(),
+                outcome: call_outcome("OUTGOING", false, &closed.remove(&id).unwrap_or_default(), dnd),
+            });
+        }
+        announced.retain(|id, _| phone.calls.iter().any(|call| call.id == *id) || !closed.contains_key(id));
+        drop(announced);
         directions.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
         recorded.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
         closed.retain(|id, _| phone.calls.iter().any(|call| call.id == *id));
