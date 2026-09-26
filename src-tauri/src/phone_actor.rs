@@ -12,11 +12,13 @@
 //! takes long (the echo calibration, turning a recording into an MP3) runs
 //! on a thread of its own and reports back as a message.
 use crate::audio::{Calibration, Volume};
-use crate::engine::{
-    dial_target, endpoint_notes, recording_name, stamp, AudioEndpoints, CustomButton, EngineReport, Mwi,
-    Services, Settings, Snapshot, Transfer, LOG_APP, LOG_ENGINE, LOG_EVENT,
-};
-use crate::engine_link::EngineLink;
+use crate::app::Services;
+use crate::engine_config::{endpoint_notes, AudioEndpoints};
+use crate::engine_link::{EngineLink, EngineReport};
+use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
+use crate::phone_state::{Mwi, Snapshot, Transfer};
+use crate::recordings::recording_name;
+use crate::settings::{dial_target, validate, CustomButton, Settings};
 use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Reply};
 use crate::phone_state::{automatic_recording_target, PhoneState};
@@ -545,7 +547,7 @@ impl Actor {
         // What is stored may not have passed through the dialog (a policy, a
         // hand-edited registry, an older version's values), so it is checked
         // here as well before the engine is started with it.
-        Services::validate(&settings)?;
+        validate(&settings)?;
         // The engine takes thirty comma-separated numbers to watch, empty ones included.
         let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
         watched.resize(CustomButton::COUNT, String::new());
@@ -566,7 +568,7 @@ impl Actor {
         Ok(())
     }
     fn start_engine(&mut self, s: Settings, account: &Account) -> Result<(), String> {
-        Services::validate(&s)?;
+        validate(&s)?;
         self.services.logs.lock().unwrap().set_detail(s.detail_log);
         if self.link.is_some() {
             return Err(message("ENGINE_ALREADY_RUNNING"));
@@ -752,7 +754,7 @@ impl Actor {
             } else {
                 settings.speaker = device;
             }
-            Services::validate(&settings)?;
+            validate(&settings)?;
             self.services.save_settings(&settings)?;
             self.view.settings = settings.clone();
             if self.link.is_some() {
@@ -799,7 +801,7 @@ impl Actor {
             } else {
                 settings.speaker_gain = gain;
             }
-            Services::validate(&settings)?;
+            validate(&settings)?;
             self.services.save_settings(&settings)?;
             self.view.settings = settings;
             result.level = level;
@@ -819,7 +821,7 @@ impl Actor {
     fn save_configuration(&mut self, settings: Settings, mut account: Account) -> Result<(), String> {
         self.enter_maintenance()?;
         let saved = (|| -> Result<(), String> {
-            Services::validate(&settings)?;
+            validate(&settings)?;
             let ca = settings.ca_file.trim();
             if !ca.is_empty() && !Path::new(ca).is_file() {
                 return Err(message("SETTINGS_CA_FILE_MISSING"));

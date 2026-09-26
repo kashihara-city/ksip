@@ -1,6 +1,7 @@
 //! Global shortcuts, and what an incoming call does while the window is away.
 use crate::message::{message, message_with};
-use crate::engine::{AppState, Settings};
+use crate::app::AppState;
+use crate::settings::Settings;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -62,7 +63,7 @@ fn register(
         })
         .map_err(|e| {
             app.state::<AppState>()
-                .log_app(format!("shortcut {} {e}", text.trim()));
+                .services.log_app(format!("shortcut {} {e}", text.trim()));
             message_with("SHORTCUT_TAKEN", [text.trim()])
         })
 }
@@ -89,11 +90,11 @@ fn toggle(app: &AppHandle) {
         return;
     };
     if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
-        state.log_app(message("SHORTCUT_WINDOW_HIDDEN"));
+        state.services.log_app(message("SHORTCUT_WINDOW_HIDDEN"));
         let _ = window.hide();
     } else {
-        state.log_app(message("SHORTCUT_WINDOW_SHOWN"));
-        crate::show(app);
+        state.services.log_app(message("SHORTCUT_WINDOW_SHOWN"));
+        crate::desktop::show(app);
     }
 }
 
@@ -106,7 +107,7 @@ fn answer_or_hangup(app: &AppHandle) {
         .iter()
         .any(|call| call.state == "INCOMING");
     let command = if ringing { "ANSWER" } else { "HANGUP" };
-    state.log_app(format!("shortcut {command}"));
+    state.services.log_app(format!("shortcut {command}"));
     // The window knows which line is selected, so it does the work, exactly as
     // it does for a ksip: link.
     let _ = app.emit("ksip-link", command.to_string());
@@ -122,8 +123,8 @@ pub fn notify_incoming(app: &AppHandle, peer: &str) {
         .body(crate::message::windows_text_with("NOTIFY_INCOMING", [peer]))
         .show()
     {
-        Ok(()) => state.log_app(message_with("NOTIFY_INCOMING_SHOWN", [peer])),
-        Err(e) => state.log_app(message_with("NOTIFY_FAILED", [e])),
+        Ok(()) => state.services.log_app(message_with("NOTIFY_INCOMING_SHOWN", [peer])),
+        Err(e) => state.services.log_app(message_with("NOTIFY_FAILED", [e])),
     }
 }
 

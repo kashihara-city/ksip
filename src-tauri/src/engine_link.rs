@@ -6,6 +6,8 @@
 //! the calls is the actor's to decide.
 use crate::message::{message, message_with};
 use crate::phone_message::{LinkBody, LinkMessage, Message};
+use crate::phone_state::{AudioProcessingStats, CallInfo, ParkingInfo, Transfer};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -26,6 +28,25 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+/// What the engine answers to `ksip_state`.
+#[derive(Deserialize)]
+pub struct EngineReport {
+    pub registration: String,
+    #[serde(default)]
+    pub dnd: bool,
+    #[serde(default)]
+    pub transport: String,
+    #[serde(default)]
+    pub media_encryption: String,
+    pub calls: Vec<CallInfo>,
+    pub transfer: Transfer,
+    #[serde(default)]
+    pub parking: Vec<ParkingInfo>,
+    #[serde(default)]
+    pub audio_processing_stats: Option<AudioProcessingStats>,
+    #[serde(default)]
+    pub mwi_summary: String,
+}
 /// Everything a start needs, worked out before the process exists: the
 /// executable, the profile folder with the config already written, and the
 /// control port, held until the moment of the spawn so nothing else takes it.
@@ -313,5 +334,27 @@ mod tests {
             "ctrl_tcp: error processing command"
         );
         assert_eq!(without_colour("plain [text]"), "plain [text]");
+    }
+    #[test]
+    fn webrtc_audio_processing_statistics_are_parsed_from_native_state() {
+        let state: EngineReport = serde_json::from_str(
+            r#"{"registration":"OK","calls":[],"transfer":{"original":"","consultation":"","pending":false,"outcome":""},"audio_processing_stats":{"echo_return_loss":12.5,"echo_return_loss_enhancement":28.75,"residual_echo_likelihood":0.04,"render_rms_dbfs":-18.5,"capture_input_rms_dbfs":-24.0,"capture_output_rms_dbfs":-51.5,"delay_ms":84,"delay_median_ms":82,"delay_standard_deviation_ms":3,"stream_delay_ms":20,"stream_delay_from_device":true,"render_frames":1200,"capture_frames":1198,"render_errors":0,"capture_errors":0}}"#,
+        )
+        .unwrap();
+        let stats = state.audio_processing_stats.unwrap();
+        assert_eq!(stats.echo_return_loss, Some(12.5));
+        assert_eq!(stats.echo_return_loss_enhancement, Some(28.75));
+        assert_eq!(stats.delay_ms, Some(84));
+        assert_eq!(stats.stream_delay_ms, 20);
+        assert_eq!(stats.residual_echo_likelihood, Some(0.04));
+        assert_eq!(stats.render_rms_dbfs, Some(-18.5));
+        assert_eq!(stats.capture_input_rms_dbfs, Some(-24.0));
+        assert_eq!(stats.capture_output_rms_dbfs, Some(-51.5));
+        assert_eq!(stats.delay_median_ms, Some(82));
+        assert_eq!(stats.delay_standard_deviation_ms, Some(3));
+        assert!(stats.stream_delay_from_device);
+        assert_eq!(stats.render_frames, 1200);
+        assert_eq!(stats.capture_frames, 1198);
+        assert_eq!(stats.render_errors + stats.capture_errors, 0);
     }
 }

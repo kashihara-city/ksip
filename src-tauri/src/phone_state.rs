@@ -1,12 +1,178 @@
 //! The phone's call state and the rules that move it: what the engine
 //! reports, what the history gets out of it, which call is recorded or
-//! answered on its own. One holder owns the instance (today `AppState`
-//! behind one mutex; the actor later), and nothing outside reads or writes
-//! the bookkeeping directly: reports and events go in through methods, the
-//! calls to show and the rows to write come out of them.
-use crate::engine::{CallHistory, CallInfo};
+//! answered on its own. The actor owns the one instance, and nothing outside
+//! reads or writes the bookkeeping directly: reports and events go in
+//! through methods, the calls to show and the rows to write come out of
+//! them. The shapes the window reads the phone in (the snapshot, a call, the
+//! parking and message counters) are defined here too.
+use crate::audio::Device;
+use crate::history::CallHistory;
 use crate::message::message;
+use crate::settings::Settings;
+use crate::storage::AccountView;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Clone, Serialize)]
+pub struct Snapshot {
+    pub running: bool,
+    /// Whether the window is on screen. Off, the window leaves the microphone alone.
+    pub window_visible: bool,
+    pub recording: bool,
+    pub recording_path: String,
+    /// Recordings being turned into MP3 at the moment, so the window can say
+    /// what the processor is busy with.
+    #[serde(default)]
+    pub converting: u32,
+    pub error: String,
+    pub settings: Settings,
+    pub devices: Vec<Device>,
+    pub log_sequence: u64,
+    pub data_dir: String,
+    pub aec_active: bool,
+    pub transport: String,
+    pub media_encryption: String,
+    pub microphone_fallback: bool,
+    /// The saved microphone or speaker was not there when the engine started,
+    /// so the default is in use. The saved choice stands; nothing is written.
+    pub microphone_missing: bool,
+    pub speaker_missing: bool,
+    pub microphone_id: String,
+    pub speaker_id: String,
+    pub account: AccountView,
+    pub calls: Vec<CallInfo>,
+    pub transfer: Transfer,
+    pub registration: String,
+    /// Do not disturb: incoming calls are refused as busy while this is on.
+    #[serde(default)]
+    pub dnd: bool,
+    /// The person asked to be unregistered. Automatic reconnects (a changed
+    /// address, a device that came back) leave the phone that way; only a
+    /// connect asked for, or a saved setting, registers again. Part of the
+    /// phone's state, so that the window can say so too.
+    #[serde(default)]
+    pub unregistered_by_choice: bool,
+    pub recording_call: String,
+    pub history_sequence: u64,
+    pub parking: Vec<ParkingInfo>,
+    pub audio_processing_stats: Option<AudioProcessingStats>,
+    #[serde(default)]
+    pub mwi: Mwi,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CallInfo {
+    pub id: String,
+    pub peer: String,
+    /// The caller's display name, when the call came with one.
+    #[serde(default)]
+    pub name: String,
+    pub state: String,
+    pub held: bool,
+    pub duration: u32,
+    #[serde(default)]
+    pub codec: String,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub transport: String,
+    #[serde(default)]
+    pub line: u8,
+}
+/// What a recording is called: when it started, and whom the call was with,
+/// so that the folder reads like the history. `2026-09-23_14-30-12_1002.wav`.
+/// The number in a peer address: `sip:1001@pbx;x` and `<sip:1001@pbx>` give `1001`.
+pub fn peer_number(peer: &str) -> String {
+    let user = peer.trim().trim_start_matches('<');
+    let user = user
+        .strip_prefix("sip:")
+        .or_else(|| user.strip_prefix("sips:"))
+        .unwrap_or(user);
+    user.split(['@', ';', '>']).next().unwrap_or("").to_string()
+}
+/// How a call's other end is named to the person: the caller's name in front
+/// of the number when the call came with one, as the window shows it.
+pub fn caller_label(call: &CallInfo) -> String {
+    let number = peer_number(&call.peer);
+    if call.name.is_empty() {
+        number
+    } else {
+        format!("{} {}", call.name, number)
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ParkingInfo {
+    pub number: String,
+    pub state: String,
+}
+/// What the voicemail box reports through its message-summary subscription.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mwi {
+    pub waiting: bool,
+    pub new: u32,
+    pub old: u32,
+}
+impl Mwi {
+    /// Reads an RFC 3842 summary: `Messages-Waiting: yes` and
+    /// `Voice-Message: 2/5 (0/1)`, new before old, urgent ones in brackets.
+    pub fn parse(summary: &str) -> Self {
+        let mut mwi = Self::default();
+        for line in summary.lines() {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let value = value.trim();
+            if name.eq_ignore_ascii_case("Messages-Waiting") {
+                mwi.waiting = value.eq_ignore_ascii_case("yes");
+            } else if name.eq_ignore_ascii_case("Voice-Message") {
+                let counts = value.split_whitespace().next().unwrap_or_default();
+                let (new, old) = counts.split_once('/').unwrap_or((counts, "0"));
+                mwi.new = new.trim().parse().unwrap_or(0);
+                mwi.old = old.trim().parse().unwrap_or(0);
+            }
+        }
+        mwi
+    }
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioProcessingStats {
+    pub echo_return_loss: Option<f64>,
+    pub echo_return_loss_enhancement: Option<f64>,
+    pub divergent_filter_fraction: Option<f64>,
+    pub residual_echo_likelihood: Option<f64>,
+    pub residual_echo_likelihood_recent_max: Option<f64>,
+    pub render_rms_dbfs: Option<f64>,
+    pub capture_device_rms_dbfs: Option<f64>,
+    pub capture_mono_rms_dbfs: Option<f64>,
+    pub capture_input_rms_dbfs: Option<f64>,
+    pub capture_output_rms_dbfs: Option<f64>,
+    pub agc_speech_level_dbfs: Option<f64>,
+    pub agc_noise_level_dbfs: Option<f64>,
+    pub agc_headroom_db: Option<f64>,
+    pub agc_gain_db: Option<f64>,
+    pub delay_ms: Option<i32>,
+    pub delay_median_ms: Option<i32>,
+    pub delay_standard_deviation_ms: Option<i32>,
+    pub stream_delay_ms: u32,
+    pub stream_delay_from_device: bool,
+    pub render_frames: u64,
+    pub capture_frames: u64,
+    pub render_errors: u32,
+    pub capture_errors: u32,
+    pub capture_device_rate: u32,
+    pub capture_device_channels: u32,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct Transfer {
+    pub original: String,
+    pub consultation: String,
+    pub pending: bool,
+    pub outcome: String,
+    /// Counts the outcomes set, so the window can show the same one again.
+    #[serde(default)]
+    pub outcome_seq: u64,
+}
 
 /// What is known about one call beyond what the engine reports about it.
 #[derive(Clone, Default)]
@@ -441,5 +607,32 @@ mod tests {
         assert_eq!(automatic_recording_target(true, &calls).as_deref(), Some("a"));
         assert!(automatic_recording_target(false, &calls).is_none());
         assert!(automatic_recording_target(true, &[call("c", "INCOMING", "z")]).is_none());
+    }
+    #[test]
+    fn caller_label_puts_the_name_before_the_number() {
+        let mut call = CallInfo {
+            id: "c".into(),
+            peer: "sip:1001@192.0.2.10;transport=udp".into(),
+            name: String::new(),
+            state: "INCOMING".into(),
+            held: false,
+            duration: 0,
+            codec: String::new(),
+            secure: false,
+            transport: "UDP".into(),
+            line: 1,
+        };
+        assert_eq!(caller_label(&call), "1001");
+        call.name = "部署名".into();
+        assert_eq!(caller_label(&call), "部署名 1001");
+        assert_eq!(peer_number("<sips:117@pbx>"), "117");
+    }
+    #[test]
+    fn a_message_summary_is_read_into_counts() {
+        let summary = "Messages-Waiting: yes\r\nMessage-Account: sip:1001@pbx\r\nVoice-Message: 2/5 (0/1)\r\n";
+        assert_eq!(Mwi::parse(summary), Mwi { waiting: true, new: 2, old: 5 });
+        assert_eq!(Mwi::parse("Messages-Waiting: no\r\nVoice-Message: 0/3\r\n"), Mwi { waiting: false, new: 0, old: 3 });
+        assert_eq!(Mwi::parse(""), Mwi::default());
+        assert_eq!(Mwi::parse("messages-waiting: YES\n"), Mwi { waiting: true, new: 0, old: 0 });
     }
 }
