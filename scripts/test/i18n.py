@@ -52,10 +52,15 @@ def names():
                              ("windows_text", False), ("windows_text_with", True)):
             for name in re.findall(r'(?<![a-z_])%s\(\s*"(%s)"' % (call, NAME), text):
                 note(name, values)
-    module = (ROOT / "src-native/ksip/ksip.cpp").read_text(encoding="utf-8")
-    for assignment in re.findall(r"(?:outcome\s*=|set_outcome\()\s*([^;]*);", module):
-        for name in re.findall(r'"(%s)"' % NAME, assignment):
-            note(name, False)
+    # Every file of the ksip module: the outcome codes moved with the
+    # transfer and the calls when the module was split.
+    module_files = sorted((ROOT / "src-native/ksip").glob("*.cpp"))
+    assert len(module_files) >= 2, f"only {len(module_files)} module files found"
+    for path in module_files:
+        module = path.read_text(encoding="utf-8")
+        for assignment in re.findall(r"(?:outcome\s*=|set_outcome\()\s*([^;]*);", module):
+            for name in re.findall(r'"(%s)"' % NAME, assignment):
+                note(name, False)
     page = (ROOT / "src-web/index.html").read_text(encoding="utf-8")
     for name in re.findall(r'data-i18n(?:-placeholder|-title|-label)?="(%s)"' % NAME, page):
         note(name, False)
