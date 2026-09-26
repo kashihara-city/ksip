@@ -11,10 +11,11 @@
 #include <unordered_map>
 #include <vector>
 #include <cstring>
-#include <cctype>
 #include "ksip_audio_bridge.h"
+#include "ksip_io.h"
 
 namespace {
+using namespace ksip_io;
 ua *account_ua = nullptr; // Owned by the UA group, not this module.
 std::string authority, sip_scheme="udp", registration="UNCONFIGURED", original, consultation, outcome;
 // The call this module ends itself once a transfer has gone through. Its
@@ -46,15 +47,6 @@ uint32_t register_interval=300;
 std::unordered_map<std::string,std::string> connected_identity;
 // The name a P-Asserted-Identity carried for a call, when it carried one.
 std::unordered_map<std::string,std::string> connected_name;
-// A display name as the window shows it: without the quotes a header puts
-// around it, and empty when there is none.
-std::string display_name(const pl &name) {
-    if (!pl_isset(&name)) return "";
-    std::string s(name.p,name.l);
-    while (!s.empty() && (s.back()==' ' || s.back()=='\t')) s.pop_back();
-    if (s.size()>=2 && s.front()=='"' && s.back()=='"') s=s.substr(1,s.size()-2);
-    return s;
-}
 call *find(const std::string &id) { return id.empty() ? nullptr : uag_call_find(id.c_str()); }
 // The outcome is counted as well as named: the window shows a notice each
 // time one is set, and the same outcome twice in a row (returning to the held
@@ -100,71 +92,6 @@ bool maintenance=false;
 struct sipsub *mwi_sub=nullptr;
 std::string mwi_summary, own_user;
 void clear_transfer() { original.clear(); consultation.clear(); pending=false; transfer_reversed=false; tmr_cancel(&transfer_timer); refer_armed=false; refer_waiting.clear(); tmr_cancel(&refer_timer); }
-// A button may name a full SIP URI instead of a number; it is passed on as it
-// is, and only has to be one line of visible ASCII.
-bool sip_uri(const std::string &s) {
-    std::string head=s.substr(0,5);for(auto &ch:head)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return head.rfind("sip:",0)==0 || head.rfind("sips:",0)==0;
-}
-bool address_ok(const std::string &s) {
-    if(s.empty() || s.size()>200)return false;
-    for(unsigned char ch:s)if(ch<0x21 || ch>0x7e)return false;
-    return true;
-}
-bool token(const char *s, const char *extra) {
-    if (!s || !*s || strlen(s)>253) return false;
-    for (;*s;++s) if (!(static_cast<unsigned char>(*s)<128 && (isalnum(static_cast<unsigned char>(*s)) || strchr(extra,*s)))) return false;
-    return true;
-}
-std::string sip_header(const uint8_t *packet,size_t length,const char *name) {
-    const size_t name_length=strlen(name);size_t pos=0;
-    while(pos<length) {
-        size_t end=pos;while(end+1<length && !(packet[end]=='\r' && packet[end+1]=='\n'))++end;
-        if(end==pos)break;
-        if(end-pos>name_length && packet[pos+name_length]==':') {
-            bool match=true;for(size_t i=0;i<name_length;++i)
-                if(std::tolower(packet[pos+i])!=std::tolower(static_cast<unsigned char>(name[i])))match=false;
-            if(match) {
-                size_t value=pos+name_length+1;while(value<end && (packet[value]==' ' || packet[value]=='\t'))++value;
-                while(end>value && (packet[end-1]==' ' || packet[end-1]=='\t'))--end;
-                return std::string(reinterpret_cast<const char*>(packet+value),end-value);
-            }
-        }
-        if(end+1>=length)break;pos=end+2;
-    }
-    return {};
-}
-void log_sip_message(bool tx,const uint8_t *packet,size_t length) {
-    // Secrets never reach the log: digest headers are replaced before printing,
-    // together with any folded continuation lines of theirs (RFC 3261 7.3.1),
-    // and so are the SRTP keys an SDP body carries in a=crypto (RFC 4568),
-    // which SDES and OSRTP put in the signalling. The file this goes to
-    // outlives the call, and a key in it would unlock a captured recording.
-    static const char *secrets[]={"authorization","proxy-authorization","www-authenticate","proxy-authenticate"};
-    std::string text(reinterpret_cast<const char*>(packet),length);
-    bool hiding=false;
-    for(size_t pos=0;pos<text.size();) {
-        size_t end=text.find("\r\n",pos);
-        if(end==std::string::npos)end=text.size();
-        std::string line=text.substr(pos,end-pos);
-        pos=end+2;
-        if(!line.empty() && (line[0]==' ' || line[0]=='\t')) {
-            if(hiding)continue;
-        }
-        else hiding=false;
-        auto colon=line.find(':');
-        if(colon!=std::string::npos) {
-            std::string name=line.substr(0,colon);
-            for(auto &ch:name)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-            for(auto secret:secrets)if(name==secret){line=line.substr(0,colon)+": ***";hiding=true;break;}
-        }
-        if(line.compare(0,9,"a=crypto:")==0) {
-            auto key=line.find(" inline:");
-            if(key!=std::string::npos)line=line.substr(0,key)+" inline:***";
-        }
-        if(!line.empty())info("ksip sip %s %s\n",tx?">":"<",line.c_str());
-    }
-}
 void sip_trace(bool tx,enum sip_transp tp,const sa*,const sa*,const uint8_t *packet,size_t length,void*) {
     if(sip_message_log && packet && length)log_sip_message(tx,packet,length);
     if(tx || !packet || length<7)return;
@@ -187,52 +114,6 @@ void sip_trace(bool tx,enum sip_transp tp,const sa*,const sa*,const uint8_t *pac
 }
 int auth_handler(char **username,char **password,const char *realm,void *arg) {
     return account_auth(static_cast<account*>(arg),username,password,realm);
-}
-// A dialog-info body (RFC 4235) as far as the parking state needs it: whether
-// it could be read as one, whether it is a full or a partial report, and the
-// (id, state) of each dialog. The tags are walked, so a namespace prefix, a
-// self-closing element or unusual spacing does not change the reading; a body
-// that is not dialog-info at all reads as nothing, not as "free".
-struct DialogInfo { bool readable=false; bool partial=false; std::vector<std::pair<std::string,std::string>> dialogs; };
-DialogInfo read_dialog_info(const std::string &body) {
-    DialogInfo info;
-    auto trim=[](std::string s){
-        auto first=s.find_first_not_of(" \t\r\n"),last=s.find_last_not_of(" \t\r\n");
-        return first==std::string::npos ? std::string() : s.substr(first,last-first+1);
-    };
-    auto lower=[](std::string s){for(auto &ch:s)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));return s;};
-    auto attribute=[&](const std::string &attrs,const char *name){
-        auto at=attrs.find(std::string(name)+"=\"");
-        if(at==std::string::npos)return std::string();
-        at+=strlen(name)+2;auto end=attrs.find('"',at);
-        return end==std::string::npos ? std::string() : attrs.substr(at,end-at);
-    };
-    std::string dialog_id;int in_dialog=0;
-    for(size_t pos=body.find('<');pos!=std::string::npos;pos=body.find('<',pos)) {
-        auto end=body.find('>',pos);
-        if(end==std::string::npos)break;
-        std::string tag=body.substr(pos+1,end-pos-1);pos=end+1;
-        if(tag.empty() || tag[0]=='?' || tag[0]=='!')continue;
-        bool closing=tag[0]=='/';if(closing)tag.erase(0,1);
-        tag=trim(tag);
-        bool self_closing=!tag.empty() && tag.back()=='/';if(self_closing){tag.pop_back();tag=trim(tag);}
-        auto space=tag.find_first_of(" \t\r\n");
-        std::string name=lower(tag.substr(0,space)),attrs=space==std::string::npos ? std::string() : tag.substr(space);
-        auto colon=name.find(':');if(colon!=std::string::npos)name.erase(0,colon+1);
-        if(name=="dialog-info") {
-            if(!closing){info.readable=true;info.partial=lower(attribute(attrs,"state"))=="partial";}
-        }
-        else if(name=="dialog") {
-            if(closing){if(in_dialog)--in_dialog;}
-            else if(!self_closing){++in_dialog;dialog_id=attribute(attrs,"id");}
-        }
-        else if(name=="state" && !closing && !self_closing && in_dialog) {
-            auto text_end=body.find('<',pos);
-            std::string text=lower(trim(body.substr(pos,text_end==std::string::npos ? std::string::npos : text_end-pos)));
-            info.dialogs.emplace_back(dialog_id,text);
-        }
-    }
-    return info;
 }
 void parking_notify(struct sip *sip,const struct sip_msg *msg,void *arg) {
     auto slot=static_cast<ParkSlot*>(arg);
@@ -363,22 +244,10 @@ int login(re_printf *pf, void*) {
         authority=std::string(server)+":"+std::to_string(port);
         // The transport belongs in the URI, the media encryption in the parameters.
         sip_scheme=(transport && !str_casecmp(transport,"TLS")) ? "tls" : (transport && !str_casecmp(transport,"TCP")) ? "tcp" : "udp";
-        // The codecs the app chose, in its order; a name this build does not
-        // know is skipped, and none at all means every codec in the usual order.
-        std::string codecs;
-        {
-            pl list=PL_INIT;std::string names;
-            if(!conf_get(conf_cur(),"ksip_audio_codecs",&list) && pl_isset(&list))names.assign(list.p,list.l);
-            static const std::pair<const char*,const char*> known[]={{"opus","opus/48000/1"},{"G722","G722/16000/1"},{"PCMU","PCMU/8000/1"},{"PCMA","PCMA/8000/1"}};
-            for(size_t start=0;start<=names.size();) {
-                auto end=names.find(',',start);
-                std::string name=names.substr(start,end==std::string::npos ? std::string::npos : end-start);
-                for(auto &entry:known)if(name==entry.first && codecs.find(entry.second)==std::string::npos)codecs+=(codecs.empty() ? "" : ",")+std::string(entry.second);
-                if(end==std::string::npos)break;
-                start=end+1;
-            }
-            if(codecs.empty())codecs="opus/48000/1,G722/16000/1,PCMU/8000/1,PCMA/8000/1";
-        }
+        // The codecs the app chose, in its order.
+        pl list=PL_INIT;std::string names;
+        if(!conf_get(conf_cur(),"ksip_audio_codecs",&list) && pl_isset(&list))names.assign(list.p,list.l);
+        std::string codecs=codec_list(names);
         std::string aor="<sip:"+user+"@"+authority+";transport="+sip_scheme+">;regint=0;audio_codecs="+codecs+";answermode=manual;call_transfer=yes";
         media_encryption=(mediaenc && *mediaenc) ? mediaenc : "";
         if (mediaenc && *mediaenc) aor+=";mediaenc="+std::string(mediaenc);
@@ -575,49 +444,14 @@ int state(re_printf *pf, void*) {
     odict_entry_add(xfer,"outcome",ODICT_STRING,outcome.c_str());
     odict_entry_add(xfer,"outcome_seq",ODICT_INT,static_cast<int64_t>(outcome_seq));
     ksip_audio_stats stats{};
-    if(index && !ksip_audio_get_current_stats(&stats) && stats.flags) {
-        odict *aec=nullptr;
-        if(!odict_alloc(&aec,24)) {
-            if(stats.flags & KSIP_AUDIO_STATS_ECHO_RETURN_LOSS)odict_entry_add(aec,"echo_return_loss",ODICT_DOUBLE,stats.echo_return_loss);
-            if(stats.flags & KSIP_AUDIO_STATS_ECHO_RETURN_LOSS_ENHANCEMENT)odict_entry_add(aec,"echo_return_loss_enhancement",ODICT_DOUBLE,stats.echo_return_loss_enhancement);
-            if(stats.flags & KSIP_AUDIO_STATS_DELAY)odict_entry_add(aec,"delay_ms",ODICT_INT,static_cast<int64_t>(stats.delay_ms));
-            if(stats.flags & KSIP_AUDIO_STATS_DIVERGENT_FILTER_FRACTION)odict_entry_add(aec,"divergent_filter_fraction",ODICT_DOUBLE,stats.divergent_filter_fraction);
-            if(stats.flags & KSIP_AUDIO_STATS_DELAY_MEDIAN)odict_entry_add(aec,"delay_median_ms",ODICT_INT,static_cast<int64_t>(stats.delay_median_ms));
-            if(stats.flags & KSIP_AUDIO_STATS_DELAY_STANDARD_DEVIATION)odict_entry_add(aec,"delay_standard_deviation_ms",ODICT_INT,static_cast<int64_t>(stats.delay_standard_deviation_ms));
-            if(stats.flags & KSIP_AUDIO_STATS_RESIDUAL_ECHO_LIKELIHOOD)odict_entry_add(aec,"residual_echo_likelihood",ODICT_DOUBLE,stats.residual_echo_likelihood);
-            if(stats.flags & KSIP_AUDIO_STATS_RESIDUAL_ECHO_LIKELIHOOD_RECENT_MAX)odict_entry_add(aec,"residual_echo_likelihood_recent_max",ODICT_DOUBLE,stats.residual_echo_likelihood_recent_max);
-            if(stats.flags & KSIP_AUDIO_STATS_RENDER_LEVEL)odict_entry_add(aec,"render_rms_dbfs",ODICT_DOUBLE,stats.render_rms_dbfs);
-            if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_DEVICE_LEVEL)odict_entry_add(aec,"capture_device_rms_dbfs",ODICT_DOUBLE,stats.capture_device_rms_dbfs);
-            if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_MONO_LEVEL)odict_entry_add(aec,"capture_mono_rms_dbfs",ODICT_DOUBLE,stats.capture_mono_rms_dbfs);
-            if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_INPUT_LEVEL)odict_entry_add(aec,"capture_input_rms_dbfs",ODICT_DOUBLE,stats.capture_input_rms_dbfs);
-            if(stats.flags & KSIP_AUDIO_STATS_CAPTURE_OUTPUT_LEVEL)odict_entry_add(aec,"capture_output_rms_dbfs",ODICT_DOUBLE,stats.capture_output_rms_dbfs);
-            if(stats.flags & KSIP_AUDIO_STATS_AGC) {
-                odict_entry_add(aec,"agc_speech_level_dbfs",ODICT_DOUBLE,stats.agc_speech_level_dbfs);
-                odict_entry_add(aec,"agc_noise_level_dbfs",ODICT_DOUBLE,stats.agc_noise_level_dbfs);
-                odict_entry_add(aec,"agc_headroom_db",ODICT_DOUBLE,stats.agc_headroom_db);
-                odict_entry_add(aec,"agc_gain_db",ODICT_DOUBLE,stats.agc_gain_db);
-            }
-            odict_entry_add(aec,"stream_delay_ms",ODICT_INT,static_cast<int64_t>(stats.stream_delay_ms));
-            odict_entry_add(aec,"stream_delay_from_device",ODICT_BOOL,stats.stream_delay_from_device != 0);
-            odict_entry_add(aec,"render_frames",ODICT_INT,static_cast<int64_t>(stats.render_frames));
-            odict_entry_add(aec,"capture_frames",ODICT_INT,static_cast<int64_t>(stats.capture_frames));
-            odict_entry_add(aec,"render_errors",ODICT_INT,static_cast<int64_t>(stats.render_errors));
-            odict_entry_add(aec,"capture_errors",ODICT_INT,static_cast<int64_t>(stats.capture_errors));
-            odict_entry_add(aec,"capture_device_rate",ODICT_INT,static_cast<int64_t>(stats.capture_device_rate));
-            odict_entry_add(aec,"capture_device_channels",ODICT_INT,static_cast<int64_t>(stats.capture_device_channels));
-            odict_entry_add(od,"audio_processing_stats",ODICT_OBJECT,aec);mem_deref(aec);
-        }
-    }
+    if(index && !ksip_audio_get_current_stats(&stats) && stats.flags) add_audio_stats(od,stats);
     odict_entry_add(od,"calls",ODICT_ARRAY,calls);odict_entry_add(od,"transfer",ODICT_OBJECT,xfer);
     err=json_encode_odict(pf,od);mem_deref(xfer);mem_deref(calls);mem_deref(od);return err;
 }
 int action(re_printf *pf, void *arg) {
-    auto a=static_cast<cmd_arg*>(arg); odict *od=nullptr;
-    if (!a || !a->prm || json_decode_odict(&od,16,a->prm,strlen(a->prm),4)) return EINVAL;
-    std::string op=odict_string(od,"op") ? odict_string(od,"op") : "";
-    std::string id=odict_string(od,"id") ? odict_string(od,"id") : "";
-    std::string value=odict_string(od,"value") ? odict_string(od,"value") : "";
-    mem_deref(od);
+    auto a=static_cast<cmd_arg*>(arg); ActionRequest request;
+    if (!a || !parse_action(a->prm,request)) return EINVAL;
+    const std::string &op=request.op,&id=request.id,&value=request.value;
     call *c=find(id);
     int err=0;
     // Hanging up and calling the transfer off are the two ways out of a pending transfer.
@@ -636,8 +470,7 @@ int action(re_printf *pf, void *arg) {
         if (op=="consult" && (!c || call_state(c)!=CALL_STATE_ESTABLISHED || !call_supported(c,REPLACES))) return ENOTSUP;
         // A number is completed with the configured registrar; a URI is sent as
         // it was written. Either way the library has to be able to read it.
-        std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
-        std::string uri=sip_uri(value) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
+        std::string uri=sip_uri(value) ? value : "sip:"+escape_user(value)+"@"+authority+";transport="+sip_scheme;
         struct uri decoded; struct pl span; pl_set_str(&span,uri.c_str());
         if (uri_decode(&decoded,&span)) return EINVAL;
         for (le *l=list_head(ua_calls(account_ua));l;l=l->next) {
@@ -688,8 +521,7 @@ int action(re_printf *pf, void *arg) {
         std::string bare=value;
         if(bare.size()>=2 && bare.front()=='<' && bare.back()=='>')bare=bare.substr(1,bare.size()-2);
         if(!(sip_uri(bare) ? address_ok(value) : token(value.c_str(),"*#+")))return EINVAL;
-        std::string user; for (char ch:value) user+=ch=='#' ? "%23" : std::string(1,ch);
-        std::string uri=sip_uri(bare) ? value : "sip:"+user+"@"+authority+";transport="+sip_scheme;
+        std::string uri=sip_uri(bare) ? value : "sip:"+escape_user(value)+"@"+authority+";transport="+sip_scheme;
         return call_transfer(c,uri.c_str());
     }
     // Do not disturb is about the account as well: on or off, no call named.
@@ -715,21 +547,10 @@ int action(re_printf *pf, void *arg) {
     return EINVAL;
 }
 int configure_parking(re_printf *pf,void *arg) {
-    auto a=static_cast<cmd_arg*>(arg);if(!a || !str_isset(a->prm))return EINVAL;
-    // Up to six comma-separated numbers; an empty one is a slot nobody watches.
-    std::array<std::string,30> values;std::string text=a->prm;size_t start=0;size_t count=0;
-    for(;;) {
-        if(count==values.size())return EINVAL;
-        auto end=text.find(',',start);
-        values[count]=text.substr(start,end==std::string::npos ? end : end-start);
-        if(!values[count].empty() && !(sip_uri(values[count]) ? address_ok(values[count]) : (values[count].size()<=30 && token(values[count].c_str(),"*#+"))))return EINVAL;
-        ++count;
-        if(end==std::string::npos)break;
-        start=end+1;
-    }
-    for(size_t i=0;i<values.size();++i)
-        for(size_t j=i+1;j<values.size();++j)
-            if(!values[i].empty() && values[i]==values[j])return EINVAL;
+    auto a=static_cast<cmd_arg*>(arg);
+    // Up to thirty comma-separated numbers; an empty one is a slot nobody watches.
+    std::array<std::string,30> values;
+    if(!a || !parse_watch_list(a->prm,values))return EINVAL;
     clear_parking_subscriptions();for(size_t i=0;i<values.size()&&i<parking.size();++i)parking[i].number=values[i];
     int err=subscribe_parking();if(!err)re_hprintf(pf,"Parking subscriptions configured\n");return err;
 }
@@ -742,14 +563,10 @@ int configure_parking(re_printf *pf,void *arg) {
 // only takes the call's 48 kHz, so the alert stays with its own module and
 // just follows the speaker.
 int audio_devices(re_printf *pf,void *arg) {
-    auto a=static_cast<cmd_arg*>(arg);if(!a || !str_isset(a->prm))return EINVAL;
-    std::string text=a->prm;auto comma=text.find(',');if(comma==std::string::npos)return EINVAL;
-    std::string microphone=text.substr(0,comma),speaker=text.substr(comma+1);
+    auto a=static_cast<cmd_arg*>(arg);
     config *cfg=conf_config();if(!cfg)return ENOENT;
-    for(const auto &device:{microphone,speaker}) {
-        if(device.empty() || device.size()>=sizeof(cfg->audio.play_dev))return EINVAL;
-        for(unsigned char ch:device)if(ch<0x20 || ch==0x7f || ch==',')return EINVAL;
-    }
+    std::string microphone,speaker;
+    if(!a || !parse_audio_devices(a->prm,sizeof(cfg->audio.play_dev),microphone,speaker))return EINVAL;
     str_ncpy(cfg->audio.src_dev,microphone.c_str(),sizeof(cfg->audio.src_dev));
     str_ncpy(cfg->audio.play_dev,speaker.c_str(),sizeof(cfg->audio.play_dev));
     str_ncpy(cfg->audio.alert_dev,speaker.c_str(),sizeof(cfg->audio.alert_dev));
