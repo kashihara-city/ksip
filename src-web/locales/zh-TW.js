@@ -201,6 +201,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       RECONNECTING:'重新連線中…',
       RECORDINGS_FOLDER:'開啟儲存位置',
       RECORDING_CONVERTED:'已將 {0} 轉為 MP3',
+      RECORDING_HEADER_REPAIRED:'{0} 未被引擎正常關閉，已修正長度後再轉換',
       RECORDING_CONVERTING:'正在將錄音轉為 MP3',
       RECORDING_CONVERT_FAILED:'無法將錄音轉為 MP3，保留 WAV（{0}）',
       RECORDING_NOT_FOUND:'找不到錄音檔',

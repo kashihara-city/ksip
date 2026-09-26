@@ -9,7 +9,7 @@ use std::{
     net::{Ipv4Addr, Shutdown, TcpStream},
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -1398,25 +1398,14 @@ impl AppState {
                 logs.sync(&self.data);
             }
         }
-        if let Ok(mut guard) = self.inner.try_lock() {
-            if let Some(e) = guard.as_mut() {
-                if let Ok(Some(status)) = e.child.try_wait() {
-                    let mut v = self.view.lock().unwrap();
-                    v.running = false;
-                    v.recording = false;
-                    v.aec_active = false;
-                    v.microphone_fallback = false;
-                    v.calls.clear();
-                    v.transfer = Transfer::default();
-                    v.parking.clear();
-                    v.audio_processing_stats = None;
-                    v.registration = "DISCONNECTED".into();
-                    let error = message_with("ENGINE_EXITED", [status]);
-                    v.error = error.clone();
-                    drop(v);
-                    self.log(LOG_APP, error);
-                }
-            }
+        // An engine that has gone without being asked is noticed here once:
+        // its handle is taken out, so the next look finds nothing to report.
+        let exited = self.inner.try_lock().ok().and_then(|mut guard| {
+            let status = guard.as_mut().and_then(|e| e.child.try_wait().ok().flatten())?;
+            Some((guard.take(), status))
+        });
+        if let Some((engine, status)) = exited {
+            self.engine_exited(engine, status);
         }
         let mut view = self.view.lock().unwrap().clone();
         view.converting = self.converting.load(Ordering::Relaxed) as u32;
@@ -2007,14 +1996,7 @@ impl AppState {
                 let _ = tx.send(Err(message("ENGINE_DISCONNECTED")));
             }
             me.log(LOG_APP, message("ENGINE_CONTROL_LOST"));
-            let mut v = me.view.lock().unwrap();
-            v.running = false;
-            v.recording = false;
-            v.microphone_fallback = false;
-            v.calls.clear();
-            v.transfer = Transfer::default();
-            v.parking.clear();
-            v.registration = "DISCONNECTED".into();
+            me.close_calls_on_exit(None);
         }));
         *guard = Some(Engine {
             child,
@@ -2410,6 +2392,11 @@ impl AppState {
             let mp3 = wav.with_extension("mp3");
             let partial = partial_recording(&wav);
             let name = wav.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // A recording the engine never closed says it holds no samples;
+            // its header is put right from the file's length before encoding.
+            if crate::wav::repair_sizes(&wav) == Ok(true) {
+                me.log(LOG_APP, message_with("RECORDING_HEADER_REPAIRED", [&name]));
+            }
             let finished = crate::mp3::transcode(&wav, &partial)
                 .and_then(|()| std::fs::rename(&partial, &mp3).map_err(|e| message_with("RECORDING_CONVERT_FAILED", [err(e)])));
             match finished {
@@ -2562,6 +2549,86 @@ impl AppState {
             self.view.lock().unwrap().error.clear();
         }
         Ok(result)
+    }
+    /// The engine process has gone without being asked. The handle, if it was
+    /// still held, is closed and its threads joined; the calls that were up
+    /// get their rows and the window is told, once.
+    fn engine_exited(&self, engine: Option<Engine>, status: ExitStatus) {
+        if let Some(e) = engine {
+            let _ = e.writer.shutdown(Shutdown::Both);
+            for t in e.threads {
+                let _ = t.join();
+            }
+        }
+        let notice = message_with("ENGINE_EXITED", [status]);
+        self.close_calls_on_exit(Some(notice.clone()));
+        // The reader thread may have closed the calls first; the exit status is
+        // still what the window should say.
+        self.view.lock().unwrap().error = notice.clone();
+        self.log(LOG_APP, notice);
+    }
+    /// What has to happen when the engine is gone, whichever side notices
+    /// first: the reader thread when the connection ends, or a snapshot when
+    /// the process has exited. The calls that were up in the last snapshot
+    /// get their history rows (their closing words never came), a recording
+    /// in progress is closed into an MP3, the call bookkeeping is emptied and
+    /// the window shows the phone as disconnected. It runs once: the second
+    /// caller finds the engine already marked as not running.
+    fn close_calls_on_exit(&self, error: Option<String>) {
+        let (calls, recording, dnd) = {
+            let mut v = self.view.lock().unwrap();
+            if !v.running {
+                return;
+            }
+            let calls = std::mem::take(&mut v.calls);
+            let recording = v.recording.then(|| PathBuf::from(v.recording_path.clone()));
+            let dnd = v.dnd;
+            v.running = false;
+            v.recording = false;
+            v.recording_call.clear();
+            v.aec_active = false;
+            v.microphone_fallback = false;
+            v.transfer = Transfer::default();
+            v.parking.clear();
+            v.audio_processing_stats = None;
+            v.registration = "DISCONNECTED".into();
+            if let Some(error) = error {
+                v.error = error;
+            }
+            (calls, recording, dnd)
+        };
+        let rows: Vec<CallHistory> = {
+            let mut directions = self.call_directions.lock().unwrap();
+            let mut recorded = self.recorded.lock().unwrap();
+            let mut closed = self.closed.lock().unwrap();
+            let rows = calls
+                .iter()
+                .map(|old| CallHistory {
+                    ended_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    direction: directions.remove(&old.id).unwrap_or_else(|| message("HISTORY_CALL")),
+                    peer: old.peer.clone(),
+                    name: old.name.clone(),
+                    duration: old.duration,
+                    recording: recorded.remove(&old.id).unwrap_or_default(),
+                    outcome: call_outcome(&old.state, old.state == "INCOMING", &closed.remove(&old.id).unwrap_or_default(), dnd),
+                })
+                .collect();
+            directions.clear();
+            recorded.clear();
+            closed.clear();
+            rows
+        };
+        self.announced.lock().unwrap().clear();
+        self.lines.lock().unwrap().clear();
+        self.auto_answered.lock().unwrap().clear();
+        if !rows.is_empty() {
+            if let Err(e) = self.history.lock().unwrap().add(&self.data, rows) {
+                self.log(LOG_APP, e);
+            }
+        }
+        if let Some(wav) = recording {
+            self.convert_recording(wav);
+        }
     }
     pub fn stop(&self) -> Result<(), String> {
         if self.inner.lock().unwrap().is_some() {

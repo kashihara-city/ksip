@@ -201,6 +201,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       RECONNECTING:'Reconnecting…',
       RECORDINGS_FOLDER:'Open recordings folder',
       RECORDING_CONVERTED:'{0} was turned into an MP3',
+      RECORDING_HEADER_REPAIRED:'{0} was never closed by the engine; its length was repaired before converting',
       RECORDING_CONVERTING:'Turning the recording into an MP3',
       RECORDING_CONVERT_FAILED:'The recording could not be turned into an MP3 and stays a WAV ({0})',
       RECORDING_NOT_FOUND:'The recording file is not there',

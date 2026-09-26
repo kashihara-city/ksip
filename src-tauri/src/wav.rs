@@ -93,6 +93,38 @@ fn samples(format: &Format, data: &[u8]) -> Result<Vec<i16>, String> {
     Ok(out)
 }
 
+/// Puts the sizes into the header of a recording the engine never finished.
+/// The recorder writes a 44-byte header with zero sizes first and the real
+/// ones when it closes the file; an engine that died in between leaves the
+/// samples on disk under a header that says there are none, which no reader
+/// plays. When the `data` size is zero or runs past the end of the file, it
+/// and the RIFF size are set from the file's length. Returns whether the
+/// file was changed. Anything that is not such a header is left alone.
+pub fn repair_sizes(path: &std::path::Path) -> Result<bool, String> {
+    use std::io::{Seek, SeekFrom, Write};
+    let length = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path).map_err(|e| e.to_string())?;
+    let mut header = [0u8; 44];
+    std::io::Read::read_exact(&mut file, &mut header).map_err(|e| e.to_string())?;
+    if &header[0..4] != b"RIFF" || &header[8..16] != b"WAVEfmt " || &header[36..40] != b"data" || length < 44 {
+        return Ok(false);
+    }
+    let block = u16_at(&header, 32).max(1) as u64;
+    let data = u32_at(&header, 40) as u64;
+    let available = (length - 44) / block * block;
+    if data != 0 && data <= length - 44 {
+        return Ok(false);
+    }
+    let riff = u32::try_from(36 + available).map_err(|e| e.to_string())?;
+    let data = u32::try_from(available).map_err(|e| e.to_string())?;
+    file.seek(SeekFrom::Start(4)).map_err(|e| e.to_string())?;
+    file.write_all(&riff.to_le_bytes()).map_err(|e| e.to_string())?;
+    file.seek(SeekFrom::Start(40)).map_err(|e| e.to_string())?;
+    file.write_all(&data.to_le_bytes()).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// The sample rate and channel count a WAV declares.
 pub fn layout(bytes: &[u8]) -> Result<(u32, u16), String> {
     let (format, _) = parse(bytes)?;
@@ -138,6 +170,40 @@ pub fn to_pcm16(bytes: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unfinished_recording_gets_its_sizes_back() {
+        let dir = std::env::temp_dir().join(format!("ksip-wav-repair-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cut.wav");
+        // The recorder's header with zero sizes: stereo 16-bit 48 kHz, block 4.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&48000u32.to_le_bytes());
+        bytes.extend_from_slice(&(48000u32 * 4).to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend(std::iter::repeat_n(7u8, 4003)); // 1000 whole blocks and three stray bytes
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(repair_sizes(&path).unwrap());
+        let fixed = std::fs::read(&path).unwrap();
+        assert_eq!(u32_at(&fixed, 40), 4000);
+        assert_eq!(u32_at(&fixed, 4), 36 + 4000);
+        assert_eq!(layout(&fixed).unwrap(), (48000, 2));
+        // A finished file is left as it is.
+        assert!(!repair_sizes(&path).unwrap());
+        // Something that is not the recorder's header is left alone too.
+        std::fs::write(&path, b"not a wav at all, but long enough to hold a header of 44 bytes").unwrap();
+        assert!(!repair_sizes(&path).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn wav(encoding: u16, bits: u16, data: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
