@@ -87,6 +87,22 @@ elif sys.argv[1]=='voicemail':
         talker.action('hangup',call)
         time.sleep(1)
     finally:talker.close()
+elif sys.argv[1]=='quick':
+    # Calls this phone from the second account and hangs up after the given
+    # seconds, the given number of times: 'quick 0.06 3' cancels three calls
+    # inside one poll interval; under do not disturb the phone refuses them.
+    hold=float(sys.argv[2]);times=int(sys.argv[3])
+    configured=accounts()
+    quick=Phone('ui-quick',configured[1],18574,19100)
+    try:
+        for _ in range(times):
+            call=quick.action('dial',value=configured[0]['extension'])
+            time.sleep(hold)
+            try:quick.action('hangup',call)
+            except Exception:pass
+            quick.wait(lambda s:not s['calls'],timeout=10)
+            time.sleep(1.2)
+    finally:quick.close()
 elif sys.argv[1]=='group':
     # Rings the lab's ring group, which is the phone and the third account
     # together, from the peer's account. The third account takes the call

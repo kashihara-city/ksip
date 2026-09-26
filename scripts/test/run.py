@@ -16,7 +16,7 @@ SUITE = [
     ('app', 'app-transfer.ps1'), ('app', 'app-auto-answer.ps1'), ('app', 'app-unregister.ps1'),
     ('app', 'app-shortcut.ps1'), ('app', 'app-language.ps1'), ('app', 'app-devices.ps1'),
     ('app', 'app-adapter.ps1'), ('app', 'app-aec-calibration.ps1'), ('app', 'app-tls.ps1'),
-    ('app', 'app-single-exe.ps1'),
+    ('app', 'app-single-exe.ps1'), ('app', 'app-call-events.ps1'), ('app', 'app-engine-exit.ps1'),
 ]
 
 def stop_test_apps():
