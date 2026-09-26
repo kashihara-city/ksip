@@ -1,6 +1,6 @@
 """SIP over TLS with a verified certificate, then SRTP required (SDES) and DTLS-SRTP, against the lab PBX."""
 import json,re,time
-from sip_fixture import PBX,ROOT,Phone,accounts,account_with,ca_certificate,connect,lab,numbers,version
+from sip_fixture import PBX,ROOT,Phone,accounts,account_with,ca_certificate,connect,has_account,lab,numbers,version
 
 CA=ca_certificate()
 SERVER=lab()['tls_host']
@@ -44,21 +44,26 @@ def main():
         if a:a.close()
         if caller:caller.close()
     # The DTLS extension: the keys are exchanged on the media path, not in the signalling.
-    dtls=None
-    try:
-        dtls=Phone('tls-dtls',over_tls(account_with('dtls','DTLS-SRTPの内線')),18576,19010,transport='TLS',mediaenc='dtls_srtp',ca_file=str(CA))
-        call=dtls.action('dial',value=numbers()['playback'])
-        dtls.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),timeout=25)
-        time.sleep(3)
-        text=dtls.log_text()
-        match=re.search(r'DTLS-SRTP complete \(audio/RTP\) Profile=(\S+)',text)
-        assert match, 'DTLS-SRTPが完了していません'
-        assert 'verified SHA-256 fingerprint OK' in text, '指紋が検証されていません'
-        print(f'PASS: DTLS-SRTPで鍵交換して通話した (Profile={match[1]})',flush=True)
-        report['dtls']=match[1]
-        dtls.action('hangup',call);dtls.wait(lambda s:not s['calls'])
-    finally:
-        if dtls:dtls.close()
+    # A PBX without DTLS-SRTP (3CX) has no such extension, and this step alone is skipped.
+    if not has_account('dtls'):
+        print(f'SKIP: DTLS-SRTPの内線が無いので鍵交換の確認は飛ばす（{PBX} の lab.json の accounts に "encryption": "dtls" が無い）',flush=True)
+        report['dtls']='skipped'
+    else:
+        dtls=None
+        try:
+            dtls=Phone('tls-dtls',over_tls(account_with('dtls','DTLS-SRTPの内線')),18576,19010,transport='TLS',mediaenc='dtls_srtp',ca_file=str(CA))
+            call=dtls.action('dial',value=numbers()['playback'])
+            dtls.wait(lambda s:any(c['id']==call and c['state']=='ESTABLISHED' for c in s['calls']),timeout=25)
+            time.sleep(3)
+            text=dtls.log_text()
+            match=re.search(r'DTLS-SRTP complete \(audio/RTP\) Profile=(\S+)',text)
+            assert match, 'DTLS-SRTPが完了していません'
+            assert 'verified SHA-256 fingerprint OK' in text, '指紋が検証されていません'
+            print(f'PASS: DTLS-SRTPで鍵交換して通話した (Profile={match[1]})',flush=True)
+            report['dtls']=match[1]
+            dtls.action('hangup',call);dtls.wait(lambda s:not s['calls'])
+        finally:
+            if dtls:dtls.close()
     # A wrong trust anchor must be refused, or verification would be theatre.
     bad=ROOT/'temp/build/wrong-ca.pem'
     bad.parent.mkdir(parents=True,exist_ok=True)

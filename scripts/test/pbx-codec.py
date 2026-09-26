@@ -1,6 +1,6 @@
 """Codec negotiation against the lab PBX: Opus, G.722 and the fallback."""
 import json,re,time
-from sip_fixture import PBX,ROOT,Phone,accounts,connect,skip_unless,version
+from sip_fixture import PBX,ROOT,Phone,accounts,connect,version
 
 def negotiated(phone):
     """The encoder and decoder baresip settled on, read from its own log."""
@@ -34,18 +34,23 @@ def main():
         if a:a.close()
         if b:b.close()
     try:
-        # A PBX that negotiates each leg on its own transcodes between them, so
-        # a narrowband peer does not pull this side down.
-        skip_unless('transcoding','相手がG.711でもこちらがOpusのままになるのはPBXが変換するときだけ')
+        # A narrowband peer is handled differently by each PBX, and both ways are
+        # right: Asterisk negotiates each leg on its own and transcodes, so this side
+        # stays on Opus; a B2BUA such as 3CX re-INVITEs this side down to the common
+        # G.711 instead. What has to hold is that the call stands and this side
+        # follows whatever the PBX decided.
         a=Phone('codec-a',configured[0],18566,18920)
         narrow=Phone('codec-narrow',configured[1],18568,18960,codecs=('g711',))
         first,remote=connect(a,narrow,configured[1]['extension'])
-        time.sleep(1)
+        time.sleep(2)
         encode,_=negotiated(a)
         peer_encode,_=negotiated(narrow)
-        assert encode[0]=='opus',f'this side left opus: {encode}'
         assert peer_encode[0] in ('PCMU','PCMA'),f'expected G.711 on the peer, got {peer_encode}'
-        print(f'PASS: 相手がG.711でもこちらはOpusのまま（{encode[0]} / {peer_encode[0]}）',flush=True)
+        assert encode[0] in ('opus','PCMU','PCMA'),f'unexpected codec on this side: {encode}'
+        assert any(c['id']==first and c['state']=='ESTABLISHED' for c in a.state()['calls']),'the call did not survive the codec choice'
+        assert any(c['id']==remote and c['state']=='ESTABLISHED' for c in narrow.state()['calls']),'the peer lost the call'
+        how='こちらはOpusのまま（PBXが変換）' if encode[0]=='opus' else 'PBXが両側をG.711に揃え、こちらは再ネゴに従った'
+        print(f'PASS: 相手がG.711でも通話が続く。{how}（{encode[0]} / {peer_encode[0]}）',flush=True)
         report['mixed']=f'{encode[0]}+{peer_encode[0]}'
         a.action('hangup',first)
         narrow.wait(lambda s:not s['calls'])
