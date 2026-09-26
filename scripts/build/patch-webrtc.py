@@ -1,4 +1,26 @@
 """Install the tracked KSIP bridge and an idempotent GN target in WebRTC."""
+# What is changed in the pinned WebRTC checkout, and why. Every change is
+# marked in the source and re-applied over its own marks, so running this
+# twice gives the same result.
+#
+# Behaviour of the audio device (the only change of that kind):
+#   modules/audio_device/win/core_audio_utility_win.{cc,h}
+#   modules/audio_device/win/core_audio_base_win.cc
+#       the WASAPI capture stream asks for AUDCLNT_STREAMOPTIONS_RAW, so the
+#       microphone is read before Windows' or the OEM's communication APOs
+#       (their echo cancellation, noise suppression and gain) touch it. KSIP
+#       runs Google's APM itself, and the two in series once cut the input to
+#       around -90 dBFS. If the device refuses RAW, the stream is opened again
+#       without it. Playback is not changed.
+#
+# Building and embedding (no change to what the library does):
+#   ksip_bridge/                   the KSIP bridge sources copied from
+#                                  src-native/webrtc.
+#   BUILD.gn                       a static library target ksip_webrtc_audio
+#                                  that bundles the bridge with the ADM, APM
+#                                  and their dependencies.
+#
+# Nothing else in WebRTC is touched.
 from pathlib import Path
 import argparse
 import shutil
