@@ -32,7 +32,12 @@ bool refer_armed=false;
 tmr parking_timer;
 int subscribe_parking();
 int subscribe_mwi();
-struct ParkSlot { struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN"; };
+struct ParkSlot {
+    struct sipsub *sub=nullptr; std::string number; std::string state="UNKNOWN";
+    // The dialogs the server has reported for this number, by id, so that a
+    // partial report (RFC 4235) changes only the dialogs it names.
+    std::unordered_map<std::string,std::string> dialogs;
+};
 // The numbers the buttons watch: up to thirty dialog subscriptions, six
 // for the phone and the rest for the panel beside it.
 std::array<ParkSlot,30> parking;
@@ -179,15 +184,70 @@ void sip_trace(bool tx,enum sip_transp tp,const sa*,const sa*,const uint8_t *pac
 int auth_handler(char **username,char **password,const char *realm,void *arg) {
     return account_auth(static_cast<account*>(arg),username,password,realm);
 }
+// A dialog-info body (RFC 4235) as far as the parking state needs it: whether
+// it could be read as one, whether it is a full or a partial report, and the
+// (id, state) of each dialog. The tags are walked, so a namespace prefix, a
+// self-closing element or unusual spacing does not change the reading; a body
+// that is not dialog-info at all reads as nothing, not as "free".
+struct DialogInfo { bool readable=false; bool partial=false; std::vector<std::pair<std::string,std::string>> dialogs; };
+DialogInfo read_dialog_info(const std::string &body) {
+    DialogInfo info;
+    auto trim=[](std::string s){
+        auto first=s.find_first_not_of(" \t\r\n"),last=s.find_last_not_of(" \t\r\n");
+        return first==std::string::npos ? std::string() : s.substr(first,last-first+1);
+    };
+    auto lower=[](std::string s){for(auto &ch:s)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));return s;};
+    auto attribute=[&](const std::string &attrs,const char *name){
+        auto at=attrs.find(std::string(name)+"=\"");
+        if(at==std::string::npos)return std::string();
+        at+=strlen(name)+2;auto end=attrs.find('"',at);
+        return end==std::string::npos ? std::string() : attrs.substr(at,end-at);
+    };
+    std::string dialog_id;int in_dialog=0;
+    for(size_t pos=body.find('<');pos!=std::string::npos;pos=body.find('<',pos)) {
+        auto end=body.find('>',pos);
+        if(end==std::string::npos)break;
+        std::string tag=body.substr(pos+1,end-pos-1);pos=end+1;
+        if(tag.empty() || tag[0]=='?' || tag[0]=='!')continue;
+        bool closing=tag[0]=='/';if(closing)tag.erase(0,1);
+        tag=trim(tag);
+        bool self_closing=!tag.empty() && tag.back()=='/';if(self_closing){tag.pop_back();tag=trim(tag);}
+        auto space=tag.find_first_of(" \t\r\n");
+        std::string name=lower(tag.substr(0,space)),attrs=space==std::string::npos ? std::string() : tag.substr(space);
+        auto colon=name.find(':');if(colon!=std::string::npos)name.erase(0,colon+1);
+        if(name=="dialog-info") {
+            if(!closing){info.readable=true;info.partial=lower(attribute(attrs,"state"))=="partial";}
+        }
+        else if(name=="dialog") {
+            if(closing){if(in_dialog)--in_dialog;}
+            else if(!self_closing){++in_dialog;dialog_id=attribute(attrs,"id");}
+        }
+        else if(name=="state" && !closing && !self_closing && in_dialog) {
+            auto text_end=body.find('<',pos);
+            std::string text=lower(trim(body.substr(pos,text_end==std::string::npos ? std::string::npos : text_end-pos)));
+            info.dialogs.emplace_back(dialog_id,text);
+        }
+    }
+    return info;
+}
 void parking_notify(struct sip *sip,const struct sip_msg *msg,void *arg) {
     auto slot=static_cast<ParkSlot*>(arg);
     std::string body(reinterpret_cast<const char*>(mbuf_buf(msg->mb)),mbuf_get_left(msg->mb));
-    // Every dialog state but terminated counts as in use (RFC 4235).
-    bool active=body.find("<state>confirmed</state>")!=std::string::npos ||
-        body.find("<state>early</state>")!=std::string::npos ||
-        body.find("<state>proceeding</state>")!=std::string::npos ||
-        body.find("<state>trying</state>")!=std::string::npos;
-    slot->state=active ? "INUSE" : "IDLE";
+    auto info=read_dialog_info(body);
+    if(!info.readable) {
+        // Not something this reads (an empty body, another format): the state
+        // stays what the last readable report said, never "free" by default.
+        if(!body.empty())warning("ksip: parking %s: notification not read as dialog-info, state kept\n",slot->number.c_str());
+    }
+    else {
+        // A full report replaces what is known; a partial one changes only the
+        // dialogs it names. Every state but terminated counts as in use.
+        if(!info.partial)slot->dialogs.clear();
+        for(auto &[id,state]:info.dialogs) {
+            if(state=="terminated")slot->dialogs.erase(id);else slot->dialogs[id]=state;
+        }
+        slot->state=slot->dialogs.empty() ? "IDLE" : "INUSE";
+    }
     (void)sip_treply(nullptr,sip,msg,200,"OK");
 }
 void parking_retry(void*) {

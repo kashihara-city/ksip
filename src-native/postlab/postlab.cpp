@@ -217,12 +217,20 @@ int start(re_printf *pf, void *arg) {
     return re_hprintf(pf,"Recording started\n");
 }
 int stop(re_printf *pf,void*) {
-    std::lock_guard<std::mutex> lock(gate);
-    reserved_call.clear();reserved_path.clear();detached_audio=nullptr;
-    if(recording && !recording->finish()) {
-        recording.reset();re_hprintf(pf,"WAV write failed or samples were dropped; recording is incomplete\n");return EIO;
+    // Under the gate the recording is only taken out of the audio threads'
+    // sight; finishing it (joining the writer, closing the file) can wait on
+    // the disk, and those threads take the gate for every frame, so that
+    // happens once the gate is released.
+    std::unique_ptr<Recorder> finished;
+    {
+        std::lock_guard<std::mutex> lock(gate);
+        reserved_call.clear();reserved_path.clear();detached_audio=nullptr;
+        finished=std::move(recording);recording_audio=nullptr;
     }
-    recording.reset();recording_audio=nullptr;return re_hprintf(pf,"Receive-only recording stopped\n");
+    if(finished && !finished->finish()) {
+        finished.reset();re_hprintf(pf,"WAV write failed or samples were dropped; recording is incomplete\n");return EIO;
+    }
+    finished.reset();return re_hprintf(pf,"Receive-only recording stopped\n");
 }
 int select_recording(re_printf *pf,void *arg) {
     auto a=(cmd_arg*)arg;
@@ -280,6 +288,11 @@ int init(){
     filter.decupdh=update_decode;filter.dech=process_decode;
     aufilt_register(baresip_aufiltl(),&filter);return cmd_register(baresip_commands(),commands,RE_ARRAY_SIZE(commands));
 }
-int close(){cmd_unregister(baresip_commands(),commands);aufilt_unregister(&filter);std::lock_guard<std::mutex> lock(gate);recording.reset();return 0;}
+int close(){
+    cmd_unregister(baresip_commands(),commands);aufilt_unregister(&filter);
+    std::unique_ptr<Recorder> finished;
+    {std::lock_guard<std::mutex> lock(gate);finished=std::move(recording);recording_audio=nullptr;}
+    finished.reset();return 0;
+}
 }
 extern "C" const struct mod_export DECL_EXPORTS(postlab)={"postlab","aufilt",init,close};

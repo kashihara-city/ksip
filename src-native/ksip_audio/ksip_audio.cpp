@@ -135,9 +135,11 @@ int AllocatePlayout(struct auplay_st **out, const struct auplay *,
   if (!Valid(p)) return ENOTSUP;
   tmr_cancel(&g_linger);
   tmr_cancel(&g_handback);
+  auplay_st *previous = nullptr;
   if (g_active_playout) {
     ksip_audio_detach_playout(g_audio);
     g_active_playout->started = false;
+    previous = g_active_playout;
     g_active_playout = nullptr;
   }
   auto *state = static_cast<auplay_st *>(mem_zalloc(sizeof(auplay_st), PlayoutDestructor));
@@ -148,7 +150,17 @@ int AllocatePlayout(struct auplay_st **out, const struct auplay *,
   const int result = ksip_audio_start_playout(g_audio, state->device, Render, state);
   if (result) {
     warning("ksip_audio: start playout failed (%d) for %s\n", result, state->device);
-    mem_deref(state); return ENODEV;
+    mem_deref(state);
+    // The player that was detached for a start that did not happen takes its
+    // stream back, so what was playing goes on instead of falling silent.
+    // Failing that too, the idle streams close in their own time.
+    if (previous && ksip_audio_start_playout(g_audio, previous->device, Render, previous) == 0) {
+      previous->started = true; g_active_playout = previous;
+      info("ksip_audio: WebRTC ADM playout handed back after a failed start\n");
+    } else {
+      KeepWarm();
+    }
+    return ENODEV;
   }
   g_players.push_back(state);
   state->started = true; g_active_playout = state; *out = state;
