@@ -53,10 +53,12 @@ void parking_notify(struct sip *sip, const struct sip_msg *msg, void *arg) {
     }
     (void)sip_treply(nullptr, sip, msg, 200, "OK");
 }
+void parking_retry(void *);
+void retry_later() { tmr_start(&parking_timer, 30000, parking_retry, nullptr); }
 void parking_retry(void *) {
     int err = subscribe_parking();
     if (subscribe_mwi()) err = EAGAIN;
-    if (err) tmr_start(&parking_timer, 30000, parking_retry, nullptr);
+    if (err) retry_later();
 }
 // A subscription the server ends or refuses is written down with its answer:
 // it explains buttons that stay unknown, and a quit that waits on the server.
@@ -73,7 +75,7 @@ void parking_closed(int err, const struct sip_msg *msg, const struct sipevent_su
     subscription_closed(("parking " + slot->number).c_str(), err, msg);
     slot->sub = static_cast<sipsub *>(mem_deref(slot->sub));
     slot->state = "UNKNOWN";
-    tmr_start(&parking_timer, 30000, parking_retry, nullptr);
+    retry_later();
 }
 void mwi_notify(struct sip *sip, const struct sip_msg *msg, void *) {
     mwi_summary = std::string(reinterpret_cast<const char *>(mbuf_buf(msg->mb)), mbuf_get_left(msg->mb));
@@ -85,7 +87,7 @@ void mwi_closed(int err, const struct sip_msg *msg, const struct sipevent_substa
     subscription_closed("mwi", err, msg);
     mwi_sub = static_cast<sipsub *>(mem_deref(mwi_sub));
     mwi_summary.clear();
-    tmr_start(&parking_timer, 30000, parking_retry, nullptr);
+    retry_later();
 }
 int subscribe_mwi() {
     auto account_ua = sip_account::user_agent();
@@ -99,20 +101,33 @@ int subscribe_mwi() {
     else info("ksip: mwi subscription to %s\n", uri.c_str());
     return err;
 }
-void clear() {
-    tmr_cancel(&parking_timer);
+// Ends the parking subscriptions and forgets what they reported: a slot
+// that is subscribed again starts from a full report, and one whose number
+// changed must not keep the dialogs of the old number.
+void clear_parking() {
+    for (auto &slot : parking) {
+        auto sub = slot.sub;
+        slot.sub = nullptr;
+        slot.state = "UNKNOWN";
+        slot.dialogs.clear();
+        if (sub) mem_deref(sub);
+    }
+}
+// The message summary subscription lives with the registration, not with
+// the numbers the buttons watch; only the shutdown and the module's close
+// end it.
+void clear_mwi() {
     if (mwi_sub) {
         auto sub = mwi_sub;
         mwi_sub = nullptr;
         mem_deref(sub);
     }
     mwi_summary.clear();
-    for (auto &slot : parking) {
-        auto sub = slot.sub;
-        slot.sub = nullptr;
-        slot.state = "UNKNOWN";
-        if (sub) mem_deref(sub);
-    }
+}
+void clear() {
+    tmr_cancel(&parking_timer);
+    clear_mwi();
+    clear_parking();
 }
 int subscribe_parking() {
     auto account_ua = sip_account::user_agent();
@@ -135,18 +150,25 @@ int subscribe_parking() {
 } // namespace
 
 void subscribe_all() {
-    (void)subscribe_parking();
-    (void)subscribe_mwi();
+    // A subscription that fails at once (no route yet, a socket error) is
+    // asked for again later, like one the server closes.
+    int err = subscribe_parking();
+    if (subscribe_mwi()) err = EAGAIN;
+    if (err) retry_later();
 }
 int configure(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     // Up to thirty comma-separated numbers; an empty one is a slot nobody watches.
     std::array<std::string, 30> values;
     if (!a || !ksip_io::parse_watch_list(a->prm, values)) return EINVAL;
-    clear();
+    // Only the parking subscriptions change hands here; the message summary
+    // stays subscribed, whichever order the registration and this command
+    // came in. The retry timer keeps running for whatever it was set for.
+    clear_parking();
     for (size_t i = 0; i < values.size() && i < parking.size(); ++i) parking[i].number = values[i];
     int err = subscribe_parking();
-    if (!err) re_hprintf(pf, "Parking subscriptions configured\n");
+    if (err) retry_later();
+    else re_hprintf(pf, "Parking subscriptions configured\n");
     return err;
 }
 int shutdown(re_printf *pf, void *) {
