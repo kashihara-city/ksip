@@ -15,6 +15,13 @@ pub enum StoredValue {
     Number(u32),
 }
 
+/// A value exactly as the registry holds it, whatever its type (one the
+/// settings cannot read included): what a save backs up and a rollback puts
+/// back, byte for byte.
+pub struct RawValue(winreg::RegValue);
+/// The account's values in the registry; the credential holds the rest.
+pub const ACCOUNT_VALUES: [&str; 3] = ["server", "port", "extension"];
+
 pub const DEFAULT_SERVER: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 5060;
 
@@ -175,6 +182,36 @@ impl Store {
             _ => Err(message_with("SETTINGS_VALUE_INVALID", [name])),
         }
     }
+    /// One value as the registry holds it, or None when there is no such
+    /// value. Never refuses a type: a save has to be able to back up, and
+    /// then replace, a value the settings cannot read.
+    pub fn read_raw(&self, name: &str) -> Result<Option<RawValue>, String> {
+        let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(&self.key) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        match key.get_raw_value(name) {
+            Ok(raw) => Ok(Some(RawValue(raw))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    /// Puts a value back exactly as it was, type and bytes, and reads it back.
+    pub fn write_raw(&self, name: &str, value: &RawValue) -> Result<(), String> {
+        #[cfg(test)]
+        if FAIL_WRITE.with(|fail| fail.borrow().as_deref() == Some(name)) {
+            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
+        }
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey(&self.key)
+            .map_err(|e| e.to_string())?;
+        key.set_raw_value(name, &value.0).map_err(|e| e.to_string())?;
+        if key.get_raw_value(name).map_err(|e| e.to_string())? != value.0 {
+            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
+        }
+        Ok(())
+    }
     /// Writes one value in its type and reads it back.
     pub fn write_value(&self, name: &str, value: &StoredValue) -> Result<(), String> {
         #[cfg(test)]
@@ -239,7 +276,8 @@ impl Store {
             password,
         }))
     }
-    fn read_secret(&self) -> Result<Option<(String, String)>, String> {
+    /// The credential alone: authentication user and password, or None.
+    pub fn read_secret(&self) -> Result<Option<(String, String)>, String> {
         let target = wide(&self.target);
         let mut item = ptr::null_mut();
         unsafe {
@@ -275,12 +313,27 @@ impl Store {
         }
     }
     pub fn write_account(&self, account: &Account) -> Result<(), String> {
-        let mut blob = account.password.clone().into_bytes();
+        self.write_secret(&account.auth_user, &account.password)?;
+        self.write_text("server", &account.server)?;
+        self.write_value("port", &StoredValue::Number(account.port.into()))?;
+        self.write_text("extension", &account.extension)?;
+        let actual = self
+            .read_account()?
+            .ok_or(message("CREDENTIAL_VERIFY_FAILED"))?;
+        if actual.auth_user != account.auth_user || actual.password != account.password {
+            return Err(message("CREDENTIAL_VERIFY_FAILED"));
+        }
+        Ok(())
+    }
+    /// The credential alone (authentication user and password), without the
+    /// account's registry values: what a rollback puts back on its own.
+    pub fn write_secret(&self, auth_user: &str, password: &str) -> Result<(), String> {
+        let mut blob = password.to_string().into_bytes();
         if blob.len() > 1024 {
             return Err(message("CREDENTIAL_PASSWORD_TOO_LONG"));
         }
         let mut target = wide(&self.target);
-        let mut username = wide(&account.auth_user);
+        let mut username = wide(auth_user);
         let mut item: CREDENTIALW = unsafe { std::mem::zeroed() };
         item.Type = CRED_TYPE_GENERIC;
         item.TargetName = target.as_mut_ptr();
@@ -297,15 +350,6 @@ impl Store {
         }
         if ok == 0 {
             return Err(message_with("CREDENTIAL_WRITE_FAILED", [error]));
-        }
-        self.write_text("server", &account.server)?;
-        self.write_value("port", &StoredValue::Number(account.port.into()))?;
-        self.write_text("extension", &account.extension)?;
-        let actual = self
-            .read_account()?
-            .ok_or(message("CREDENTIAL_VERIFY_FAILED"))?;
-        if actual.auth_user != account.auth_user || actual.password != account.password {
-            return Err(message("CREDENTIAL_VERIFY_FAILED"));
         }
         Ok(())
     }

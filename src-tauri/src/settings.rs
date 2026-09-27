@@ -5,7 +5,7 @@
 use crate::app::Services;
 use crate::logs::LOG_APP;
 use crate::message::{message, message_with};
-use crate::storage::{Account, StoredValue};
+use crate::storage::{Account, StoredValue, ACCOUNT_VALUES};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -706,11 +706,16 @@ impl Services {
     }
     /// Writes the account and the settings, or leaves the store as it was.
     /// Both are many registry values and a credential written one by one,
-    /// so a failure part way through would leave old and new mixed. What is
-    /// there is read first as stored (a value that was absent stays absent),
-    /// and after a failure every piece is put back on its own, so that one
-    /// that cannot be put back does not keep the others from being; only
-    /// when something could not be put back is the person told to save again.
+    /// so a failure part way through would leave old and new mixed. Every
+    /// value the save touches is backed up first exactly as the registry
+    /// holds it, type and bytes (a value of a type the settings cannot read
+    /// included, so that a save can replace it; a value that was absent
+    /// stays absent), and so is the credential, on its own: an address a
+    /// policy put there before anyone signed in is not the credential's to
+    /// take along. After a failure every piece is put back on its own, so
+    /// that one that cannot be put back does not keep the others from being;
+    /// only when something could not be put back is the person told to save
+    /// again.
     /// A mark (SAVE_MARK) stands in the store from before the first write
     /// until a save has gone through whole, so that a process that ends in
     /// the middle, or a rollback that failed, is seen at the next start
@@ -720,10 +725,11 @@ impl Services {
     /// before this save are no less suspect for having been put back.
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
         let marked_before = !self.store.read_text(SAVE_MARK).is_empty();
-        let old_account = self.store.read_account()?;
+        let old_secret = self.store.read_secret()?;
+        let names = settings.stored_values().into_iter().map(|(name, _)| name).chain(ACCOUNT_VALUES.iter().map(|name| name.to_string()));
         let mut old_values = Vec::new();
-        for (name, _) in settings.stored_values() {
-            let value = self.store.read_value(&name)?;
+        for name in names {
+            let value = self.store.read_raw(&name)?;
             old_values.push((name, value));
         }
         self.store.write_text(SAVE_MARK, "1")?;
@@ -736,8 +742,8 @@ impl Services {
         };
         let mut failures = Vec::new();
         failures.extend(
-            match &old_account {
-                Some(previous) => self.store.write_account(previous),
+            match &old_secret {
+                Some((user, password)) => self.store.write_secret(user, password),
                 None => self.store.delete_account(),
             }
             .err(),
@@ -745,7 +751,7 @@ impl Services {
         for (name, value) in &old_values {
             failures.extend(
                 match value {
-                    Some(value) => self.store.write_value(name, value),
+                    Some(value) => self.store.write_raw(name, value),
                     None => self.store.delete_value(name),
                 }
                 .err(),
@@ -1198,6 +1204,72 @@ mod tests {
             // A save that goes through whole takes the mark away.
             app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
             assert_eq!(app.store.read_value(SAVE_MARK)?, None, "a whole save clears the mark");
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
+    }
+    #[test]
+    fn a_value_of_a_type_the_settings_cannot_read_is_replaced_by_a_save_and_put_back_by_a_rollback() {
+        use winreg::{enums::*, RegKey, RegValue};
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-raw-type");
+        let mut app = Services::open().0;
+        app.store = guard.store();
+        let account = Account { server: "192.0.2.10".into(), port: 5060, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
+        let binary = || RegValue { bytes: vec![1, 2, 3], vtype: REG_BINARY };
+        let put_binary = |store: &Store| {
+            let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(&store.key).unwrap();
+            key.set_raw_value("aec", &binary()).unwrap();
+        };
+        let read_raw = |store: &Store| RegKey::predef(HKEY_CURRENT_USER).open_subkey(&store.key).unwrap().get_raw_value("aec").unwrap();
+        let result = (|| -> Result<(), String> {
+            put_binary(&app.store);
+            assert!(app.settings().is_err(), "a value the settings cannot read is refused");
+            // A save that fails part way puts the value back as it was, type and all.
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&Settings::default(), &account);
+            crate::storage::fail_next_write_of("");
+            assert!(failed.is_err());
+            assert!(read_raw(&app.store) == binary(), "the rollback puts back the binary value byte for byte");
+            // A save that goes through replaces it with what the setting is.
+            app.persist_configuration(&Settings::default(), &account)?;
+            assert_eq!(app.store.read_value("aec")?, Some(StoredValue::Number(1)));
+            assert!(app.settings().is_ok(), "the settings read again");
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
+    }
+    #[test]
+    fn a_first_sign_in_that_fails_puts_back_the_address_a_policy_had_put_there() {
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-first-account");
+        let mut app = Services::open().0;
+        app.store = guard.store();
+        let account = Account { server: "192.0.2.10".into(), port: 5060, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
+        let result = (|| -> Result<(), String> {
+            // A policy put the address there; nobody has signed in yet.
+            app.store.write_text("server", "pbx.example")?;
+            app.store.write_text("port", "5061")?;
+            assert!(app.store.read_secret()?.is_none());
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&Settings::default(), &account);
+            crate::storage::fail_next_write_of("");
+            assert!(failed.is_err());
+            assert!(app.store.read_secret()?.is_none(), "no credential is left behind");
+            assert_eq!(app.store.read_value("server")?, Some(StoredValue::Text("pbx.example".into())), "the policy's server is back");
+            assert_eq!(app.store.read_value("port")?, Some(StoredValue::Text("5061".into())), "the policy's port is back, in its type");
+            assert_eq!(app.store.read_value("extension")?, None, "a value that was absent is absent again");
+            // With a credential already there, a failed save puts it back too.
+            app.persist_configuration(&Settings::default(), &account)?;
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&Settings::default(), &Account { auth_user: "1002".into(), password: "other-test-only".into(), server: "192.0.2.20".into(), ..account.clone() });
+            crate::storage::fail_next_write_of("");
+            assert!(failed.is_err());
+            let (user, password) = app.store.read_secret()?.expect("the credential is back");
+            assert_eq!((user.as_str(), password.as_str()), ("1001", "local-test-only"));
+            assert_eq!(app.store.read_text("server"), "192.0.2.10");
             Ok(())
         })();
         drop(guard);
