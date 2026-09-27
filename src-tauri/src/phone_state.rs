@@ -292,7 +292,6 @@ impl PhoneState {
             false
         }
     }
-    #[cfg(test)]
     pub fn in_maintenance(&self) -> bool {
         self.maintenance.is_some()
     }

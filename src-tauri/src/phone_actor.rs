@@ -292,6 +292,11 @@ struct Phone {
     /// The call whose recording the engine could not open: the automatic
     /// recording does not try the same call again and again.
     recording_refused: Option<String>,
+    /// The WAVs handed over for conversion this run. A recording's end can be
+    /// learnt more than once (the engine's closed event, a stop's answer, a
+    /// start's continuation, the process's end); the file is converted on the
+    /// first and never again (convert_once).
+    converted: std::collections::HashSet<PathBuf>,
     /// The engine was lost and its end has not been confirmed: the calls
     /// stay as the window shows them until a stop reports the process ended
     /// (recover, or a late report in stray), since it may still be there.
@@ -369,6 +374,7 @@ impl Actor {
             maintenance_off_owed: false,
             open_recording: None,
             recording_refused: None,
+            converted: std::collections::HashSet::new(),
             exit_unsettled: false,
             recover_after: Instant::now(),
             maintenance_held: None,
@@ -587,7 +593,7 @@ impl Actor {
             }
             p.probe_network();
         }
-        if self.shared.borrow().maintenance_off_owed && !self.queue.iter().any(|(_, job)| matches!(job, Job::MaintenanceOff)) {
+        if self.shared.borrow().maintenance_off_due() && !self.queue.iter().any(|(_, job)| matches!(job, Job::MaintenanceOff)) {
             self.queue.push_front((Instant::now(), Job::MaintenanceOff));
         }
         // A lost engine whose stop could not confirm its end is given another.
@@ -670,11 +676,7 @@ impl Actor {
                 }
             }),
             Job::Recover => Box::pin(recover(s)),
-            Job::MaintenanceOff => Box::pin(async move {
-                if tell_maintenance(&s, "off").await.is_ok() {
-                    s.borrow_mut().maintenance_off_owed = false;
-                }
-            }),
+            Job::MaintenanceOff => Box::pin(async move { maintenance_off(&s).await }),
             Job::Stop => Box::pin(async move {
                 stop_engine(&s).await;
             }),
@@ -792,6 +794,11 @@ impl Phone {
             Work::Calibrated(_) => self.release_held_maintenance(),
             _ => {}
         }
+    }
+    /// An end of maintenance the engine has not taken yet is owed, and nobody
+    /// holds the maintenance now: one that is held is its owner's to end.
+    fn maintenance_off_due(&self) -> bool {
+        self.maintenance_off_owed && !self.phone.in_maintenance()
     }
     /// The calibration that was given up on has ended: the devices are free,
     /// and the maintenance held for it ends now, by its own number.
@@ -1102,6 +1109,13 @@ impl Phone {
     /// MP3, once.
     fn engine_ended(&mut self) {
         if let Some(wav) = self.open_recording.take() {
+            self.convert_once(wav);
+        }
+    }
+    /// Hands a closed WAV over for conversion, once per run: whichever word
+    /// of its end comes first converts it, and the later ones find it done.
+    fn convert_once(&mut self, wav: PathBuf) {
+        if self.converted.insert(wav.clone()) {
             self.services.convert_recording(wav);
         }
     }
@@ -1114,7 +1128,7 @@ impl Phone {
         self.view.recording = false;
         self.view.recording_call.clear();
         if let Some(wav) = self.open_recording.take() {
-            self.services.convert_recording(wav);
+            self.convert_once(wav);
         }
         if !complete {
             self.view.error = message("RECORDING_WRITE_PROBLEM");
@@ -1320,7 +1334,21 @@ async fn enter_maintenance(s: &Shared) -> Result<u64, String> {
         }
         return Err(if e.busy() { message("CALL_IN_PROGRESS") } else { e.into() });
     }
+    // The engine has taken this owner's maintenance: an end owed from an
+    // earlier one is superseded, and this owner's leave says off in its turn.
+    s.borrow_mut().maintenance_off_owed = false;
     Ok(owner)
+}
+/// Tells the engine again that maintenance has ended, when that is still
+/// owed when this job's turn comes and nobody has begun another meanwhile:
+/// a maintenance held now is not ended by an earlier owner's retry.
+async fn maintenance_off(s: &Shared) {
+    if !s.borrow().maintenance_off_due() {
+        return;
+    }
+    if tell_maintenance(s, "off").await.is_ok() && !s.borrow().phone.in_maintenance() {
+        s.borrow_mut().maintenance_off_owed = false;
+    }
 }
 /// Ends the maintenance `owner` began. Another number ends nothing, and the
 /// engine is not told off then: the maintenance is somebody else's.
@@ -1748,10 +1776,14 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         }
         Some(PendingEnd::Closed { complete }) => {
             // Opened and already closed (its call ended at once): the file is
-            // there and becomes an MP3, once; nothing is shown as recording.
-            if p.open_recording.take().is_some_and(|open| open == path) || !p.open_recording.is_some() {
-                p.services.convert_recording(path);
+            // there, its call's history row names it, and it becomes an MP3
+            // once, whether the closed event already handed it over or not.
+            // Nothing is shown as recording.
+            if p.open_recording.as_ref() == Some(&path) {
+                p.open_recording = None;
             }
+            p.phone.note_recording(id, &name);
+            p.convert_once(path);
             if !complete {
                 p.view.error = message("RECORDING_WRITE_PROBLEM");
             }
@@ -2122,6 +2154,36 @@ mod tests {
         assert!(a.shared.borrow().phone.in_maintenance());
         run_now(leave_maintenance(&a.shared, owner));
         assert!(!a.shared.borrow().phone.in_maintenance());
+    }
+    #[test]
+    fn an_owed_end_of_maintenance_does_not_end_one_held_by_another() {
+        let a = actor();
+        // An earlier owner's off was not taken: it is owed.
+        a.shared.borrow_mut().maintenance_off_owed = true;
+        assert!(a.shared.borrow().maintenance_off_due());
+        // A new owner takes the maintenance: the owed off is superseded.
+        let owner = run_now(enter_maintenance(&a.shared)).unwrap();
+        assert!(!a.shared.borrow().maintenance_off_owed, "the new on supersedes the owed off");
+        // Owed again while held (a retry already queued): it waits for the holder.
+        a.shared.borrow_mut().maintenance_off_owed = true;
+        assert!(!a.shared.borrow().maintenance_off_due());
+        run_now(maintenance_off(&a.shared));
+        assert!(a.shared.borrow().phone.in_maintenance(), "the holder's maintenance stands");
+        assert!(a.shared.borrow().maintenance_off_owed, "the retry did nothing and is still owed");
+        // Once the holder leaves, the retry goes through.
+        run_now(leave_maintenance(&a.shared, owner));
+        run_now(maintenance_off(&a.shared));
+        assert!(!a.shared.borrow().maintenance_off_owed);
+    }
+    #[test]
+    fn a_recording_whose_end_is_learnt_twice_is_converted_once() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let wav = std::env::temp_dir().join(format!("ksip-once-{}.wav", std::process::id()));
+        p.convert_once(wav.clone());
+        p.convert_once(wav.clone());
+        assert_eq!(p.converted.len(), 1);
+        assert!(p.converted.contains(&wav));
     }
     #[test]
     fn a_maintenance_held_for_a_late_worker_is_released_by_its_report_only() {

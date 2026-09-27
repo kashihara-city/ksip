@@ -80,7 +80,9 @@ const SCHEME: &str = "ksip:";
 /// Whether an argument is a link. Windows hands the link over whole, scheme
 /// and all, and a scheme is the same in any case.
 pub fn is_link(argument: &str) -> bool {
-    argument.len() >= SCHEME.len() && argument[..SCHEME.len()].eq_ignore_ascii_case(SCHEME)
+    // By bytes: an argument whose fifth byte falls inside a character (any
+    // non-ASCII text) is simply not a link.
+    argument.as_bytes().get(..SCHEME.len()).is_some_and(|head| head.eq_ignore_ascii_case(SCHEME.as_bytes()))
 }
 
 /// What a link asks for.
@@ -336,6 +338,11 @@ mod tests {
         assert!(!is_link("/ksip=ksip:9001"));
         assert!(!is_link("9001"));
         assert!(!is_link(""));
+        // Text that is not ASCII is no link, wherever its characters end.
+        for text in ["日本語", "ksi", "日ksip:9001", "😀", "kあsip:", "ksip"] {
+            assert!(!is_link(text), "{text}");
+        }
+        assert!(parse("日本語").is_err());
     }
 
     #[test]
