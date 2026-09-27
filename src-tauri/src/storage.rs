@@ -1,7 +1,8 @@
-//! User-scoped registry settings and Windows generic credentials.
+//! User-scoped registry settings, the policy that fixes some of them, and
+//! Windows generic credentials.
 use crate::message::{message, message_with};
 use serde::{Deserialize, Serialize};
-use std::{io, ptr, slice};
+use std::{collections::HashMap, io, ptr, slice, sync::Arc};
 use windows_sys::Win32::Security::Credentials::*;
 use winreg::{enums::*, RegKey};
 
@@ -112,6 +113,154 @@ pub struct AccountView {
 pub struct Store {
     pub key: String,
     pub target: String,
+    /// What the administrator fixes, read when the store is made: once a
+    /// process, so that the dialog, a save and a connect all see the same.
+    pub policy: Arc<Policy>,
+}
+/// The settings a policy can fix (the ADMX's, besides the custom buttons):
+/// what the person may not change while one is set. The gains and the echo
+/// delay are the person's alone, for they are adjusted where the phone is used.
+pub const POLICY_SETTINGS: [&str; 30] = [
+    "server",
+    "port",
+    "sip_port",
+    "rtp_port",
+    "transport",
+    "ca_file",
+    "media_encryption",
+    "codecs",
+    "register_interval",
+    "pbx_only",
+    "aec",
+    "high_pass",
+    "noise_suppression",
+    "agc",
+    "sound_ring",
+    "sound_ringback",
+    "sound_busy",
+    "sound_notfound",
+    "sound_error",
+    "auto_answer",
+    "auto_record",
+    "incoming_action",
+    "tray_after_call",
+    "shortcut_window",
+    "shortcut_call",
+    "language",
+    "program_integration",
+    "browser_integration",
+    "browser_dial_confirm",
+    "detail_log",
+];
+/// The custom button a value belongs to (1 to COUNT), for the five values
+/// of a button; None for any other name.
+pub fn button_slot(name: &str) -> Option<usize> {
+    let (n, field) = name.strip_prefix("button_")?.split_once('_')?;
+    if n.starts_with('0') || !crate::settings::Settings::BUTTON_FIELDS.contains(&field) {
+        return None;
+    }
+    n.parse().ok().filter(|n| (1..=crate::settings::CustomButton::COUNT).contains(n))
+}
+/// The values under the policy key (HKCU\Software\Policies\KashiharaCity\ksip,
+/// where the ADMX writes): a value there fixes that setting, whatever it is
+/// (0, false and empty text included); one that is not there leaves the
+/// setting to the person. A custom button is one policy, so one value of a
+/// button fixes the whole button, its values absent there being empty. The
+/// values are never copied into the person's own key, so that the person's
+/// return when the policy is lifted.
+#[derive(Debug, Default)]
+pub struct Policy {
+    values: HashMap<String, StoredValue>,
+    /// Values there of a type the settings cannot read: fixed, and wrong.
+    unreadable: Vec<String>,
+    /// The key is there but could not be read.
+    error: Option<String>,
+}
+impl Policy {
+    pub fn load(key: &str) -> Self {
+        let mut policy = Self::default();
+        let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(key) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return policy,
+            Err(e) => {
+                policy.error = Some(e.to_string());
+                return policy;
+            }
+        };
+        for item in key.enum_values() {
+            let (name, raw) = match item {
+                Ok(item) => item,
+                Err(e) => {
+                    policy.error = Some(e.to_string());
+                    continue;
+                }
+            };
+            if !POLICY_SETTINGS.contains(&name.as_str()) && button_slot(&name).is_none() {
+                // Not a setting a policy fixes (the gains, a name of a later version).
+                continue;
+            }
+            match raw.vtype {
+                REG_SZ | REG_EXPAND_SZ => match key.get_value::<String, _>(&name) {
+                    Ok(text) => {
+                        policy.values.insert(name, StoredValue::Text(text));
+                    }
+                    Err(_) => policy.unreadable.push(name),
+                },
+                REG_DWORD => match key.get_value::<u32, _>(&name) {
+                    Ok(number) => {
+                        policy.values.insert(name, StoredValue::Number(number));
+                    }
+                    Err(_) => policy.unreadable.push(name),
+                },
+                _ => policy.unreadable.push(name),
+            }
+        }
+        policy
+    }
+    fn names(&self) -> impl Iterator<Item = &String> {
+        self.values.keys().chain(&self.unreadable)
+    }
+    /// Whether the policy fixes this setting.
+    pub fn fixes(&self, name: &str) -> bool {
+        if POLICY_SETTINGS.contains(&name) {
+            return self.names().any(|n| n == name);
+        }
+        button_slot(name).is_some_and(|slot| self.names().any(|n| button_slot(n) == Some(slot)))
+    }
+    /// The setting's value when the policy fixes it (None: the person's), in
+    /// the form Store::read_value gives.
+    fn read(&self, name: &str) -> Option<Result<Option<StoredValue>, String>> {
+        if !self.fixes(name) {
+            return None;
+        }
+        if self.unreadable.iter().any(|n| n == name) {
+            return Some(Err(message_with("SETTINGS_VALUE_INVALID", [name])));
+        }
+        Some(Ok(self.values.get(name).cloned()))
+    }
+    /// Every setting the policy fixes, a button's five values each.
+    pub fn fixed(&self) -> Vec<String> {
+        let mut names: Vec<String> = POLICY_SETTINGS.iter().filter(|n| self.fixes(n)).map(|n| n.to_string()).collect();
+        for slot in 1..=crate::settings::CustomButton::COUNT {
+            if self.fixes(&format!("button_{slot}_kind")) {
+                names.extend(crate::settings::Settings::BUTTON_FIELDS.iter().map(|f| format!("button_{slot}_{f}")));
+            }
+        }
+        names
+    }
+    /// Why the policy key could not be read, when it could not.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+/// Where the policy for a store's key is. A test profile has one of its own
+/// beside it, which the person can write (Software\Policies cannot be written
+/// without an administrator), so that a test never touches the real one.
+fn policy_key(key: &str) -> String {
+    match key.split_once(r"\Test\") {
+        Some((base, profile)) => format!(r"{base}\TestPolicies\{profile}"),
+        None => key.replacen(r"Software\", r"Software\Policies\", 1),
+    }
 }
 #[cfg(test)]
 thread_local! {
@@ -167,16 +316,29 @@ impl Store {
                     .bytes()
                     .all(|c| c.is_ascii_alphanumeric() || c == b'-')
             {
-                return Self {
-                    key: format!(r"Software\KashiharaCity\ksip\Test\{profile}"),
-                    target: format!("KSIP/Test/{profile}"),
-                };
+                return Self::at(format!(r"Software\KashiharaCity\ksip\Test\{profile}"), format!("KSIP/Test/{profile}"));
             }
         }
-        Self {
-            key: r"Software\KashiharaCity\ksip".into(),
-            target: "KSIP/SIP/default".into(),
+        Self::at(r"Software\KashiharaCity\ksip".into(), "KSIP/SIP/default".into())
+    }
+    /// The store of that key and credential, with the policy that goes with
+    /// the key, read now.
+    pub fn at(key: String, target: String) -> Self {
+        let policy = Arc::new(Policy::load(&policy_key(&key)));
+        Self { key, target, policy }
+    }
+    /// A setting as KSIP uses it: the policy's value when a policy fixes it,
+    /// the person's otherwise. read_value is the person's alone, which is
+    /// what a save backs up and writes.
+    pub fn read_effective(&self, name: &str) -> Result<Option<StoredValue>, String> {
+        match self.policy.read(name) {
+            Some(value) => value,
+            None => self.read_value(name),
         }
+    }
+    /// Whether a policy fixes this setting.
+    pub fn managed(&self, name: &str) -> bool {
+        self.policy.fixes(name)
     }
     /// One value as it is stored, or None when there is no such value: what
     /// the settings are read from, and what a rollback has to put back,
@@ -295,11 +457,12 @@ impl Store {
         }
     }
     /// The account's registry values as a connect reads them (server, port,
-    /// extension; absent or empty is the default), and the names of those
+    /// extension; absent or empty is the default; the server and the port a
+    /// policy's when it fixes them), and the names of those
     /// that cannot be read as what they are for, which keep their defaults.
     pub fn account_values(&self) -> ((String, u16, String), Vec<String>) {
         let mut unreadable = Vec::new();
-        let mut text = |name: &str, default: &str| match self.read_value(name) {
+        let mut text = |name: &str, default: &str| match self.read_effective(name) {
             Ok(Some(StoredValue::Text(t))) if !t.trim().is_empty() => t.trim().to_string(),
             Ok(Some(StoredValue::Number(n))) if name == "extension" => n.to_string(),
             Ok(None) | Ok(Some(StoredValue::Text(_))) => default.to_string(),
@@ -310,7 +473,7 @@ impl Store {
         };
         let server = text("server", DEFAULT_SERVER);
         let extension = text("extension", "");
-        let port = match self.read_value("port") {
+        let port = match self.read_effective("port") {
             Ok(None) => DEFAULT_PORT,
             Ok(Some(StoredValue::Text(t))) if t.trim().is_empty() => DEFAULT_PORT,
             Ok(Some(StoredValue::Number(n))) if u16::try_from(n).is_ok() => n as u16,
@@ -366,8 +529,13 @@ impl Store {
     }
     pub fn write_account(&self, account: &Account) -> Result<(), String> {
         self.write_secret(&account.auth_user, &account.password)?;
-        self.write_text("server", &account.server)?;
-        self.write_value("port", &StoredValue::Number(account.port.into()))?;
+        // What a policy fixes is the policy's; the person's own stays as it was.
+        if !self.managed("server") {
+            self.write_text("server", &account.server)?;
+        }
+        if !self.managed("port") {
+            self.write_value("port", &StoredValue::Number(account.port.into()))?;
+        }
         self.write_text("extension", &account.extension)?;
         let actual = self
             .read_account()?
@@ -421,6 +589,26 @@ impl Store {
             CredDeleteW(wide(&self.target).as_ptr(), CRED_TYPE_GENERIC, 0);
         }
         let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.key);
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(policy_key(&self.key));
+    }
+    /// Sets the test profile's policy value (Text or Number), for a test that
+    /// starts KSIP again under it with Store::at. A test profile's alone.
+    #[cfg(test)]
+    pub fn set_test_policy(&self, name: &str, value: Option<&StoredValue>) {
+        assert!(self.target.starts_with("KSIP/Test/"));
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(policy_key(&self.key)).unwrap();
+        match value {
+            Some(StoredValue::Text(text)) => key.set_value(name, text).unwrap(),
+            Some(StoredValue::Number(number)) => key.set_value(name, number).unwrap(),
+            None => {
+                let _ = key.delete_value(name);
+            }
+        }
+    }
+    /// The same store with its policy read again, as a new start of KSIP reads it.
+    #[cfg(test)]
+    pub fn restarted(&self) -> Self {
+        Self::at(self.key.clone(), self.target.clone())
     }
 }
 /// The tests that write the store run one at a time, in this module and in
@@ -439,10 +627,7 @@ mod tests {
     fn registry_and_credential_roundtrip_are_separate() {
         let _one_at_a_time = store_tests_one_at_a_time();
         let suffix = format!("test-storage-{}", std::process::id());
-        let store = Store {
-            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
-            target: format!("KSIP/Test/{suffix}"),
-        };
+        let store = Store::at(format!(r"Software\KashiharaCity\ksip\Test\{suffix}"), format!("KSIP/Test/{suffix}"));
         let account = Account {
             server: "192.0.2.10".into(),
             port: 5070,

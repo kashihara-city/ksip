@@ -2,7 +2,7 @@
 // the settings, and what each kind does when pressed.
 import {$, invoke, logUi, ask} from './ui.js';
 import {t, fill, texts} from './i18n.js';
-import {state, busy, callAt, current, configuredButtons, watchState, act, dial, setError, run} from './session.js';
+import {state, busy, callAt, current, configuredButtons, watchState, act, dial, setError, run, managedButton} from './session.js';
 import {render} from './phone.js';
 import {openButtonSettings} from './settings.js';
 
@@ -76,11 +76,13 @@ function slotNumber(b){
   if(b.kind==='dnd')return '';
   return b.number||'';
 }
+// A button a policy fixes keeps its place and what it does: no tools, not
+// dragged, and nothing is dropped on it. The rest move among themselves.
 function editSlot(n,b){
-  const slot=document.createElement('div');
+  const slot=document.createElement('div'),fixed=managedButton(n);
   slot.id='custom-'+n;slot.dataset.slot=String(n);
-  slot.className='button-slot'+(b.kind?' custom-'+b.kind:' empty');
-  slot.draggable=!!b.kind;
+  slot.className='button-slot'+(b.kind?' custom-'+b.kind:' empty')+(fixed?' managed':'');
+  slot.draggable=!!b.kind&&!fixed;
   // The same two lines as the button itself, in the same size, so that
   // nothing moves when the editing starts: the title, and under it what the
   // button names (without the BLF state, which is the phone's, not the
@@ -91,16 +93,19 @@ function editSlot(n,b){
   const place=document.createElement('small');place.className='slot-place';place.textContent='#'+n;
   tools.append(place);
   const tool=(what,label,glyph,act)=>{const button=document.createElement('button');button.type='button';button.id='custom-'+n+'-'+what;button.textContent=glyph;button.title=label;button.setAttribute('aria-label',label+' #'+n);button.addEventListener('click',act);return button;};
-  tools.append(tool('edit',t('BUTTON_EDIT_ONE'),'✎',()=>openButtonSettings(n)));
-  if(b.kind)tools.append(tool('delete',t('BUTTON_DELETE_ONE'),'✕',()=>deleteButton(n)));
+  if(fixed){const note=document.createElement('small');note.className='slot-managed';note.textContent=t('SETTINGS_MANAGED_FIELD');tools.append(note);slot.title=t('SETTINGS_MANAGED_FIELD');}
+  else{
+    tools.append(tool('edit',t('BUTTON_EDIT_ONE'),'✎',()=>openButtonSettings(n)));
+    if(b.kind)tools.append(tool('delete',t('BUTTON_DELETE_ONE'),'✕',()=>deleteButton(n)));
+  }
   slot.append(title,named,tools);
   slot.addEventListener('dragstart',e=>{e.dataTransfer.setData(DRAG_TYPE,String(n));e.dataTransfer.effectAllowed='move';});
-  slot.addEventListener('dragover',e=>{if(e.dataTransfer.types.includes(DRAG_TYPE)){e.preventDefault();e.dataTransfer.dropEffect='move';slot.classList.add('drop-target');}});
+  slot.addEventListener('dragover',e=>{if(!fixed&&e.dataTransfer.types.includes(DRAG_TYPE)){e.preventDefault();e.dataTransfer.dropEffect='move';slot.classList.add('drop-target');}});
   slot.addEventListener('dragleave',()=>slot.classList.remove('drop-target'));
   slot.addEventListener('drop',e=>{
     slot.classList.remove('drop-target');
     const from=Number(e.dataTransfer.getData(DRAG_TYPE));
-    if(!from)return;
+    if(!from||fixed||managedButton(from))return;
     e.preventDefault();
     moveButton(from,n);
   });
@@ -112,7 +117,7 @@ function renderEditing(){
   for(const [id,from,to] of BOXES){
     const box=$(id);
     box.hidden=false;
-    const key='edit:'+JSON.stringify(buttons.slice(from-1,to))+':'+t('BUTTON_SLOT_EMPTY');
+    const key='edit:'+JSON.stringify(buttons.slice(from-1,to))+':'+t('BUTTON_SLOT_EMPTY')+':'+BUTTON_INDEXES.filter(n=>n>=from&&n<=to&&managedButton(n)).join(',');
     if(box.dataset.key===key)continue;
     box.replaceChildren(...BUTTON_INDEXES.filter(n=>n>=from&&n<=to).map(n=>editSlot(n,buttons[n-1])));
     box.dataset.key=key;

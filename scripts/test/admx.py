@@ -5,7 +5,9 @@ from admx_model import ACCOUNT, ADMX, Profile, exe_path, policies, setting
 
 # Settings that differ by machine or person and are left out of the templates
 # on purpose. Anything else KSIP has and the templates lack is a gap.
-LEFT_OUT = {'microphone', 'speaker', 'network_adapter'}
+LEFT_OUT = {'microphone', 'speaker', 'network_adapter',
+            # The person's alone: adjusted where the phone is used, never fixed.
+            'microphone_gain', 'speaker_gain', 'aec_delay_ms'}
 # Where the template's dialog shows another starting value than KSIP's
 # default, and why that is right.
 DEFAULT_EXCEPTIONS = {
@@ -25,7 +27,7 @@ def problems(templates, defaults):
         out.append((bool(ok), what))
     stored = defaults['stored']
     written = {name: v for p in templates for name, v in p['values'].items()}
-    check(all(p['class'] == 'User' and p['key'] == r'Software\KashiharaCity\ksip' for p in templates), 'every policy is per user, in the key KSIP reads')
+    check(all(p['class'] == 'User' and p['key'] == r'Software\Policies\KashiharaCity\ksip' for p in templates), 'every policy is per user, in the policy key KSIP reads')
     check(len(written) == sum(len(p['values']) for p in templates), 'no value is written by two policies')
     unknown = sorted(set(written) - set(stored) - set(ACCOUNT))
     check(not unknown, 'every value the templates write is one KSIP reads' + (f': not {unknown}' if unknown else ''))
@@ -62,7 +64,7 @@ BREAKAGES = [
     ('a switch whose disabled value is text', lambda x: re.sub(r'(<policy name="agc".*?<disabledValue>\s*)<decimal value="0" />', r'\1<string>0</string>', x, count=1, flags=re.S)),
     ('a number written as text', lambda x: x.replace('<decimal id="sip_port" valueName="sip_port"', '<decimal id="sip_port" valueName="sip_port" storeAsText="true"', 1)),
     ('a setting with no policy', lambda x: re.sub(r'<policy name="high_pass".*?</policy>', '', x, count=1, flags=re.S)),
-    ('a value KSIP does not have', lambda x: x.replace('valueName="aec_delay_ms"', 'valueName="aec_delay"', 2)),
+    ('a value KSIP does not have', lambda x: x.replace('valueName="register_interval"', 'valueName="register_every"', 2)),
 ]
 
 

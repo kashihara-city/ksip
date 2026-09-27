@@ -330,10 +330,7 @@ mod tests {
         let root = project.join("temp/build/rust-engine-test");
         let mut services = Services::open().0;
         services.data = root.join("data");
-        services.store = Store {
-            key: r"Software\KashiharaCity\ksip\Test\test-engine".into(),
-            target: "KSIP/Test/test-engine".into(),
-        };
+        services.store = Store::at(r"Software\KashiharaCity\ksip\Test\test-engine".into(), "KSIP/Test/test-engine".into());
         let settings = Settings {
             sip_port: 17060,
             rtp_port: 17100,

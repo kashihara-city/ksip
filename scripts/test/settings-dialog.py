@@ -12,7 +12,7 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state} from './session.js';
+import {state, managed} from './session.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
@@ -24,6 +24,7 @@ window.__invoke=async(command,args)=>{
   if(command==='set_button_editing'){editingWindow=args.editing;return null;}
   if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','register_interval','pbx_only'];
   if(command==='list_adapters')return [];
+  if(command==='managed_settings')return [];
   if(command in answers)return answers[command];
   throw 'TEST_UNEXPECTED '+command;
 };
@@ -277,6 +278,38 @@ async function checks(){
   state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];render();
   check(stillEditing&&!buttons.editing&&editingWindow===false&&!$('dial').closest('[inert]'),'editing goes on while a call rings, and ends when one starts',[stillEditing,buttons.editing,editingWindow]);
   state.calls=[];render();
+
+  // What a policy fixes: its field is locked and says so, whatever else the
+  // dialog turns on; a save brings it as the app has it; a file cannot bring
+  // it; a fixed button is not edited, moved or dropped on.
+  if(buttons.editing)setEditing(false);
+  for(const name of ['aec','browser_integration','server','codecs','sound_ring',...['title','kind','number','transfer','pickup'].map(f=>'button_3_'+f)])managed.add(name);
+  const fixedButton={title:'C',kind:'speed',number:'1003',transfer:'',pickup:''};
+  await open({program_integration:false,browser_integration:true,buttons:[{},{},fixedButton]});
+  $('program_integration').checked=true;$('program_integration').dispatchEvent(new Event('change',{bubbles:true}));
+  $('button_3_kind').value='park';$('button_3_kind').dispatchEvent(new Event('change',{bubbles:true}));
+  const locked=['aec','browser_integration','server','sound_ring','button_3_kind','button_3_transfer'].filter(id=>!$(id).disabled);
+  const codecLocked=[...$('codec-list').querySelectorAll('input,button')].every(e=>e.disabled);
+  const chooser=$('sound_ring').closest('label').querySelector('button').disabled;
+  check(!locked.length&&codecLocked&&chooser&&!$('browser_dial_confirm').disabled&&!$('port').disabled,'a fixed field stays locked when what it depends on turns on; the rest follow as before',[locked,codecLocked,chooser]);
+  check($('aec').closest('label').dataset.managed==='管理者が設定'&&!!document.querySelector('#settings-buttons .button-index[data-managed]')&&!$('settings-managed-note').hidden,'a fixed field, a fixed button and the dialog say who decided it');
+  $('aec').checked=false;$('server').value='192.0.2.10';$('language').value='en';
+  s=await save();
+  check(s&&s.settings.aec===true&&s.account.server==='pbx.example'&&s.settings.language==='en'&&s.settings.buttons[2].kind==='speed'&&s.settings.buttons[2].number==='1003',
+    'a save brings what is fixed as the app has it, and the rest as the dialog holds it',s&&[s.settings.aec,s.account.server,s.settings.language,s.settings.buttons[2]]);
+  await importFile({settings:{language:'ja'},managed:['aec','server']});
+  check(text('settings-file-note').includes('aec, server'),'a file says what it left out because it is fixed',text('settings-file-note'));
+  $('configuration').close();
+  state.settings={...base,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{},fixedButton]};render();
+  setEditing(true);await settle();
+  const fixedSlot=$('custom-3');
+  savedButtons=null;
+  const data=new DataTransfer();data.setData('application/x-ksip-button','1');fixedSlot.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));await settle();
+  check(!$('custom-3-edit')&&!$('custom-3-delete')&&!fixedSlot.draggable&&savedButtons===null&&!!$('custom-1-edit'),'a fixed button has no tools, is not dragged, and nothing is dropped on it',[!!$('custom-3-edit'),fixedSlot.draggable,savedButtons]);
+  setEditing(false);
+  managed.add('auto_record');render();
+  check($('record').disabled&&$('record').title==='管理者が設定','a fixed automatic recording is not switched on the phone, and says why',$('record').title);
+  managed.clear();render();
 }
 try{await checks();}catch(e){check(false,'the checks ran to the end',String(e&&e.stack||e));}
 await fetch('/result',{method:'POST',body:JSON.stringify(results)});

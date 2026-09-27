@@ -56,15 +56,16 @@ def read_templates():
     return categories, parents, policies
 
 
-# (policy, state, values to set) and what the key must hold afterwards:
+# (policy, state, values to set) and what the policy key must hold afterwards:
 # name -> (kind, data), or None for "absent". Values the step does not name
-# are not checked.
+# are not checked. Under Software\Policies, not configured removes the value
+# as disabled does (a switch's disabled writes 0), so nothing stays behind.
 STEPS = [
     ('aec', 'Enabled', {}, {'aec': ('DWord', '1')}),
     ('aec', 'Disabled', {}, {'aec': ('DWord', '0')}),
-    ('aec', 'NotConfigured', {}, {'aec': ('DWord', '0')}),
+    ('aec', 'NotConfigured', {}, {'aec': None}),
     ('sip_port', 'Enabled', {'sip_port': '5070'}, {'sip_port': ('DWord', '5070')}),
-    ('sip_port', 'NotConfigured', {}, {'sip_port': ('DWord', '5070')}),
+    ('sip_port', 'NotConfigured', {}, {'sip_port': None}),
     ('sip_port', 'Disabled', {}, {'sip_port': None}),
     ('transport', 'Enabled', {'transport': 'tls'}, {'transport': ('String', 'tls')}),
     ('transport', 'Disabled', {}, {'transport': None}),
@@ -198,7 +199,7 @@ def report(result, plan):
         got = sorted(seen.get('items') or [])
         check(wanted == got, f"{' > '.join(p[lang] for p in entry['path']) if lang else entry['path']}: {len(got)}/{len(wanted)} policies listed")
     total = sum(len(e['policies']) for e in plan['listing'])
-    check(sum(len(s.get('items') or []) for s in shown) == total == 87, f'all {total} policies are listed')
+    check(sum(len(s.get('items') or []) for s in shown) == total == 84, f'all {total} policies are listed')
     for (policy, state, _, expect), step in zip(STEPS, result.get('steps') or []):
         if step.get('error'):
             check(False, f'{policy} {state}: {step["error"]}')

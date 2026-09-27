@@ -2,8 +2,9 @@
 // each other, the echo calibration, and what it saves.
 import {$, invoke, logUi} from './ui.js';
 import {t, fill} from './i18n.js';
-import {state, busy, run, setError} from './session.js';
+import {state, busy, run, setError, managed, managedButton} from './session.js';
 import {BUTTON_MAIN, BUTTON_INDEXES, defaultTitle} from './buttons.js';
+import {render} from './phone.js';
 
 // The codecs the setting can name, in the order offered when it names none.
 const CODEC_NAMES=['opus','G722','PCMU','PCMA'];
@@ -85,6 +86,31 @@ function untrim(){
   $('configuration').classList.remove('trimmed');
   for(const set of document.querySelectorAll('.button-set.kept'))set.classList.remove('kept');
 }
+// What changes a setting in the dialog: its field, the buttons that fill it
+// in (a file chooser), and for the codecs every tick and move of the list.
+function settingControls(name){
+  if(name==='codecs')return [...$('codec-list').querySelectorAll('input,button')];
+  const field=$(name);
+  if(!field)return [];
+  const row=field.closest('.sound-row');
+  return [field,...(row?row.querySelectorAll('button'):[])];
+}
+// A setting a policy fixes can not be changed here, and says who decided
+// it: beside its field, or at a button's number for a button's row. The
+// footer says so once for the dialog.
+function lockManaged(){
+  const said=t('SETTINGS_MANAGED_FIELD');
+  for(const name of managed)for(const el of settingControls(name)){
+    el.dataset.managed='1';el.disabled=true;el.title=said;
+    const row=el.closest('.button-set'),label=el.closest('label');
+    if(row)row.querySelector('.button-index').dataset.managed=said;
+    else if(label)label.dataset.managed=said;
+  }
+  if(managed.has('codecs'))$('codec-list').dataset.managed=said;
+  $('settings-managed-note').hidden=!managed.size;
+}
+// Turns a field on or off for what the dialog holds; one a policy fixes stays off.
+const able=(el,on)=>{el.disabled=!on||el.dataset.managed==='1';};
 // A call has started (by any way: a key, the automatic answer, a link):
 // the dialog closes without saving, trimmed or not, and says so.
 export function closeSettingsForCall(){
@@ -95,8 +121,10 @@ export function closeSettingsForCall(){
   return true;
 }
 // What the account fields hold, as the save sends them.
+// The server and port a policy fixes are sent as the app has them.
 function collectAccount(){
-  return {server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
+  return {server:managed.has('server')?state.account.server:$('server').value.trim(),port:managed.has('port')?state.account.port:Number($('port').value),
+    extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
 }
 // Whether saving what the dialog holds starts the engine again: another
 // account, a password typed, or a change to a setting the engine reads only
@@ -129,6 +157,7 @@ export function openSettings(){
   $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
+  lockManaged();
   $('settings-error').hidden=true;selectTab('account');$('configuration').showModal();
   updateSaveLabel();
 }
@@ -149,15 +178,15 @@ function syncEncryptionChoices(){
 // are off.
 function syncIntegration(){
   const on=$('program_integration').checked;
-  for(const id of ['browser_integration','browser_dial_confirm'])$(id).disabled=!on;
+  for(const id of ['browser_integration','browser_dial_confirm'])able($(id),on);
 }
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that
 // what a button does can be read off the settings.
 function syncButtonRow(n){
   const kind=$('button_'+n+'_kind').value,watches=kind==='dial'||kind==='park';
-  $('button_'+n+'_title').disabled=!kind;$('button_'+n+'_title').placeholder=defaultTitle(kind);$('button_'+n+'_number').disabled=!kind||kind==='dnd';
-  $('button_'+n+'_transfer').disabled=kind!=='park';$('button_'+n+'_pickup').disabled=!watches;
+  able($('button_'+n+'_title'),!!kind);$('button_'+n+'_title').placeholder=defaultTitle(kind);able($('button_'+n+'_number'),!!kind&&kind!=='dnd');
+  able($('button_'+n+'_transfer'),kind==='park');able($('button_'+n+'_pickup'),watches);
   const set=side=>BUTTON_INDEXES.filter(k=>(k<=BUTTON_MAIN)===side&&$('button_'+k+'_kind').value).length;
   $('button-count').textContent=set(true)?fill('BUTTON_COUNT',set(true)):'';
   $('extended-count').textContent=set(false)?fill('BUTTON_COUNT',set(false)):'';
@@ -223,14 +252,24 @@ function applyImport(file){
   syncEncryptionChoices();syncIntegration();for(const b of buttons)syncButtonRow(b.n);
   const notShown=given.filter(([key,value])=>!shows(key,value)).map(([key])=>key);
   if(notShown.length){restore(before);throw fill('SETTINGS_IMPORT_NOT_SHOWN',notShown.join(', '));}
-  const passedOver=[...(file.unreadable||[]),...(file.invalid||[])];
+  const passedOver=[...(file.unreadable||[]),...(file.invalid||[])],fixed=file.managed||[];
   const note=$('settings-file-note');
-  note.textContent=t('SETTINGS_IMPORTED')+(passedOver.length?' '+fill('SETTINGS_IMPORT_PASSED_OVER',passedOver.join(', ')):'');
+  note.textContent=t('SETTINGS_IMPORTED')+(passedOver.length?' '+fill('SETTINGS_IMPORT_PASSED_OVER',passedOver.join(', ')):'')+(fixed.length?' '+fill('SETTINGS_IMPORT_MANAGED',fixed.join(', ')):'');
   note.hidden=false;
 }
 function showFileError(what,e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi(what,e);}
-// Everything the dialog holds, as the app stores it.
+// Everything the dialog holds, as the app stores it; what a policy fixes as
+// the app has it, whatever its field shows.
 function collectSettings(){
+  const s=heldSettings();
+  for(const name of managed){
+    const slot=/^button_(\d+)_/.exec(name);
+    if(slot)s.buttons[slot[1]-1]={...state.settings.buttons[slot[1]-1]};
+    else if(name in s)s[name]=state.settings[name];
+  }
+  return s;
+}
+function heldSettings(){
   return {
     network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),
     microphone:state.settings.microphone,speaker:state.settings.speaker,
@@ -273,6 +312,7 @@ export function init(){
   // The save says whether it reconnects, as the dialog is changed.
   for(const type of ['input','change'])$('settings-form').addEventListener(type,()=>{if($('configuration').open)updateSaveLabel();});
   invoke('restart_settings').then(names=>{restartNames=names;}).catch(e=>logUi('restart settings',e));
+  invoke('managed_settings').then(names=>{for(const name of names)managed.add(name);lockManaged();render();}).catch(e=>logUi('managed settings',e));
   // A codec moves one row up or down; the rows' order is the order offered.
   $('codec-list').addEventListener('click',e=>{const button=e.target.closest('button[data-move]');if(!button)return;const row=button.closest('li'),list=row.parentElement;if(button.dataset.move==='-1'){if(row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);}else if(row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);});
   $('configuration').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});

@@ -9,6 +9,12 @@ import {kinds, deviceOptions} from './audio.js';
 import {openSettings} from './settings.js';
 
 export let state={running:false,calls:[],devices:[],transfer:{},account:{},settings:{}};
+// The settings a policy fixes, by name (a button's five values each), from
+// the app when the window starts: the same until KSIP starts again. The
+// window offers no way to change them; a save brings them as they are, and
+// the app refuses one that does not.
+export const managed=new Set();
+export const managedButton=n=>managed.has('button_'+n+'_kind');
 export let ready=false,busy=false,selected=1,error='',first=true;
 export function setError(text){error=text;}
 export function setSelected(line){selected=line;}

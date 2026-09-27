@@ -128,6 +128,13 @@ pub fn set_button_editing(editing: bool, app: tauri::AppHandle, state: State<'_,
     desktop::set_button_editing(editing);
     desktop::fit_window(&app, &state.snapshot().settings);
 }
+/// The settings a policy fixes, by name (a button's five values each): read
+/// when KSIP started, and the same until it starts again. The window locks
+/// them; a save checks them again (Services::unmanaged).
+#[tauri::command]
+pub fn managed_settings(state: State<AppState>) -> Vec<String> {
+    state.services.store.policy.fixed()
+}
 /// The settings a save needs the engine started again for, by name, so that
 /// the window can say which save reconnects.
 #[tauri::command]
@@ -183,9 +190,11 @@ pub async fn export_settings_file(state: State<'_, AppState>) -> Result<String, 
 }
 /// Reads a settings file the person chooses into what the dialog takes (see
 /// settings::import_settings), or null if cancelled. Nothing is saved here.
+/// What a policy fixes on this machine is left out.
 #[tauri::command]
-pub async fn import_settings_file() -> Result<Option<serde_json::Value>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn import_settings_file(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+    let store = state.services.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
         let Some(path) = native::choose_file("settings") else {
             return Ok(None);
         };
@@ -194,7 +203,7 @@ pub async fn import_settings_file() -> Result<Option<serde_json::Value>, String>
             return Err(crate::message::message("SETTINGS_IMPORT_FORMAT"));
         }
         let text = String::from_utf8_lossy(&bytes);
-        crate::settings::import_settings(text.trim_start_matches('\u{feff}')).map(Some)
+        crate::settings::import_settings(text.trim_start_matches('\u{feff}'), |name| store.managed(name)).map(Some)
     })
     .await
     .map_err(|e| e.to_string())?

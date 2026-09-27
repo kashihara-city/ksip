@@ -620,17 +620,11 @@ mod tests {
     }
     #[test]
     fn the_data_folder_is_the_persons_own_beside_the_registry_settings() {
-        let store = Store {
-            key: String::new(),
-            target: "KSIP/SIP/default".into(),
-        };
+        let store = Store::at(String::new(), "KSIP/SIP/default".into());
         let data = data_dir(&store);
         let local = PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"));
         assert_eq!(data, local.join("KashiharaCity").join("ksip"));
-        let test = Store {
-            key: String::new(),
-            target: "KSIP/Test/test-unit".into(),
-        };
+        let test = Store::at(String::new(), "KSIP/Test/test-unit".into());
         assert!(data_dir(&test).ends_with("temp/build/test-unit"), "{}", data_dir(&test).display());
     }
     #[test]

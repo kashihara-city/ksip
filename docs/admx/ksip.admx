@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- KSIP: every setting a site may want to set, as the per-user registry values the app reads (HKCU\Software\KashiharaCity\ksip). -->
+<!-- KSIP: the settings a site decides for its users, as per-user policy values (HKCU\Software\Policies\KashiharaCity\ksip) that KSIP prefers to the user's own and locks. -->
 <policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
   <policyNamespaces>
     <target prefix="ksip" namespace="KashiharaCity.Policies.KSIP" />
@@ -35,21 +35,21 @@
     </category>
   </categories>
   <policies>
-    <policy name="server" class="User" displayName="$(string.server)" explainText="$(string.server_Help)" presentation="$(presentation.server)" key="Software\KashiharaCity\ksip">
+    <policy name="server" class="User" displayName="$(string.server)" explainText="$(string.server_Help)" presentation="$(presentation.server)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="server" valueName="server" maxLength="253" />
       </elements>
     </policy>
-    <policy name="port" class="User" displayName="$(string.port)" explainText="$(string.port_Help)" presentation="$(presentation.port)" key="Software\KashiharaCity\ksip">
+    <policy name="port" class="User" displayName="$(string.port)" explainText="$(string.port_Help)" presentation="$(presentation.port)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="port" valueName="port" required="true" minValue="1" maxValue="65535" />
       </elements>
     </policy>
-    <policy name="transport" class="User" displayName="$(string.transport)" explainText="$(string.transport_Help)" presentation="$(presentation.transport)" key="Software\KashiharaCity\ksip">
+    <policy name="transport" class="User" displayName="$(string.transport)" explainText="$(string.transport_Help)" presentation="$(presentation.transport)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -72,7 +72,7 @@
         </enum>
       </elements>
     </policy>
-    <policy name="media_encryption" class="User" displayName="$(string.media_encryption)" explainText="$(string.media_encryption_Help)" presentation="$(presentation.media_encryption)" key="Software\KashiharaCity\ksip">
+    <policy name="media_encryption" class="User" displayName="$(string.media_encryption)" explainText="$(string.media_encryption_Help)" presentation="$(presentation.media_encryption)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -100,35 +100,35 @@
         </enum>
       </elements>
     </policy>
-    <policy name="ca_file" class="User" displayName="$(string.ca_file)" explainText="$(string.ca_file_Help)" presentation="$(presentation.ca_file)" key="Software\KashiharaCity\ksip">
+    <policy name="ca_file" class="User" displayName="$(string.ca_file)" explainText="$(string.ca_file_Help)" presentation="$(presentation.ca_file)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="ca_file" valueName="ca_file" maxLength="400" />
       </elements>
     </policy>
-    <policy name="codecs" class="User" displayName="$(string.codecs)" explainText="$(string.codecs_Help)" presentation="$(presentation.codecs)" key="Software\KashiharaCity\ksip">
+    <policy name="codecs" class="User" displayName="$(string.codecs)" explainText="$(string.codecs_Help)" presentation="$(presentation.codecs)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="codecs" valueName="codecs" maxLength="100" />
       </elements>
     </policy>
-    <policy name="sip_port" class="User" displayName="$(string.sip_port)" explainText="$(string.sip_port_Help)" presentation="$(presentation.sip_port)" key="Software\KashiharaCity\ksip">
+    <policy name="sip_port" class="User" displayName="$(string.sip_port)" explainText="$(string.sip_port_Help)" presentation="$(presentation.sip_port)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="sip_port" valueName="sip_port" required="true" minValue="1024" maxValue="65535" />
       </elements>
     </policy>
-    <policy name="rtp_port" class="User" displayName="$(string.rtp_port)" explainText="$(string.rtp_port_Help)" presentation="$(presentation.rtp_port)" key="Software\KashiharaCity\ksip">
+    <policy name="rtp_port" class="User" displayName="$(string.rtp_port)" explainText="$(string.rtp_port_Help)" presentation="$(presentation.rtp_port)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="rtp_port" valueName="rtp_port" required="true" minValue="1024" maxValue="65400" />
       </elements>
     </policy>
-    <policy name="pbx_only" class="User" displayName="$(string.pbx_only)" explainText="$(string.pbx_only_Help)" key="Software\KashiharaCity\ksip" valueName="pbx_only">
+    <policy name="pbx_only" class="User" displayName="$(string.pbx_only)" explainText="$(string.pbx_only_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="pbx_only">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -138,14 +138,14 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="register_interval" class="User" displayName="$(string.register_interval)" explainText="$(string.register_interval_Help)" presentation="$(presentation.register_interval)" key="Software\KashiharaCity\ksip">
+    <policy name="register_interval" class="User" displayName="$(string.register_interval)" explainText="$(string.register_interval_Help)" presentation="$(presentation.register_interval)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="register_interval" valueName="register_interval" required="true" minValue="30" maxValue="3600" />
       </elements>
     </policy>
-    <policy name="aec" class="User" displayName="$(string.aec)" explainText="$(string.aec_Help)" key="Software\KashiharaCity\ksip" valueName="aec">
+    <policy name="aec" class="User" displayName="$(string.aec)" explainText="$(string.aec_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="aec">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -155,14 +155,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="aec_delay_ms" class="User" displayName="$(string.aec_delay_ms)" explainText="$(string.aec_delay_ms_Help)" presentation="$(presentation.aec_delay_ms)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Audio" />
-      <supportedOn ref="SUPPORTED_KSIP" />
-      <elements>
-        <decimal id="aec_delay_ms" valueName="aec_delay_ms" required="true" minValue="0" maxValue="500" />
-      </elements>
-    </policy>
-    <policy name="high_pass" class="User" displayName="$(string.high_pass)" explainText="$(string.high_pass_Help)" key="Software\KashiharaCity\ksip" valueName="high_pass">
+    <policy name="high_pass" class="User" displayName="$(string.high_pass)" explainText="$(string.high_pass_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="high_pass">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -172,7 +165,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="noise_suppression" class="User" displayName="$(string.noise_suppression)" explainText="$(string.noise_suppression_Help)" presentation="$(presentation.noise_suppression)" key="Software\KashiharaCity\ksip">
+    <policy name="noise_suppression" class="User" displayName="$(string.noise_suppression)" explainText="$(string.noise_suppression_Help)" presentation="$(presentation.noise_suppression)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -205,7 +198,7 @@
         </enum>
       </elements>
     </policy>
-    <policy name="agc" class="User" displayName="$(string.agc)" explainText="$(string.agc_Help)" key="Software\KashiharaCity\ksip" valueName="agc">
+    <policy name="agc" class="User" displayName="$(string.agc)" explainText="$(string.agc_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="agc">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -215,21 +208,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="microphone_gain" class="User" displayName="$(string.microphone_gain)" explainText="$(string.microphone_gain_Help)" presentation="$(presentation.microphone_gain)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Audio" />
-      <supportedOn ref="SUPPORTED_KSIP" />
-      <elements>
-        <decimal id="microphone_gain" valueName="microphone_gain" required="true" minValue="100" maxValue="200" />
-      </elements>
-    </policy>
-    <policy name="speaker_gain" class="User" displayName="$(string.speaker_gain)" explainText="$(string.speaker_gain_Help)" presentation="$(presentation.speaker_gain)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Audio" />
-      <supportedOn ref="SUPPORTED_KSIP" />
-      <elements>
-        <decimal id="speaker_gain" valueName="speaker_gain" required="true" minValue="100" maxValue="200" />
-      </elements>
-    </policy>
-    <policy name="auto_record" class="User" displayName="$(string.auto_record)" explainText="$(string.auto_record_Help)" key="Software\KashiharaCity\ksip" valueName="auto_record">
+    <policy name="auto_record" class="User" displayName="$(string.auto_record)" explainText="$(string.auto_record_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="auto_record">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -239,7 +218,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="auto_answer" class="User" displayName="$(string.auto_answer)" explainText="$(string.auto_answer_Help)" key="Software\KashiharaCity\ksip" valueName="auto_answer">
+    <policy name="auto_answer" class="User" displayName="$(string.auto_answer)" explainText="$(string.auto_answer_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="auto_answer">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -249,7 +228,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="incoming_action" class="User" displayName="$(string.incoming_action)" explainText="$(string.incoming_action_Help)" presentation="$(presentation.incoming_action)" key="Software\KashiharaCity\ksip">
+    <policy name="incoming_action" class="User" displayName="$(string.incoming_action)" explainText="$(string.incoming_action_Help)" presentation="$(presentation.incoming_action)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -267,14 +246,14 @@
         </enum>
       </elements>
     </policy>
-    <policy name="tray_after_call" class="User" displayName="$(string.tray_after_call)" explainText="$(string.tray_after_call_Help)" presentation="$(presentation.tray_after_call)" key="Software\KashiharaCity\ksip">
+    <policy name="tray_after_call" class="User" displayName="$(string.tray_after_call)" explainText="$(string.tray_after_call_Help)" presentation="$(presentation.tray_after_call)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="tray_after_call" valueName="tray_after_call" required="true" minValue="0" maxValue="3600" />
       </elements>
     </policy>
-    <policy name="program_integration" class="User" displayName="$(string.program_integration)" explainText="$(string.program_integration_Help)" key="Software\KashiharaCity\ksip" valueName="program_integration">
+    <policy name="program_integration" class="User" displayName="$(string.program_integration)" explainText="$(string.program_integration_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="program_integration">
       <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -284,7 +263,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="browser_integration" class="User" displayName="$(string.browser_integration)" explainText="$(string.browser_integration_Help)" key="Software\KashiharaCity\ksip" valueName="browser_integration">
+    <policy name="browser_integration" class="User" displayName="$(string.browser_integration)" explainText="$(string.browser_integration_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="browser_integration">
       <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -294,7 +273,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="browser_dial_confirm" class="User" displayName="$(string.browser_dial_confirm)" explainText="$(string.browser_dial_confirm_Help)" key="Software\KashiharaCity\ksip" valueName="browser_dial_confirm">
+    <policy name="browser_dial_confirm" class="User" displayName="$(string.browser_dial_confirm)" explainText="$(string.browser_dial_confirm_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="browser_dial_confirm">
       <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -304,7 +283,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="language" class="User" displayName="$(string.language)" explainText="$(string.language_Help)" presentation="$(presentation.language)" key="Software\KashiharaCity\ksip">
+    <policy name="language" class="User" displayName="$(string.language)" explainText="$(string.language_Help)" presentation="$(presentation.language)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -332,56 +311,56 @@
         </enum>
       </elements>
     </policy>
-    <policy name="shortcut_window" class="User" displayName="$(string.shortcut_window)" explainText="$(string.shortcut_window_Help)" presentation="$(presentation.shortcut_window)" key="Software\KashiharaCity\ksip">
+    <policy name="shortcut_window" class="User" displayName="$(string.shortcut_window)" explainText="$(string.shortcut_window_Help)" presentation="$(presentation.shortcut_window)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="shortcut_window" valueName="shortcut_window" maxLength="40" />
       </elements>
     </policy>
-    <policy name="shortcut_call" class="User" displayName="$(string.shortcut_call)" explainText="$(string.shortcut_call_Help)" presentation="$(presentation.shortcut_call)" key="Software\KashiharaCity\ksip">
+    <policy name="shortcut_call" class="User" displayName="$(string.shortcut_call)" explainText="$(string.shortcut_call_Help)" presentation="$(presentation.shortcut_call)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="shortcut_call" valueName="shortcut_call" maxLength="40" />
       </elements>
     </policy>
-    <policy name="sound_ring" class="User" displayName="$(string.sound_ring)" explainText="$(string.sound_ring_Help)" presentation="$(presentation.sound_ring)" key="Software\KashiharaCity\ksip">
+    <policy name="sound_ring" class="User" displayName="$(string.sound_ring)" explainText="$(string.sound_ring_Help)" presentation="$(presentation.sound_ring)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_ring" valueName="sound_ring" maxLength="400" />
       </elements>
     </policy>
-    <policy name="sound_ringback" class="User" displayName="$(string.sound_ringback)" explainText="$(string.sound_ringback_Help)" presentation="$(presentation.sound_ringback)" key="Software\KashiharaCity\ksip">
+    <policy name="sound_ringback" class="User" displayName="$(string.sound_ringback)" explainText="$(string.sound_ringback_Help)" presentation="$(presentation.sound_ringback)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_ringback" valueName="sound_ringback" maxLength="400" />
       </elements>
     </policy>
-    <policy name="sound_busy" class="User" displayName="$(string.sound_busy)" explainText="$(string.sound_busy_Help)" presentation="$(presentation.sound_busy)" key="Software\KashiharaCity\ksip">
+    <policy name="sound_busy" class="User" displayName="$(string.sound_busy)" explainText="$(string.sound_busy_Help)" presentation="$(presentation.sound_busy)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_busy" valueName="sound_busy" maxLength="400" />
       </elements>
     </policy>
-    <policy name="sound_notfound" class="User" displayName="$(string.sound_notfound)" explainText="$(string.sound_notfound_Help)" presentation="$(presentation.sound_notfound)" key="Software\KashiharaCity\ksip">
+    <policy name="sound_notfound" class="User" displayName="$(string.sound_notfound)" explainText="$(string.sound_notfound_Help)" presentation="$(presentation.sound_notfound)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_notfound" valueName="sound_notfound" maxLength="400" />
       </elements>
     </policy>
-    <policy name="sound_error" class="User" displayName="$(string.sound_error)" explainText="$(string.sound_error_Help)" presentation="$(presentation.sound_error)" key="Software\KashiharaCity\ksip">
+    <policy name="sound_error" class="User" displayName="$(string.sound_error)" explainText="$(string.sound_error_Help)" presentation="$(presentation.sound_error)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_error" valueName="sound_error" maxLength="400" />
       </elements>
     </policy>
-    <policy name="detail_log" class="User" displayName="$(string.detail_log)" explainText="$(string.detail_log_Help)" key="Software\KashiharaCity\ksip" valueName="detail_log">
+    <policy name="detail_log" class="User" displayName="$(string.detail_log)" explainText="$(string.detail_log_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="detail_log">
       <parentCategory ref="Other" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
@@ -391,7 +370,7 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
-    <policy name="button_1" class="User" displayName="$(string.button_1)" explainText="$(string.button_1_Help)" presentation="$(presentation.button_1)" key="Software\KashiharaCity\ksip">
+    <policy name="button_1" class="User" displayName="$(string.button_1)" explainText="$(string.button_1_Help)" presentation="$(presentation.button_1)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -443,7 +422,7 @@
         <text id="button_1_pickup" valueName="button_1_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_2" class="User" displayName="$(string.button_2)" explainText="$(string.button_2_Help)" presentation="$(presentation.button_2)" key="Software\KashiharaCity\ksip">
+    <policy name="button_2" class="User" displayName="$(string.button_2)" explainText="$(string.button_2_Help)" presentation="$(presentation.button_2)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -495,7 +474,7 @@
         <text id="button_2_pickup" valueName="button_2_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_3" class="User" displayName="$(string.button_3)" explainText="$(string.button_3_Help)" presentation="$(presentation.button_3)" key="Software\KashiharaCity\ksip">
+    <policy name="button_3" class="User" displayName="$(string.button_3)" explainText="$(string.button_3_Help)" presentation="$(presentation.button_3)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -547,7 +526,7 @@
         <text id="button_3_pickup" valueName="button_3_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_4" class="User" displayName="$(string.button_4)" explainText="$(string.button_4_Help)" presentation="$(presentation.button_4)" key="Software\KashiharaCity\ksip">
+    <policy name="button_4" class="User" displayName="$(string.button_4)" explainText="$(string.button_4_Help)" presentation="$(presentation.button_4)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -599,7 +578,7 @@
         <text id="button_4_pickup" valueName="button_4_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_5" class="User" displayName="$(string.button_5)" explainText="$(string.button_5_Help)" presentation="$(presentation.button_5)" key="Software\KashiharaCity\ksip">
+    <policy name="button_5" class="User" displayName="$(string.button_5)" explainText="$(string.button_5_Help)" presentation="$(presentation.button_5)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -651,7 +630,7 @@
         <text id="button_5_pickup" valueName="button_5_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_6" class="User" displayName="$(string.button_6)" explainText="$(string.button_6_Help)" presentation="$(presentation.button_6)" key="Software\KashiharaCity\ksip">
+    <policy name="button_6" class="User" displayName="$(string.button_6)" explainText="$(string.button_6_Help)" presentation="$(presentation.button_6)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -703,7 +682,7 @@
         <text id="button_6_pickup" valueName="button_6_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_7" class="User" displayName="$(string.button_7)" explainText="$(string.button_7_Help)" presentation="$(presentation.button_7)" key="Software\KashiharaCity\ksip">
+    <policy name="button_7" class="User" displayName="$(string.button_7)" explainText="$(string.button_7_Help)" presentation="$(presentation.button_7)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -755,7 +734,7 @@
         <text id="button_7_pickup" valueName="button_7_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_8" class="User" displayName="$(string.button_8)" explainText="$(string.button_8_Help)" presentation="$(presentation.button_8)" key="Software\KashiharaCity\ksip">
+    <policy name="button_8" class="User" displayName="$(string.button_8)" explainText="$(string.button_8_Help)" presentation="$(presentation.button_8)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -807,7 +786,7 @@
         <text id="button_8_pickup" valueName="button_8_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_9" class="User" displayName="$(string.button_9)" explainText="$(string.button_9_Help)" presentation="$(presentation.button_9)" key="Software\KashiharaCity\ksip">
+    <policy name="button_9" class="User" displayName="$(string.button_9)" explainText="$(string.button_9_Help)" presentation="$(presentation.button_9)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -859,7 +838,7 @@
         <text id="button_9_pickup" valueName="button_9_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_10" class="User" displayName="$(string.button_10)" explainText="$(string.button_10_Help)" presentation="$(presentation.button_10)" key="Software\KashiharaCity\ksip">
+    <policy name="button_10" class="User" displayName="$(string.button_10)" explainText="$(string.button_10_Help)" presentation="$(presentation.button_10)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -911,7 +890,7 @@
         <text id="button_10_pickup" valueName="button_10_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_11" class="User" displayName="$(string.button_11)" explainText="$(string.button_11_Help)" presentation="$(presentation.button_11)" key="Software\KashiharaCity\ksip">
+    <policy name="button_11" class="User" displayName="$(string.button_11)" explainText="$(string.button_11_Help)" presentation="$(presentation.button_11)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -963,7 +942,7 @@
         <text id="button_11_pickup" valueName="button_11_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_12" class="User" displayName="$(string.button_12)" explainText="$(string.button_12_Help)" presentation="$(presentation.button_12)" key="Software\KashiharaCity\ksip">
+    <policy name="button_12" class="User" displayName="$(string.button_12)" explainText="$(string.button_12_Help)" presentation="$(presentation.button_12)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1015,7 +994,7 @@
         <text id="button_12_pickup" valueName="button_12_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_13" class="User" displayName="$(string.button_13)" explainText="$(string.button_13_Help)" presentation="$(presentation.button_13)" key="Software\KashiharaCity\ksip">
+    <policy name="button_13" class="User" displayName="$(string.button_13)" explainText="$(string.button_13_Help)" presentation="$(presentation.button_13)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1067,7 +1046,7 @@
         <text id="button_13_pickup" valueName="button_13_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_14" class="User" displayName="$(string.button_14)" explainText="$(string.button_14_Help)" presentation="$(presentation.button_14)" key="Software\KashiharaCity\ksip">
+    <policy name="button_14" class="User" displayName="$(string.button_14)" explainText="$(string.button_14_Help)" presentation="$(presentation.button_14)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1119,7 +1098,7 @@
         <text id="button_14_pickup" valueName="button_14_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_15" class="User" displayName="$(string.button_15)" explainText="$(string.button_15_Help)" presentation="$(presentation.button_15)" key="Software\KashiharaCity\ksip">
+    <policy name="button_15" class="User" displayName="$(string.button_15)" explainText="$(string.button_15_Help)" presentation="$(presentation.button_15)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1171,7 +1150,7 @@
         <text id="button_15_pickup" valueName="button_15_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_16" class="User" displayName="$(string.button_16)" explainText="$(string.button_16_Help)" presentation="$(presentation.button_16)" key="Software\KashiharaCity\ksip">
+    <policy name="button_16" class="User" displayName="$(string.button_16)" explainText="$(string.button_16_Help)" presentation="$(presentation.button_16)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1223,7 +1202,7 @@
         <text id="button_16_pickup" valueName="button_16_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_17" class="User" displayName="$(string.button_17)" explainText="$(string.button_17_Help)" presentation="$(presentation.button_17)" key="Software\KashiharaCity\ksip">
+    <policy name="button_17" class="User" displayName="$(string.button_17)" explainText="$(string.button_17_Help)" presentation="$(presentation.button_17)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1275,7 +1254,7 @@
         <text id="button_17_pickup" valueName="button_17_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_18" class="User" displayName="$(string.button_18)" explainText="$(string.button_18_Help)" presentation="$(presentation.button_18)" key="Software\KashiharaCity\ksip">
+    <policy name="button_18" class="User" displayName="$(string.button_18)" explainText="$(string.button_18_Help)" presentation="$(presentation.button_18)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1327,7 +1306,7 @@
         <text id="button_18_pickup" valueName="button_18_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_19" class="User" displayName="$(string.button_19)" explainText="$(string.button_19_Help)" presentation="$(presentation.button_19)" key="Software\KashiharaCity\ksip">
+    <policy name="button_19" class="User" displayName="$(string.button_19)" explainText="$(string.button_19_Help)" presentation="$(presentation.button_19)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1379,7 +1358,7 @@
         <text id="button_19_pickup" valueName="button_19_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_20" class="User" displayName="$(string.button_20)" explainText="$(string.button_20_Help)" presentation="$(presentation.button_20)" key="Software\KashiharaCity\ksip">
+    <policy name="button_20" class="User" displayName="$(string.button_20)" explainText="$(string.button_20_Help)" presentation="$(presentation.button_20)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1431,7 +1410,7 @@
         <text id="button_20_pickup" valueName="button_20_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_21" class="User" displayName="$(string.button_21)" explainText="$(string.button_21_Help)" presentation="$(presentation.button_21)" key="Software\KashiharaCity\ksip">
+    <policy name="button_21" class="User" displayName="$(string.button_21)" explainText="$(string.button_21_Help)" presentation="$(presentation.button_21)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1483,7 +1462,7 @@
         <text id="button_21_pickup" valueName="button_21_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_22" class="User" displayName="$(string.button_22)" explainText="$(string.button_22_Help)" presentation="$(presentation.button_22)" key="Software\KashiharaCity\ksip">
+    <policy name="button_22" class="User" displayName="$(string.button_22)" explainText="$(string.button_22_Help)" presentation="$(presentation.button_22)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1535,7 +1514,7 @@
         <text id="button_22_pickup" valueName="button_22_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_23" class="User" displayName="$(string.button_23)" explainText="$(string.button_23_Help)" presentation="$(presentation.button_23)" key="Software\KashiharaCity\ksip">
+    <policy name="button_23" class="User" displayName="$(string.button_23)" explainText="$(string.button_23_Help)" presentation="$(presentation.button_23)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1587,7 +1566,7 @@
         <text id="button_23_pickup" valueName="button_23_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_24" class="User" displayName="$(string.button_24)" explainText="$(string.button_24_Help)" presentation="$(presentation.button_24)" key="Software\KashiharaCity\ksip">
+    <policy name="button_24" class="User" displayName="$(string.button_24)" explainText="$(string.button_24_Help)" presentation="$(presentation.button_24)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1639,7 +1618,7 @@
         <text id="button_24_pickup" valueName="button_24_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_25" class="User" displayName="$(string.button_25)" explainText="$(string.button_25_Help)" presentation="$(presentation.button_25)" key="Software\KashiharaCity\ksip">
+    <policy name="button_25" class="User" displayName="$(string.button_25)" explainText="$(string.button_25_Help)" presentation="$(presentation.button_25)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1691,7 +1670,7 @@
         <text id="button_25_pickup" valueName="button_25_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_26" class="User" displayName="$(string.button_26)" explainText="$(string.button_26_Help)" presentation="$(presentation.button_26)" key="Software\KashiharaCity\ksip">
+    <policy name="button_26" class="User" displayName="$(string.button_26)" explainText="$(string.button_26_Help)" presentation="$(presentation.button_26)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1743,7 +1722,7 @@
         <text id="button_26_pickup" valueName="button_26_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_27" class="User" displayName="$(string.button_27)" explainText="$(string.button_27_Help)" presentation="$(presentation.button_27)" key="Software\KashiharaCity\ksip">
+    <policy name="button_27" class="User" displayName="$(string.button_27)" explainText="$(string.button_27_Help)" presentation="$(presentation.button_27)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1795,7 +1774,7 @@
         <text id="button_27_pickup" valueName="button_27_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_28" class="User" displayName="$(string.button_28)" explainText="$(string.button_28_Help)" presentation="$(presentation.button_28)" key="Software\KashiharaCity\ksip">
+    <policy name="button_28" class="User" displayName="$(string.button_28)" explainText="$(string.button_28_Help)" presentation="$(presentation.button_28)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1847,7 +1826,7 @@
         <text id="button_28_pickup" valueName="button_28_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_29" class="User" displayName="$(string.button_29)" explainText="$(string.button_29_Help)" presentation="$(presentation.button_29)" key="Software\KashiharaCity\ksip">
+    <policy name="button_29" class="User" displayName="$(string.button_29)" explainText="$(string.button_29_Help)" presentation="$(presentation.button_29)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1899,7 +1878,7 @@
         <text id="button_29_pickup" valueName="button_29_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_30" class="User" displayName="$(string.button_30)" explainText="$(string.button_30_Help)" presentation="$(presentation.button_30)" key="Software\KashiharaCity\ksip">
+    <policy name="button_30" class="User" displayName="$(string.button_30)" explainText="$(string.button_30_Help)" presentation="$(presentation.button_30)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -1951,7 +1930,7 @@
         <text id="button_30_pickup" valueName="button_30_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_31" class="User" displayName="$(string.button_31)" explainText="$(string.button_31_Help)" presentation="$(presentation.button_31)" key="Software\KashiharaCity\ksip">
+    <policy name="button_31" class="User" displayName="$(string.button_31)" explainText="$(string.button_31_Help)" presentation="$(presentation.button_31)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2003,7 +1982,7 @@
         <text id="button_31_pickup" valueName="button_31_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_32" class="User" displayName="$(string.button_32)" explainText="$(string.button_32_Help)" presentation="$(presentation.button_32)" key="Software\KashiharaCity\ksip">
+    <policy name="button_32" class="User" displayName="$(string.button_32)" explainText="$(string.button_32_Help)" presentation="$(presentation.button_32)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2055,7 +2034,7 @@
         <text id="button_32_pickup" valueName="button_32_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_33" class="User" displayName="$(string.button_33)" explainText="$(string.button_33_Help)" presentation="$(presentation.button_33)" key="Software\KashiharaCity\ksip">
+    <policy name="button_33" class="User" displayName="$(string.button_33)" explainText="$(string.button_33_Help)" presentation="$(presentation.button_33)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2107,7 +2086,7 @@
         <text id="button_33_pickup" valueName="button_33_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_34" class="User" displayName="$(string.button_34)" explainText="$(string.button_34_Help)" presentation="$(presentation.button_34)" key="Software\KashiharaCity\ksip">
+    <policy name="button_34" class="User" displayName="$(string.button_34)" explainText="$(string.button_34_Help)" presentation="$(presentation.button_34)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2159,7 +2138,7 @@
         <text id="button_34_pickup" valueName="button_34_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_35" class="User" displayName="$(string.button_35)" explainText="$(string.button_35_Help)" presentation="$(presentation.button_35)" key="Software\KashiharaCity\ksip">
+    <policy name="button_35" class="User" displayName="$(string.button_35)" explainText="$(string.button_35_Help)" presentation="$(presentation.button_35)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2211,7 +2190,7 @@
         <text id="button_35_pickup" valueName="button_35_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_36" class="User" displayName="$(string.button_36)" explainText="$(string.button_36_Help)" presentation="$(presentation.button_36)" key="Software\KashiharaCity\ksip">
+    <policy name="button_36" class="User" displayName="$(string.button_36)" explainText="$(string.button_36_Help)" presentation="$(presentation.button_36)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2263,7 +2242,7 @@
         <text id="button_36_pickup" valueName="button_36_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_37" class="User" displayName="$(string.button_37)" explainText="$(string.button_37_Help)" presentation="$(presentation.button_37)" key="Software\KashiharaCity\ksip">
+    <policy name="button_37" class="User" displayName="$(string.button_37)" explainText="$(string.button_37_Help)" presentation="$(presentation.button_37)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2315,7 +2294,7 @@
         <text id="button_37_pickup" valueName="button_37_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_38" class="User" displayName="$(string.button_38)" explainText="$(string.button_38_Help)" presentation="$(presentation.button_38)" key="Software\KashiharaCity\ksip">
+    <policy name="button_38" class="User" displayName="$(string.button_38)" explainText="$(string.button_38_Help)" presentation="$(presentation.button_38)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2367,7 +2346,7 @@
         <text id="button_38_pickup" valueName="button_38_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_39" class="User" displayName="$(string.button_39)" explainText="$(string.button_39_Help)" presentation="$(presentation.button_39)" key="Software\KashiharaCity\ksip">
+    <policy name="button_39" class="User" displayName="$(string.button_39)" explainText="$(string.button_39_Help)" presentation="$(presentation.button_39)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2419,7 +2398,7 @@
         <text id="button_39_pickup" valueName="button_39_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_40" class="User" displayName="$(string.button_40)" explainText="$(string.button_40_Help)" presentation="$(presentation.button_40)" key="Software\KashiharaCity\ksip">
+    <policy name="button_40" class="User" displayName="$(string.button_40)" explainText="$(string.button_40_Help)" presentation="$(presentation.button_40)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2471,7 +2450,7 @@
         <text id="button_40_pickup" valueName="button_40_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_41" class="User" displayName="$(string.button_41)" explainText="$(string.button_41_Help)" presentation="$(presentation.button_41)" key="Software\KashiharaCity\ksip">
+    <policy name="button_41" class="User" displayName="$(string.button_41)" explainText="$(string.button_41_Help)" presentation="$(presentation.button_41)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2523,7 +2502,7 @@
         <text id="button_41_pickup" valueName="button_41_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_42" class="User" displayName="$(string.button_42)" explainText="$(string.button_42_Help)" presentation="$(presentation.button_42)" key="Software\KashiharaCity\ksip">
+    <policy name="button_42" class="User" displayName="$(string.button_42)" explainText="$(string.button_42_Help)" presentation="$(presentation.button_42)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2575,7 +2554,7 @@
         <text id="button_42_pickup" valueName="button_42_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_43" class="User" displayName="$(string.button_43)" explainText="$(string.button_43_Help)" presentation="$(presentation.button_43)" key="Software\KashiharaCity\ksip">
+    <policy name="button_43" class="User" displayName="$(string.button_43)" explainText="$(string.button_43_Help)" presentation="$(presentation.button_43)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2627,7 +2606,7 @@
         <text id="button_43_pickup" valueName="button_43_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_44" class="User" displayName="$(string.button_44)" explainText="$(string.button_44_Help)" presentation="$(presentation.button_44)" key="Software\KashiharaCity\ksip">
+    <policy name="button_44" class="User" displayName="$(string.button_44)" explainText="$(string.button_44_Help)" presentation="$(presentation.button_44)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2679,7 +2658,7 @@
         <text id="button_44_pickup" valueName="button_44_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_45" class="User" displayName="$(string.button_45)" explainText="$(string.button_45_Help)" presentation="$(presentation.button_45)" key="Software\KashiharaCity\ksip">
+    <policy name="button_45" class="User" displayName="$(string.button_45)" explainText="$(string.button_45_Help)" presentation="$(presentation.button_45)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2731,7 +2710,7 @@
         <text id="button_45_pickup" valueName="button_45_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_46" class="User" displayName="$(string.button_46)" explainText="$(string.button_46_Help)" presentation="$(presentation.button_46)" key="Software\KashiharaCity\ksip">
+    <policy name="button_46" class="User" displayName="$(string.button_46)" explainText="$(string.button_46_Help)" presentation="$(presentation.button_46)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2783,7 +2762,7 @@
         <text id="button_46_pickup" valueName="button_46_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_47" class="User" displayName="$(string.button_47)" explainText="$(string.button_47_Help)" presentation="$(presentation.button_47)" key="Software\KashiharaCity\ksip">
+    <policy name="button_47" class="User" displayName="$(string.button_47)" explainText="$(string.button_47_Help)" presentation="$(presentation.button_47)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2835,7 +2814,7 @@
         <text id="button_47_pickup" valueName="button_47_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_48" class="User" displayName="$(string.button_48)" explainText="$(string.button_48_Help)" presentation="$(presentation.button_48)" key="Software\KashiharaCity\ksip">
+    <policy name="button_48" class="User" displayName="$(string.button_48)" explainText="$(string.button_48_Help)" presentation="$(presentation.button_48)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2887,7 +2866,7 @@
         <text id="button_48_pickup" valueName="button_48_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_49" class="User" displayName="$(string.button_49)" explainText="$(string.button_49_Help)" presentation="$(presentation.button_49)" key="Software\KashiharaCity\ksip">
+    <policy name="button_49" class="User" displayName="$(string.button_49)" explainText="$(string.button_49_Help)" presentation="$(presentation.button_49)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2939,7 +2918,7 @@
         <text id="button_49_pickup" valueName="button_49_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_50" class="User" displayName="$(string.button_50)" explainText="$(string.button_50_Help)" presentation="$(presentation.button_50)" key="Software\KashiharaCity\ksip">
+    <policy name="button_50" class="User" displayName="$(string.button_50)" explainText="$(string.button_50_Help)" presentation="$(presentation.button_50)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -2991,7 +2970,7 @@
         <text id="button_50_pickup" valueName="button_50_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_51" class="User" displayName="$(string.button_51)" explainText="$(string.button_51_Help)" presentation="$(presentation.button_51)" key="Software\KashiharaCity\ksip">
+    <policy name="button_51" class="User" displayName="$(string.button_51)" explainText="$(string.button_51_Help)" presentation="$(presentation.button_51)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -3043,7 +3022,7 @@
         <text id="button_51_pickup" valueName="button_51_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_52" class="User" displayName="$(string.button_52)" explainText="$(string.button_52_Help)" presentation="$(presentation.button_52)" key="Software\KashiharaCity\ksip">
+    <policy name="button_52" class="User" displayName="$(string.button_52)" explainText="$(string.button_52_Help)" presentation="$(presentation.button_52)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -3095,7 +3074,7 @@
         <text id="button_52_pickup" valueName="button_52_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_53" class="User" displayName="$(string.button_53)" explainText="$(string.button_53_Help)" presentation="$(presentation.button_53)" key="Software\KashiharaCity\ksip">
+    <policy name="button_53" class="User" displayName="$(string.button_53)" explainText="$(string.button_53_Help)" presentation="$(presentation.button_53)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
@@ -3147,7 +3126,7 @@
         <text id="button_53_pickup" valueName="button_53_pickup" maxLength="200" />
       </elements>
     </policy>
-    <policy name="button_54" class="User" displayName="$(string.button_54)" explainText="$(string.button_54_Help)" presentation="$(presentation.button_54)" key="Software\KashiharaCity\ksip">
+    <policy name="button_54" class="User" displayName="$(string.button_54)" explainText="$(string.button_54_Help)" presentation="$(presentation.button_54)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>

@@ -228,7 +228,7 @@ try {
             Click (By-Name $dialog 'OK')
             Wait-For { !(Find-Dialog $name) } 10 'the dialog to close' | Out-Null
             & gpupdate.exe /target:user /force /wait:120 2>&1 | Out-Null
-            $key = 'HKCU:\Software\KashiharaCity\ksip'
+            $key = 'HKCU:\Software\Policies\KashiharaCity\ksip'
             if (Test-Path $key) {
                 $k = Get-Item $key
                 foreach ($n in $k.GetValueNames()) { $entry.registry[$n] = @{ kind = "$($k.GetValueKind($n))"; data = "$($k.GetValue($n))" } }

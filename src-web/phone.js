@@ -4,7 +4,7 @@
 // all of it from the last snapshot.
 import {$, invoke, logUi, ask} from './ui.js';
 import {t, fill, texts, language} from './i18n.js';
-import {state, ready, busy, selected, error, callAt, current, peerNumber, run, act, dial, answer, hangup, setSelected, setError} from './session.js';
+import {state, ready, busy, selected, error, callAt, current, peerNumber, run, act, dial, answer, hangup, setSelected, setError, managed} from './session.js';
 import {renderButtons, editing, setEditing} from './buttons.js';
 import {closeSettingsForCall} from './settings.js';
 import {renderLogs} from './logs.js';
@@ -102,7 +102,8 @@ export function render({clearNotices=false}={}){
   const showOutcome=!!outcomeText&&(!!state.transfer.pending||Date.now()-noticeSince<NOTICE_MS);
   $('transfer-status').className='hint'+(showOutcome?' '+outcome.toLowerCase().replace(/_/g,'-'):'');
   $('transfer-status').textContent=showOutcome?outcomeText:'';
-  $('record').disabled=!ready||busy;$('record').textContent=t(state.settings.auto_record?'RECORD_ON':'RECORD_OFF');$('record').classList.toggle('active',!!state.settings.auto_record);$('record').setAttribute('aria-pressed',String(!!state.settings.auto_record));
+  // The automatic recording a policy fixes is not switched here.
+  $('record').disabled=!ready||busy||managed.has('auto_record');$('record').title=managed.has('auto_record')?t('SETTINGS_MANAGED_FIELD'):'';$('record').textContent=t(state.settings.auto_record?'RECORD_ON':'RECORD_OFF');$('record').classList.toggle('active',!!state.settings.auto_record);$('record').setAttribute('aria-pressed',String(!!state.settings.auto_record));
   $('record-status').classList.toggle('recording',!!state.recording);$('record-status').textContent=t(state.recording?'RECORD_RECORDING':state.converting?'RECORDING_CONVERTING':state.settings.auto_record?'RECORD_AUTO_ON':'RECORD_AUTO_OFF');
   renderFooter();
   const banner=t(error)||t(state.error)||'';

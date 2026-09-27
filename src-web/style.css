@@ -714,6 +714,27 @@ dialog input,dialog select {
 .settings-tab > h3:first-child {
   margin-top:4px;
 }
+/* A setting a policy fixes says so beside its field (settings.js lockManaged). */
+#configuration label[data-managed]::after,
+#codec-list[data-managed]::before,
+#configuration .button-index[data-managed]::after {
+  content:attr(data-managed);
+  display:block;
+  font-size:11px;
+  font-weight:normal;
+  color:#8a6412;
+}
+#configuration .check[data-managed]::after {
+  display:inline;
+  margin-left:6px;
+}
+.managed-note {
+  color:#8a6412;
+}
+.custom-actions .button-tools .slot-managed {
+  font-size:11px;
+  color:#8a6412;
+}
 #settings-buttons h4 {
   margin:14px 0 8px;
   font-size:12px;

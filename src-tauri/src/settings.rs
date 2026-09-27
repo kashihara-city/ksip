@@ -529,10 +529,16 @@ impl Settings {
         ]
     }
 }
-/// The settings as stored: a value that cannot be read as its setting is an
-/// error naming it, the same rule as for a value out of range.
+/// The settings as KSIP uses them: a policy's value where one fixes the
+/// setting, the stored one otherwise. A value that cannot be read as its
+/// setting is an error naming it, the same rule as for a value out of range;
+/// so is a policy that cannot be read, for its settings would be the person's
+/// in its place.
 pub fn stored_settings(store: &Store) -> Result<Settings, String> {
-    let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
+    if let Some(e) = store.policy.error() {
+        return Err(message_with("POLICY_UNREADABLE", [e]));
+    }
+    let (settings, unreadable) = Settings::read_stored(|name| store.read_effective(name));
     if !unreadable.is_empty() {
         return Err(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]));
     }
@@ -571,14 +577,19 @@ pub fn connect_prerequisites(store: &Store) -> Result<(Account, Settings), Strin
 /// - `valid`/`error`: what a connect would decide, from the same check the
 ///   connect makes (connect_prerequisites);
 /// - `stored`: every value as KSIP would write it back (name, registry type,
-///   value).
+///   value);
+/// - `managed`: the settings a policy fixes, whose values above are the
+///   policy's. What the file says here is for the reader: a machine that
+///   takes the file goes by its own policy, never by this list.
 ///
 /// For diagnosis, for importing into another machine's dialog, and for the
 /// tests that hold the policy templates against what the app reads.
 pub fn export_settings(store: &Store) -> serde_json::Value {
     use serde_json::json;
-    let (settings, mut unreadable) = Settings::read_stored(|name| store.read_value(name));
-    let settings_error = if unreadable.is_empty() {
+    let (settings, mut unreadable) = Settings::read_stored(|name| store.read_effective(name));
+    let settings_error = if let Some(e) = store.policy.error() {
+        Some(message_with("POLICY_UNREADABLE", [e]))
+    } else if unreadable.is_empty() {
         validate(&settings).err()
     } else {
         Some(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]))
@@ -623,6 +634,7 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
         "valid": connect.is_none(),
         "error": connect.unwrap_or_default(),
         "stored": stored,
+        "managed": store.policy.fixed(),
     })
 }
 /// The settings a settings file (an export, or a part of one) brings to the
@@ -635,7 +647,10 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
 ///   could not read (their values there are defaults, not the machine's);
 /// - `invalid`: the names whose value is not of the field's type (a number
 ///   out of the field's reach among them), or, for a setting that is one of
-///   a set of choices, not a choice this version has.
+///   a set of choices, not a choice this version has;
+/// - `managed`: the names the file gives that a policy fixes on this machine
+///   (`managed`, from Store::managed): they are left out, whatever the file
+///   says, a button with any of its values.
 ///
 /// A choice comes in the spelling the dialog offers (`TLS` as `tls`, `pcmu`
 /// as `PCMU`), so that the dialog shows it as it is instead of as nothing:
@@ -646,7 +661,7 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
 /// are never taken. A file that is not a KSIP settings file (format 1) is refused.
 /// Whether the settings taken go together (SDES needs TLS, say) depends on
 /// what the dialog holds besides; the dialog checks that, and the save again.
-pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
+pub fn import_settings(text: &str, managed: impl Fn(&str) -> bool) -> Result<serde_json::Value, String> {
     use serde_json::{json, Map, Value};
     let refused = || message("SETTINGS_IMPORT_FORMAT");
     let document: Value = serde_json::from_str(text).map_err(|_| refused())?;
@@ -669,6 +684,7 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
     let mut buttons = Vec::new();
     let mut unreadable = Vec::new();
     let mut invalid = Vec::new();
+    let mut fixed = Vec::new();
     for (name, value) in document["settings"].as_object().into_iter().flatten() {
         if matches!(name.as_str(), "microphone" | "speaker" | "network_adapter") {
             continue;
@@ -684,7 +700,9 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
                     }
                     let known = field != "kind"
                         || field_value.as_str().is_some_and(|k| k.is_empty() || CustomButton::KINDS.contains(&k));
-                    if skip.contains(&full) {
+                    if managed(&full) {
+                        fixed.push(full);
+                    } else if skip.contains(&full) {
                         unreadable.push(full);
                     } else if field_value.is_string() && known {
                         fields.insert(field.clone(), field_value.clone());
@@ -702,7 +720,9 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
             // A name this version does not know is passed over.
             continue;
         }
-        if skip.contains(name) {
+        if managed(name) {
+            fixed.push(name.clone());
+        } else if skip.contains(name) {
             unreadable.push(name.clone());
         } else if let Some(offered) = offered_choice(name, value).filter(|v| fits(name, v)) {
             settings.insert(name.clone(), offered);
@@ -717,7 +737,9 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
             "port" => value.as_u64().is_some_and(|p| p <= u16::MAX as u64),
             _ => continue,
         };
-        if skip.contains(name) {
+        if managed(name) {
+            fixed.push(name.clone());
+        } else if skip.contains(name) {
             unreadable.push(name.clone());
         } else if fits {
             account.insert(name.clone(), value.clone());
@@ -727,7 +749,8 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
     }
     unreadable.sort();
     invalid.sort();
-    Ok(json!({"settings": settings, "buttons": buttons, "account": account, "unreadable": unreadable, "invalid": invalid}))
+    fixed.sort();
+    Ok(json!({"settings": settings, "buttons": buttons, "account": account, "unreadable": unreadable, "invalid": invalid, "managed": fixed}))
 }
 /// A setting's value as the dialog offers it: for one that is a choice of a
 /// set (the transport, the media encryption, the noise suppression, what an
@@ -1009,7 +1032,7 @@ impl Services {
     /// reported.
     pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
         let mut first = None;
-        for (name, value) in settings.stored_values() {
+        for (name, value) in self.unmanaged(&settings.stored_values(), None)? {
             if let Err(e) = self.store.write_value(&name, &value) {
                 first.get_or_insert(e);
             }
@@ -1070,6 +1093,7 @@ impl Services {
     /// was there before (the credential too, when the account was written)
     /// is put back.
     fn persist(&self, values: &[(String, StoredValue)], account: Option<&Account>) -> Result<(), String> {
+        let values = &self.unmanaged(values, account)?;
         let marked_before = !self.store.read_text(SAVE_MARK).is_empty();
         let old_secret = if account.is_some() { self.store.read_secret()? } else { None };
         let account_names = account.map(|_| ACCOUNT_VALUES.iter().map(|name| name.to_string())).into_iter().flatten();
@@ -1125,6 +1149,41 @@ impl Services {
         }
         Err(if failures.is_empty() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) })
     }
+    /// The values a save writes: those no policy fixes. A save sends every
+    /// setting, so a policy's comes along; as it is, it is left out (the
+    /// person's own value behind it, or its absence, stays as it was).
+    /// Changed, the save is refused before anything is written, naming it:
+    /// what the window does not offer to change is not changed another way.
+    /// The account's server and port likewise.
+    fn unmanaged(&self, values: &[(String, StoredValue)], account: Option<&Account>) -> Result<Vec<(String, StoredValue)>, String> {
+        let store = &self.store;
+        if let Some(e) = store.policy.error() {
+            return Err(message_with("POLICY_UNREADABLE", [e]));
+        }
+        let effective = Settings::read_stored(|name| store.read_effective(name)).0.stored_values();
+        let mut changed = Vec::new();
+        let mut kept = Vec::new();
+        for (name, value) in values {
+            if !store.managed(name) {
+                kept.push((name.clone(), value.clone()));
+            } else if !effective.iter().any(|(n, v)| n == name && v == value) {
+                changed.push(name.clone());
+            }
+        }
+        if let Some(account) = account {
+            let ((server, port, _), _) = store.account_values();
+            if store.managed("server") && account.server.trim() != server {
+                changed.push("server".into());
+            }
+            if store.managed("port") && account.port != port {
+                changed.push("port".into());
+            }
+        }
+        if !changed.is_empty() {
+            return Err(message_with("SETTINGS_MANAGED", [changed.join(", ")]));
+        }
+        Ok(kept)
+    }
     /// Keeps the `ksip:` registration in step with the setting.
     pub fn apply_browser_integration(&self) {
         let Ok(settings) = self.settings() else {
@@ -1153,15 +1212,13 @@ mod tests {
         fn new(name: &str) -> Self {
             static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let suffix = format!("{name}-{}-{}", std::process::id(), COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-            let store = Store {
-                key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
-                target: format!("KSIP/Test/{suffix}"),
-            };
+            let store = Store::at(format!(r"Software\KashiharaCity\ksip\Test\{suffix}"), format!("KSIP/Test/{suffix}"));
             store.cleanup_test();
             Self(store)
         }
+        /// The store with its policy as it is now, as a new start reads it.
         fn store(&self) -> Store {
-            Store { key: self.0.key.clone(), target: self.0.target.clone() }
+            self.0.restarted()
         }
     }
     impl Drop for StoreGuard {
@@ -1376,6 +1433,126 @@ mod tests {
             assert_eq!(read.buttons[2].kind, "park");
             assert_eq!(read.language, "en", "a value that is not a button is not touched");
             assert_eq!(unreadable, vec!["sip_port".to_string()], "not even one that cannot be read");
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
+    }
+    #[test]
+    fn a_policy_fixes_what_it_names_and_the_persons_own_values_come_back_when_it_goes() {
+        use StoredValue::{Number, Text};
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-policy");
+        let mut app = Services::open().0;
+        let result = (|| -> Result<(), String> {
+            let person = guard.store();
+            person.write_value("aec", &Number(0))?;
+            person.write_text("button_1_title", "mine")?;
+            person.write_text("language", "en")?;
+            // Fixed: on, off, empty text, a choice in its own spelling, and a
+            // button by two of its values. The gains are the person's alone.
+            let policy = [
+                ("aec", Number(1)),
+                ("detail_log", Number(0)),
+                ("codecs", Text(String::new())),
+                ("transport", Text(" TLS ".into())),
+                ("button_1_kind", Text("dial".into())),
+                ("button_1_number", Text("1001".into())),
+                ("microphone_gain", Number(300)),
+            ];
+            for (name, value) in &policy {
+                person.set_test_policy(name, Some(value));
+            }
+            app.store = guard.store();
+            let s = app.settings()?;
+            assert!(s.aec && !s.detail_log && s.codecs.is_empty() && s.transport == "tls", "the policy's values, read as the person's are");
+            assert_eq!((s.buttons[0].kind.as_str(), s.buttons[0].number.as_str(), s.buttons[0].title.as_str()), ("dial", "1001", ""), "a fixed button is the policy's whole");
+            assert_eq!(s.microphone_gain, Settings::default().microphone_gain, "a gain is never fixed");
+            assert_eq!(s.language, "en", "what the policy leaves out is the person's");
+            let fixed = app.store.policy.fixed();
+            for name in ["aec", "detail_log", "codecs", "transport", "button_1_title", "button_1_pickup"] {
+                assert!(fixed.iter().any(|n| n == name), "{name} is fixed: {fixed:?}");
+            }
+            assert!(!fixed.iter().any(|n| n == "microphone_gain" || n == "language"), "{fixed:?}");
+            // A save that brings the fixed values as they are saves the rest;
+            // the person's own values behind the policy stay as they were.
+            let mut saved = s.clone();
+            saved.language = "ja".into();
+            app.persist_settings(&saved)?;
+            assert_eq!(app.store.read_value("aec")?, Some(Number(0)), "the person's own value stays behind the policy");
+            assert_eq!(app.store.read_value("detail_log")?, None, "and an absent one stays absent");
+            assert_eq!(app.store.read_text("button_1_title"), "mine");
+            assert_eq!(app.store.read_text("language"), "ja");
+            // One that changes a fixed value is refused, and nothing is written;
+            // by every save there is.
+            let mut refused = saved.clone();
+            refused.aec = false;
+            refused.language = "zh-TW".into();
+            let e = app.persist_settings(&refused).unwrap_err();
+            assert!(e.contains("SETTINGS_MANAGED") && e.contains("aec") && !e.contains("language"), "{e}");
+            assert_eq!(app.store.read_text("language"), "ja", "nothing of a refused save is written");
+            assert!(app.save_settings(&refused).is_err());
+            let mut buttons = s.buttons.clone();
+            buttons[0].title = "renamed".into();
+            assert!(app.save_buttons(&buttons).unwrap_err().contains("button_1_title"));
+            buttons[0] = s.buttons[0].clone();
+            buttons[1] = CustomButton { title: String::new(), kind: "speed".into(), number: "1002".into(), transfer: String::new(), pickup: String::new() };
+            app.save_buttons(&buttons)?;
+            assert_eq!(app.store.read_text("button_2_number"), "1002", "a button no policy fixes is saved beside a fixed one");
+            // The policy lifted: at the next start the person's own are back.
+            for (name, _) in &policy {
+                person.set_test_policy(name, None);
+            }
+            app.store = guard.store();
+            let back = app.settings()?;
+            assert!(!back.aec && back.transport.is_empty() && back.language == "ja");
+            assert_eq!((back.buttons[0].kind.as_str(), back.buttons[0].title.as_str()), ("", "mine"));
+            assert!(app.store.policy.fixed().is_empty());
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
+    }
+    #[test]
+    fn a_policy_fixes_the_server_and_a_settings_file_cannot_bring_what_it_fixes() {
+        use serde_json::json;
+        use StoredValue::{Number, Text};
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-policy-account");
+        let mut app = Services::open().0;
+        let result = (|| -> Result<(), String> {
+            let person = guard.store();
+            person.set_test_policy("server", Some(&Text("pbx.example".into())));
+            person.set_test_policy("port", Some(&Number(5061)));
+            app.store = guard.store();
+            let account = Account { server: "pbx.example".into(), port: 5061, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
+            app.persist_configuration(&app.settings()?, &account)?;
+            assert_eq!(app.store.read_value("server")?, None, "the policy's server is not copied into the person's values");
+            assert_eq!(app.store.read_value("port")?, None);
+            assert_eq!(app.store.read_text("extension"), "1001");
+            assert_eq!(app.store.read_account()?.expect("account").port, 5061, "a connect uses the policy's");
+            let elsewhere = Account { server: "192.0.2.10".into(), ..account.clone() };
+            let e = app.persist_configuration(&app.settings()?, &elsewhere).unwrap_err();
+            assert!(e.contains("SETTINGS_MANAGED") && e.contains("server") && !e.contains("port"), "{e}");
+            // A file brings what no policy fixes, and says what it left out.
+            person.set_test_policy("button_1_kind", Some(&Text("speed".into())));
+            app.store = guard.store();
+            let file = json!({"format": 1, "settings": {"aec": false, "buttons": [{"kind": "dial", "number": "1001"}]}, "account": {"server": "192.0.2.10", "port": 5060, "extension": "1002"}});
+            let read = import_settings(&file.to_string(), |name| app.store.managed(name))?;
+            assert_eq!(read["managed"], json!(["button_1_kind", "button_1_number", "port", "server"]));
+            assert_eq!(read["settings"], json!({"aec": false}));
+            assert_eq!(read["buttons"], json!([]));
+            assert_eq!(read["account"], json!({"extension": "1002"}));
+            // The export names what is fixed; a file's list is never taken.
+            let exported = export_settings(&app.store);
+            assert!(exported["managed"].as_array().is_some_and(|m| m.contains(&json!("server")) && m.contains(&json!("button_1_pickup"))));
+            let again = import_settings(&json!({"format": 1, "managed": ["aec"], "settings": {"aec": true}}).to_string(), |name| app.store.managed(name))?;
+            assert_eq!(again["settings"], json!({"aec": true}), "the file's own list fixes nothing here");
+            // A policy value that is not what its setting takes is an error
+            // naming it, not a quiet fall back to the person's.
+            person.set_test_policy("sip_port", Some(&Text("often".into())));
+            app.store = guard.store();
+            assert!(app.settings().err().is_some_and(|e| e.contains("sip_port")));
             Ok(())
         })();
         drop(guard);
@@ -1779,7 +1956,7 @@ mod tests {
             "unreadable": ["agc", "extension"],
             "valid": false, "stored": {}
         });
-        let read = import_settings(&file.to_string()).unwrap();
+        let read = import_settings(&file.to_string(), |_| false).unwrap();
         assert_eq!(read["settings"], serde_json::json!({"sip_port": 5070, "aec": false, "language": "en", "tray_after_call": -1}));
         assert_eq!(read["buttons"], serde_json::json!([{"n": 1, "title": "Park", "kind": "park", "number": "701"}]));
         assert_eq!(read["account"], serde_json::json!({"server": "pbx.example", "port": 5061}));
@@ -1787,20 +1964,20 @@ mod tests {
         assert_eq!(read["invalid"], serde_json::json!(["button_3_title", "register_interval"]));
         // What is not a KSIP settings file is refused.
         for bad in ["", "[]", "{}", r#"{"format":2,"settings":{}}"#, "not json"] {
-            assert_eq!(import_settings(bad).err(), Some(message("SETTINGS_IMPORT_FORMAT")), "{bad}");
+            assert_eq!(import_settings(bad, |_| false).err(), Some(message("SETTINGS_IMPORT_FORMAT")), "{bad}");
         }
         // An export of one machine is a file another can read.
         let _one_at_a_time = store_tests_one_at_a_time();
         let guard = StoreGuard::new("test-import");
         let exported = export_settings(&guard.store());
-        let back = import_settings(&exported.to_string()).unwrap();
+        let back = import_settings(&exported.to_string(), |_| false).unwrap();
         assert!(back["invalid"].as_array().unwrap().is_empty() && back["unreadable"].as_array().unwrap().is_empty());
         assert_eq!(back["settings"]["sip_port"], 5060);
         assert_eq!(back["buttons"].as_array().unwrap().len(), CustomButton::COUNT);
     }
     #[test]
     fn a_settings_file_brings_each_choice_as_the_dialog_offers_it_or_not_at_all() {
-        let read = |settings: serde_json::Value| import_settings(&serde_json::json!({"format": 1, "settings": settings}).to_string()).unwrap();
+        let read = |settings: serde_json::Value| import_settings(&serde_json::json!({"format": 1, "settings": settings}).to_string(), |_| false).unwrap();
         // Choices in another spelling come in the dialog's.
         let taken = read(serde_json::json!({
             "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify",

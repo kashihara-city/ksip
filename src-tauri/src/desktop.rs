@@ -97,6 +97,7 @@ pub fn run(state: AppState) {
             commands::save_buttons,
             commands::set_button_editing,
             commands::restart_settings,
+            commands::managed_settings,
             commands::ui_ready,
             commands::action,
             commands::open_recordings,

@@ -197,8 +197,10 @@ impl Services {
         // `Settings`. It is not read any more, only removed: every setting now
         // has a value of its own.
         let _ = store.delete_value("Settings");
-        let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
-        let mut startup_error = if unreadable.is_empty() {
+        let (settings, unreadable) = Settings::read_stored(|name| store.read_effective(name));
+        let mut startup_error = if let Some(e) = store.policy.error() {
+            message_with("POLICY_UNREADABLE", [e])
+        } else if unreadable.is_empty() {
             String::new()
         } else {
             message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")])

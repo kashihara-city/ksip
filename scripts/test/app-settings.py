@@ -82,7 +82,22 @@ def main():
                     values[name] = sample(name)
         profile.clear()
         profile.write(values)
-        expect(profile.export(), values, f'all {len(templates)} policies enabled at once are read as written, and pass')
+        every = profile.export()
+        expect(every, values, f'all {len(templates)} policies enabled at once are read as written, and pass')
+        check(set(every['managed']) == set(values), f"the export names every value a policy fixes as managed ({len(every['managed'])} of {len(values)})")
+
+        # A policy is preferred to the person's own value, and when it goes
+        # the person's is what KSIP reads again.
+        profile.clear()
+        profile.write({'aec': 0, 'language': 'en'}, policy=False)
+        profile.write({'aec': 1})
+        fixed = profile.export()
+        profile.write({'aec': 0, 'language': 'en'}, policy=False)
+        profile.clear_policy()
+        own = profile.export()
+        check(setting(fixed, 'aec') is True and fixed['managed'] == ['aec'] and setting(fixed, 'language') == 'en'
+              and setting(own, 'aec') is False and own['managed'] == [],
+              "a policy's value is read before the person's, and the person's is back when it goes")
 
         # Every number at the smallest the template allows, alone.
         for p in templates:

@@ -59,24 +59,35 @@ def exe_path(folder=None):
 
 
 class Profile:
-    """A throwaway test profile: its registry key, emptied on the way in and
-    out, and the export of what KSIP reads from it."""
+    """A throwaway test profile: its registry key and the policy key a test
+    profile has in place of Software\\Policies (see storage.rs policy_key),
+    emptied on the way in and out, and the export of what KSIP reads."""
     def __init__(self, name, exe):
         self.name = f'test-{name}-{os.getpid()}'
         self.key = rf'Software\KashiharaCity\ksip\Test\{self.name}'
+        self.policy_key = rf'Software\KashiharaCity\ksip\TestPolicies\{self.name}'
         self.exe = exe
         self.clear()
 
     def clear(self):
+        for key in (self.key, self.policy_key):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
+            except FileNotFoundError:
+                pass
+
+    def clear_policy(self):
         try:
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, self.key)
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, self.policy_key)
         except FileNotFoundError:
             pass
 
-    def write(self, values):
-        """name -> int (REG_DWORD, as a policy writes a number or a switch) or
-        str (REG_SZ) or bytes (REG_BINARY, which no policy writes)."""
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.key) as key:
+    def write(self, values, policy=True):
+        """Into the policy key, as the templates write (or the person's own
+        key with policy=False): name -> int (REG_DWORD, as a policy writes a
+        number or a switch) or str (REG_SZ) or bytes (REG_BINARY, which no
+        policy writes)."""
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.policy_key if policy else self.key) as key:
             for name, value in values.items():
                 if isinstance(value, bool) or isinstance(value, int):
                     winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value) & 0xFFFFFFFF)
