@@ -22,13 +22,65 @@ const LOG_LIMIT: usize = 1000;
 /// and WebRTC's lines fill the ordinary thousand in seconds, and a report
 /// needs the minutes around a failure. The tab keeps LOG_LIMIT either way.
 const DETAIL_LOG_FILE_LIMIT: usize = 10000;
-const LOG_FILE: &str = "ksip-log.jsonl";
+pub(crate) const LOG_FILE: &str = "ksip-log.jsonl";
 // Which layer a log line came from. It is written into the line so that a
 // support log shows at a glance whether the app or the engine said it.
 pub const LOG_APP: &str = "app";
 pub const LOG_ENGINE: &str = "engine";
 pub const LOG_EVENT: &str = "event";
 const LOG_UI: &str = "ui";
+/// What a sync is to write: decided under the lock, written without it.
+pub struct SyncPlan {
+    bytes: Vec<u8>,
+    count: usize,
+    offset: u64,
+}
+/// What the disk part of a sync found and did.
+pub struct SyncOutcome {
+    foreign: Foreign,
+    appended: Result<(), String>,
+}
+/// Lines the file gained from another process since it was last seen.
+#[derive(Default)]
+struct Foreign {
+    /// The file is shorter than where it was last seen to end: emptied or
+    /// replaced, so it counts as new.
+    replaced: bool,
+    entries: Vec<LogLine>,
+    /// Whole lines found, readable or not, and the bytes they took.
+    lines: usize,
+    consumed: u64,
+}
+fn read_foreign(path: &Path, mut offset: u64) -> Foreign {
+    let mut foreign = Foreign::default();
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return foreign;
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return foreign;
+    };
+    if len < offset {
+        foreign.replaced = true;
+        offset = 0;
+    }
+    if len == offset {
+        return foreign;
+    }
+    let mut bytes = Vec::new();
+    if file.seek(SeekFrom::Start(offset)).is_err() || file.read_to_end(&mut bytes).is_err() {
+        return foreign;
+    }
+    // Only whole lines count; one still being written waits for the next look.
+    let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+    for line in bytes[..end].split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        foreign.lines += 1;
+        if let Ok(entry) = serde_json::from_slice::<LogLine>(line) {
+            foreign.entries.push(entry);
+        }
+    }
+    foreign.consumed = end as u64;
+    foreign
+}
 /// One line of the log. The parts are kept apart so that the window can
 /// present them as it likes, and so that a reader can sort and search them.
 #[derive(Clone, Serialize, Deserialize)]
@@ -128,80 +180,101 @@ impl Logs {
     /// the caller can say so once rather than every second; the recovery is
     /// noted in the log itself.
     pub fn sync(&mut self, data: &Path) -> Result<(), String> {
-        self.flushed = Instant::now();
-        let path = data.join(LOG_FILE);
-        self.take_foreign(&path);
-        if self.unwritten > 0 {
-            let bytes = lines(self.entries.iter().skip(self.entries.len() - self.unwritten));
-            let _ = std::fs::create_dir_all(data);
-            match append(&path, &bytes) {
-                Ok(()) => {
-                    self.offset += bytes.len() as u64;
-                    self.file_lines += self.unwritten;
-                    self.unwritten = 0;
-                    if self.write_failed {
-                        self.write_failed = false;
-                        self.push(LogLine::new(stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
-                    }
-                }
-                Err(e) => {
-                    let first = !self.write_failed;
-                    self.write_failed = true;
-                    if first {
-                        return Err(err(e));
-                    }
-                }
+        let plan = self.plan_sync();
+        let outcome = Self::perform_sync(data, &plan);
+        if self.commit_sync(plan, outcome)? {
+            let path = data.join(LOG_FILE);
+            if let Ok((length, lines)) = keep_last_lines(&path, self.file_limit) {
+                self.file_shortened(length, lines);
             }
-        }
-        if self.file_lines > 2 * self.file_limit {
-            self.shorten(&path);
         }
         Ok(())
     }
-    /// Keeps the file's last lines, up to the limit. The file rather than the
-    /// tab is the source: after a start the tab holds only this run, and the
-    /// run before belongs in the file as much as this one.
-    fn shorten(&mut self, path: &Path) {
-        if let Ok((length, lines)) = keep_last_lines(path, self.file_limit) {
-            self.offset = length;
-            self.file_lines = lines;
+    /// Whether a second has passed since the file was last written.
+    pub fn due(&self) -> bool {
+        self.flushed.elapsed() >= Duration::from_secs(1)
+    }
+    /// A sync in three steps, so that whoever holds the log's lock is never
+    /// made to wait on the disk: `plan_sync` under the lock says what is to
+    /// be written, `perform_sync` reads and writes the file with no lock
+    /// held, and `commit_sync` under the lock takes the outcome into the
+    /// books. Lines pushed in between wait for the next sync. `sync` does
+    /// the three in a row, for a caller that holds nothing else up.
+    pub fn plan_sync(&mut self) -> SyncPlan {
+        self.flushed = Instant::now();
+        SyncPlan {
+            bytes: lines(self.entries.iter().skip(self.entries.len() - self.unwritten)),
+            count: self.unwritten,
+            offset: self.offset,
         }
     }
-    /// Lines the file gained since it was last seen, from another process.
-    /// A line appended between this look and this process's own append is
-    /// only missed by the tab; the file has it.
-    fn take_foreign(&mut self, path: &Path) {
-        let Ok(mut file) = std::fs::File::open(path) else {
-            return;
+    /// The disk part: what another process appended since the file was last
+    /// seen (a line appended between this look and this process's own append
+    /// is only missed by the tab; the file has it), then this process's own
+    /// lines appended.
+    pub fn perform_sync(data: &Path, plan: &SyncPlan) -> SyncOutcome {
+        let path = data.join(LOG_FILE);
+        let foreign = read_foreign(&path, plan.offset);
+        let appended = if plan.count > 0 {
+            let _ = std::fs::create_dir_all(data);
+            append(&path, &plan.bytes).map_err(err)
+        } else {
+            Ok(())
         };
-        let Ok(len) = file.metadata().map(|m| m.len()) else {
-            return;
-        };
-        if len < self.offset {
+        SyncOutcome { foreign, appended }
+    }
+    /// Takes a sync's outcome into the books. Err on the first failure to
+    /// write since the last success (the lines stay and are tried again;
+    /// the same failure is not reported twice). Ok(true) when the file has
+    /// grown to twice the limit and wants shortening (`keep_last_lines` and
+    /// then `file_shortened`), which the caller does without the lock.
+    pub fn commit_sync(&mut self, plan: SyncPlan, outcome: SyncOutcome) -> Result<bool, String> {
+        let foreign = outcome.foreign;
+        if foreign.replaced {
             // Someone emptied or replaced the file; it is taken as new.
             self.offset = 0;
             self.file_lines = 0;
         }
-        if len == self.offset {
-            return;
+        for entry in foreign.entries {
+            // In front of the unwritten lines: the file has this one already.
+            let at = self.entries.len() - self.unwritten;
+            self.entries.insert(at, entry);
+            self.sequence += 1;
         }
-        let mut bytes = Vec::new();
-        if file.seek(SeekFrom::Start(self.offset)).is_err() || file.read_to_end(&mut bytes).is_err() {
-            return;
-        }
-        // Only whole lines count; one still being written waits for the next look.
-        let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-        for line in bytes[..end].split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-            self.file_lines += 1;
-            if let Ok(entry) = serde_json::from_slice::<LogLine>(line) {
-                // In front of the unwritten lines: the file has this one already.
-                let at = self.entries.len() - self.unwritten;
-                self.entries.insert(at, entry);
-                self.sequence += 1;
+        self.file_lines += foreign.lines;
+        self.offset += foreign.consumed;
+        self.trim();
+        match outcome.appended {
+            Ok(()) => {
+                self.offset += plan.bytes.len() as u64;
+                self.file_lines += plan.count;
+                self.unwritten -= plan.count;
+                if self.write_failed {
+                    self.write_failed = false;
+                    self.push(LogLine::new(stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
+                }
+            }
+            Err(e) => {
+                let first = !self.write_failed;
+                self.write_failed = true;
+                if first {
+                    return Err(e);
+                }
             }
         }
-        self.trim();
-        self.offset += end as u64;
+        Ok(self.file_lines > 2 * self.file_limit)
+    }
+    /// How many lines the file keeps after a rewrite.
+    pub fn file_limit(&self) -> usize {
+        self.file_limit
+    }
+    /// The file was shortened to its last lines (`keep_last_lines`): where it
+    /// ends now, and how many lines it holds. The file rather than the tab is
+    /// the source: after a start the tab holds only this run, and the run
+    /// before belongs in the file as much as this one.
+    pub fn file_shortened(&mut self, length: u64, lines: usize) {
+        self.offset = length;
+        self.file_lines = lines;
     }
     fn clear(&mut self, data: &Path) {
         self.entries.clear();
@@ -215,16 +288,6 @@ impl Logs {
     /// How many lines have been logged this run: the tab reloads when it moves.
     pub fn sequence(&self) -> u64 {
         self.sequence
-    }
-    /// The file is written from log(), so a quiet moment would leave the last
-    /// lines only in memory, and what another process appended unseen; a
-    /// look once a second keeps both moving.
-    pub fn sync_if_due(&mut self, data: &Path) -> Result<(), String> {
-        if self.flushed.elapsed() >= Duration::from_secs(1) {
-            self.sync(data)
-        } else {
-            Ok(())
-        }
     }
 }
 /// One JSON object per line, the form both files are kept in.

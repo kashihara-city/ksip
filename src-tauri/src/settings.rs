@@ -259,6 +259,9 @@ impl MediaEncryption {
         matches!(self, Self::Sdes | Self::Osrtp)
     }
 }
+/// The registry value that stands while a save is under way or has failed to
+/// be put back; see persist_configuration.
+pub const SAVE_MARK: &str = "SaveInProgress";
 impl Settings {
     /// Values a group policy can set one at a time. They live in their own
     /// registry values rather than inside the settings document. The buttons
@@ -577,6 +580,11 @@ impl Services {
     /// and after a failure every piece is put back on its own, so that one
     /// that cannot be put back does not keep the others from being; only
     /// when something could not be put back is the person told to save again.
+    /// A mark (SAVE_MARK) stands in the store from before the first write
+    /// until the save has gone through whole or been put back whole, so that
+    /// a process that ends in the middle, or a rollback that failed, is seen
+    /// at the next start (Services::open) and the mixed values are not
+    /// connected on.
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
         let old_account = self.store.read_account()?;
         let old_document = self.store.read_settings::<serde_json::Value>()?;
@@ -585,8 +593,13 @@ impl Services {
             let value = self.store.read_text_raw(&key)?;
             old_policy.push((key, value));
         }
-        let Err(e) = self.store.write_account(account).and_then(|()| self.save_settings(settings)) else {
-            return Ok(());
+        self.store.write_text(SAVE_MARK, "1")?;
+        let written = self.store.write_account(account).and_then(|()| self.save_settings(settings));
+        let Err(e) = written else {
+            // Saved whole: the mark goes. If it cannot go, the next start
+            // would refuse to connect on values that are in fact whole, so
+            // the person is asked to save again, which clears it.
+            return self.store.delete_text(SAVE_MARK).map_err(|e| message_with("ACCOUNT_ROLLBACK_FAILED", [e]));
         };
         let mut failures = Vec::new();
         failures.extend(
@@ -611,6 +624,10 @@ impl Services {
                 }
                 .err(),
             );
+        }
+        if failures.is_empty() {
+            // Put back whole: the mark goes, with the same proviso as above.
+            failures.extend(self.store.delete_text(SAVE_MARK).err());
         }
         Err(if failures.is_empty() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) })
     }
@@ -918,6 +935,7 @@ mod tests {
             crate::storage::fail_next_write_of("");
             assert!(failed.is_err(), "the injected failure must surface");
             assert!(app.store.read_account()?.is_none(), "no account is left behind");
+            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "put back whole, the save leaves no mark");
             assert_eq!(app.store.read_text_raw("transport")?, None, "a value that was absent is absent again");
             assert_eq!(app.store.read_settings::<serde_json::Value>()?, serde_json::Value::Null, "no settings document is left behind");
             // With values stored, a failure that also keeps the rollback of
@@ -931,6 +949,10 @@ mod tests {
             assert_eq!(app.store.read_account()?.expect("account").server, "192.0.2.10", "the account is back");
             assert_eq!(app.settings()?.transport, "udp", "the transport, written before the failure, is back");
             assert_eq!(app.settings()?.codecs, "opus", "the codecs never changed");
+            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, Some("1".into()), "a rollback that failed leaves the mark for the next start");
+            // A save that goes through whole takes the mark away.
+            app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
+            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "a whole save clears the mark");
             Ok(())
         })();
         app.store.cleanup_test();

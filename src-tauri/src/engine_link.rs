@@ -59,7 +59,11 @@ pub struct StartPlan {
 
 /// How a stop went: whether the engine had to be ended, how long it took to
 /// go, and what it exited with.
+/// How an engine process ended. One of these exists only for a process that
+/// has ended: `EngineLink::stop` returns Err rather than a report when it
+/// could not confirm the end.
 pub struct StopReport {
+    /// It did not quit within three seconds and was killed.
     pub forced: bool,
     pub took: Duration,
     pub code: Option<i32>,
@@ -199,7 +203,18 @@ impl EngineLink {
     /// Asks the engine to quit and gives it three seconds before ending it.
     /// The requests that should go first (stopping a recording, releasing
     /// the subscriptions) are the caller's, since they want answers.
+    /// Ends the process: asked to quit, given three seconds, then killed.
+    /// Ok is the word that the process has ended (the wait on it returned);
+    /// Err means that could not be confirmed (its state could not be read,
+    /// the kill or the wait failed), and the caller must not take the files
+    /// the engine had open as closed. Either way the link's threads are
+    /// joined; on Err the process, if it lives, is beyond this handle.
     pub fn stop(mut self) -> Result<StopReport, String> {
+        let result = self.end();
+        self.close_threads();
+        result
+    }
+    fn end(&mut self) -> Result<StopReport, String> {
         let payload = serde_json::to_vec(&json!({"command":"quit","token":"quit"})).unwrap();
         let _ = write_netstring(&mut self.writer, &payload);
         let asked = Instant::now();
@@ -207,20 +222,15 @@ impl EngineLink {
         let mut forced = false;
         while self.child.try_wait().map_err(err)?.is_none() {
             if Instant::now() > end {
-                let _ = self.child.kill();
+                self.child.kill().map_err(err)?;
                 forced = true;
                 break;
             }
             thread::sleep(Duration::from_millis(50));
         }
         let took = asked.elapsed();
-        let status = self.child.wait();
-        self.close_threads();
-        Ok(StopReport {
-            forced,
-            took,
-            code: status.ok().and_then(|s| s.code()),
-        })
+        let status = self.child.wait().map_err(err)?;
+        Ok(StopReport { forced, took, code: status.code() })
     }
     /// The process has already ended: closes the connection and joins the threads.
     pub fn close(mut self) {

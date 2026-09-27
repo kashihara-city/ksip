@@ -136,9 +136,11 @@ impl Services {
             me.converting.fetch_sub(1, Ordering::Relaxed);
         });
     }
-    /// What earlier runs left in the recordings folder, at start: finished
-    /// conversions lose their WAV, unfinished ones lose their partial MP3, and
-    /// a WAV without an MP3 is converted now.
+    /// What earlier runs left in the recordings folder, at start: partial
+    /// MP3s go, and every WAV that is left is converted now, one with an MP3
+    /// beside it again (the WAV goes only once its new MP3 is whole). A WAV
+    /// an engine that could not be confirmed stopped was writing is among
+    /// them: converting it here is the best that can be done for it.
     pub fn sweep_recordings(&self) {
         for wav in sweep_recording_folder(&self.data.join("recordings")) {
             self.convert_recording(wav);

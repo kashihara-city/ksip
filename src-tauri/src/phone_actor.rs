@@ -31,7 +31,7 @@ use crate::recordings::recording_name;
 use crate::settings::{dial_target, validate, CustomButton, Settings};
 use crate::storage::Account;
 use serde_json::{json, Value};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -113,9 +113,55 @@ enum Waiting {
     /// report of a worker that was given up on from the one waited for.
     Work { serial: u64, deadline: Instant },
 }
+/// Why a request to the engine brought no usable answer. The kind matters
+/// after the fact: a remote error is an answer (the engine is there and said
+/// no), while a timeout or a lost link is not one (the engine may have
+/// carried the command out, or may still be at it), and a flow that acts
+/// on what the engine holds (a recording, the maintenance) must not take
+/// either for a "no".
+#[derive(Debug, Clone, PartialEq)]
+enum RequestError {
+    /// No engine is held.
+    NotRunning,
+    /// The command could not be written to the link.
+    Send(String),
+    /// The link was lost while the answer was awaited.
+    Disconnected,
+    /// The engine did not answer within RESPONSE_TIMEOUT.
+    Timeout,
+    /// The engine answered that the command failed, in its own words.
+    Remote { command: String, detail: String },
+}
+impl RequestError {
+    /// Whether the engine's side of the command is unknown: it may have been
+    /// carried out, or may still be under way.
+    fn unknown(&self) -> bool {
+        matches!(self, Self::Disconnected | Self::Timeout)
+    }
+    /// The engine refused because a call is up.
+    fn busy(&self) -> bool {
+        matches!(self, Self::Remote { detail, .. } if detail.contains("EBUSY") || detail.to_ascii_lowercase().contains("busy"))
+    }
+}
+impl From<RequestError> for String {
+    fn from(e: RequestError) -> String {
+        match e {
+            RequestError::NotRunning => message("ENGINE_NOT_RUNNING"),
+            RequestError::Send(e) => e,
+            RequestError::Disconnected => message("ENGINE_DISCONNECTED"),
+            RequestError::Timeout => message("ENGINE_RESPONSE_TIMEOUT"),
+            RequestError::Remote { command, detail } => message_with("ENGINE_COMMAND_FAILED", [command, detail]),
+        }
+    }
+}
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&String::from(self.clone()))
+    }
+}
 /// What arrived for it.
 enum Delivered {
-    Response(Result<(u64, Value), String>),
+    Response(Result<(u64, Value), RequestError>),
     Work(Work),
 }
 /// Resolves once the actor has put what the flow waits for into `delivered`.
@@ -221,15 +267,31 @@ struct Phone {
     /// The engine refused or did not answer the end of maintenance: told
     /// again at the next look, so that it does not go on refusing calls.
     maintenance_off_owed: bool,
-    /// The WAV an engine being stopped was recording: converted once the
-    /// process has ended and closed it.
-    pending_conversion: Option<PathBuf>,
+    /// The WAV the engine has open for the recording, once it has said so
+    /// (a start answered "started", or the "active" event of a reservation
+    /// that came true). Converted to an MP3 exactly once, when the file is
+    /// known to be closed: by the engine's answer to the stop, by its
+    /// "closed" event, or by the confirmed end of the process. An answer
+    /// that never came confirms nothing, and the file waits.
+    open_recording: Option<PathBuf>,
+    /// The call whose recording the engine could not open: the automatic
+    /// recording does not try the same call again and again.
+    recording_refused: Option<String>,
+    /// A lost engine's stop worker gave no report in time: the calls stay as
+    /// the window shows them until the report comes (see stray), since the
+    /// process may still be there.
+    exit_unsettled: bool,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
     /// A look at the adapter's address is under way.
     probing: bool,
     /// The number of the last work started; each report carries its own.
-    work_serial: Cell<u64>,
+    work_serial: u64,
+    /// The exclusive workers (an engine start, an engine stop, a calibration)
+    /// whose report has not come: they hold the engine's ports or the audio
+    /// devices, so no start or calibration begins while one is outstanding,
+    /// however long ago its wait was given up. A stop is never refused.
+    exclusive: Vec<u64>,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
     closing: bool,
@@ -264,10 +326,13 @@ impl Actor {
             starting_lost: false,
             lost: None,
             maintenance_off_owed: false,
-            pending_conversion: None,
+            open_recording: None,
+            recording_refused: None,
+            exit_unsettled: false,
             bound: String::new(),
             probing: false,
-            work_serial: Cell::new(0),
+            work_serial: 0,
+            exclusive: Vec::new(),
             polling_error: String::new(),
             closing: false,
             waiting: None,
@@ -357,6 +422,8 @@ impl Actor {
             }
             Message::Work(serial, work) => {
                 let mut p = self.shared.borrow_mut();
+                // The worker is done, whatever it was doing: off the ledger.
+                p.exclusive.retain(|s| *s != serial);
                 // Only the report the flow waits for; one from a worker that
                 // was given up on, arriving late, is not the answer to the
                 // next wait.
@@ -434,11 +501,13 @@ impl Actor {
             }
             match &p.waiting {
                 Some(Waiting::Response { deadline, .. }) if Instant::now() >= *deadline && p.delivered.is_none() => {
-                    p.delivered = Some(Delivered::Response(Err(message("ENGINE_RESPONSE_TIMEOUT"))));
+                    p.delivered = Some(Delivered::Response(Err(RequestError::Timeout)));
                 }
                 Some(Waiting::Work { deadline, .. }) if Instant::now() >= *deadline && p.delivered.is_none() => {
-                    // The worker's report, if it comes later, finds nobody waiting.
-                    p.delivered = Some(Delivered::Response(Err(message("WORK_TIMEOUT"))));
+                    // The worker's report, if it comes later, finds nobody
+                    // waiting and goes to stray; its serial stays on the
+                    // ledger until then.
+                    p.delivered = Some(Delivered::Response(Err(RequestError::Timeout)));
                 }
                 _ => {}
             }
@@ -542,13 +611,25 @@ impl Phone {
         reply.send(result);
     }
     /// Hands a worker a job whose result comes back on the queue.
-    fn work(&self, job: impl FnOnce() -> Work + Send + 'static) {
+    fn work(&mut self, job: impl FnOnce() -> Work + Send + 'static) -> u64 {
         let tx = self.tx.clone();
-        let serial = self.work_serial.get() + 1;
-        self.work_serial.set(serial);
+        self.work_serial += 1;
+        let serial = self.work_serial;
         thread::spawn(move || {
             let _ = tx.send(Message::Work(serial, job()));
         });
+        serial
+    }
+    /// A worker that holds something only one may hold (the engine's ports,
+    /// the audio devices): on the ledger until its report comes.
+    fn work_exclusive(&mut self, job: impl FnOnce() -> Work + Send + 'static) {
+        let serial = self.work(job);
+        self.exclusive.push(serial);
+    }
+    /// Whether an exclusive worker is still out: a start or a calibration
+    /// does not begin then, or two engines would fight for the ports.
+    fn exclusive_outstanding(&self) -> bool {
+        !self.exclusive.is_empty()
     }
     /// What the link delivered. Only the engine the actor holds, or the one
     /// it is starting, can change the phone; the words of an earlier one are
@@ -594,7 +675,7 @@ impl Phone {
                 self.lost = self.link.take();
                 self.view.registration = "DISCONNECTED".into();
                 if matches!(&self.waiting, Some(Waiting::Response { generation, .. }) if *generation == link.generation) && self.delivered.is_none() {
-                    self.delivered = Some(Delivered::Response(Err(message("ENGINE_DISCONNECTED"))));
+                    self.delivered = Some(Delivered::Response(Err(RequestError::Disconnected)));
                 }
             }
         }
@@ -604,17 +685,37 @@ impl Phone {
         self.lost.is_some()
     }
     /// A report nobody waits for: a worker that outlived its flow.
+    /// A worker's report that no flow waits for: one whose wait was given
+    /// up, or one that came after the flow moved on. What it says still
+    /// counts: a stop that came late is the word the recovery waited for,
+    /// and an engine nobody will take is ended.
     fn stray(&mut self, work: Work) {
-        match work {
-            Work::Started { result: Ok(ready), .. } => {
-                // An engine nobody will take: ended, without waiting for it.
-                thread::spawn(move || {
-                    let _ = ready.link.stop();
-                });
+        let (stopped, started) = match work {
+            Work::Started { stopped, result } => (stopped, result.ok()),
+            Work::Stopped(report) => (Some(report), None),
+            _ => (None, None),
+        };
+        if let Some(report) = stopped {
+            let code = exit_code(&report);
+            self.log_stop(report);
+            if self.exit_unsettled {
+                self.exit_unsettled = false;
+                self.settle_exit(code);
             }
-            Work::Started { stopped: Some(report), .. } | Work::Stopped(report) => self.log_stop(report),
-            _ => {}
         }
+        if let Some(ready) = started {
+            // An engine nobody will take: ended, without waiting for it.
+            thread::spawn(move || {
+                let _ = ready.link.stop();
+            });
+        }
+    }
+    /// A lost engine's process has ended (or its end cannot be had): the
+    /// calls that were up get their rows, and the window its notice.
+    fn settle_exit(&mut self, code: String) {
+        let notice = message_with("ENGINE_EXITED", [code]);
+        self.close_calls_on_exit(Some(notice.clone()));
+        self.services.log(LOG_APP, notice);
     }
     /// What the engine's own words say about the phone's state.
     fn derive_from_log(&mut self, s: &str) -> bool {
@@ -673,6 +774,25 @@ impl Phone {
         if kind == "AUDIO_ERROR" {
             self.view.error = message("AUDIO_DEVICE_INIT_FAILED");
         }
+        // The recording session's word (recording_session.h): the moments
+        // the commands cannot answer for, and the word that counts when an
+        // answer was lost.
+        if kind == "MODULE" {
+            let param = e["param"].as_str().unwrap_or("");
+            if let Some(rest) = param.strip_prefix("ksip_audio_filter,recording,") {
+                let (what, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+                match what {
+                    "active" if self.view.recording && self.open_recording.is_none() => {
+                        self.open_recording = Some(PathBuf::from(self.view.recording_path.clone()));
+                    }
+                    "failed" if self.view.recording => self.recording_failed(detail),
+                    "closed" if self.view.recording || self.open_recording.is_some() => {
+                        self.recording_closed(detail.starts_with("complete"));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
     /// Takes one state report: which calls ended and what their rows say,
     /// which line each call is on, which incoming calls the automatic answer
@@ -711,16 +831,16 @@ impl Phone {
     }
     /// What has to happen when the engine is gone without being asked,
     /// whichever way it was noticed: the calls that were up get their history
-    /// rows (their closing words never came), a recording in progress is
-    /// closed into an MP3, the call bookkeeping is emptied and the window
-    /// shows the phone as disconnected.
+    /// rows (their closing words never came), the call bookkeeping is emptied
+    /// and the window shows the phone as disconnected. The recording is not
+    /// touched here: its file is converted by log_stop, once the process is
+    /// known to have ended and so to have closed it.
     fn close_calls_on_exit(&mut self, error: Option<String>) {
         let v = &mut self.view;
         if !v.running {
             return;
         }
         v.calls.clear();
-        let recording = v.recording.then(|| PathBuf::from(v.recording_path.clone()));
         let dnd = v.dnd;
         v.running = false;
         v.recording = false;
@@ -736,9 +856,6 @@ impl Phone {
         }
         let rows = self.phone.engine_gone(dnd, now_secs());
         self.services.add_history(rows);
-        if let Some(wav) = recording {
-            self.services.convert_recording(wav);
-        }
     }
     /// Everything of a restart that is decided before the engine is touched:
     /// the account, the settings and the numbers to watch.
@@ -791,6 +908,8 @@ impl Phone {
         for note in ready.notes {
             self.services.log(LOG_APP, note);
         }
+        // A new engine starts outside maintenance; nothing is owed to it.
+        self.maintenance_off_owed = false;
         self.bound = ready.address;
         self.take_endpoints(&ready.endpoints);
         self.link = Some(ready.link);
@@ -803,10 +922,8 @@ impl Phone {
         let engine = self.link.take()?;
         let rows = self.phone.engine_gone(self.view.dnd, now_secs());
         self.services.add_history(rows);
+        self.recording_refused = None;
         let v = &mut self.view;
-        if v.recording {
-            self.pending_conversion = Some(PathBuf::from(v.recording_path.clone()));
-        }
         v.running = false;
         v.recording = false;
         v.aec_active = false;
@@ -820,23 +937,54 @@ impl Phone {
     }
     /// How the engine went is part of the record: one that had to be ended
     /// was still waiting on something, usually a SIP request the server has
-    /// not answered, and the window waited with it.
+    /// not answered, and the window waited with it. An Ok report is the word
+    /// that the process has ended (see EngineLink::stop), and only then is
+    /// the WAV it may have been writing known to be closed and turned into
+    /// an MP3. An Err is a stop that could not be confirmed: the file stays
+    /// as it is (the sweep at the next start converts what is left), and the
+    /// window is told.
     fn log_stop(&mut self, report: Result<StopReport, String>) {
         match report {
-            Ok(report) if report.forced => {
-                self.services.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
-            }
             Ok(report) => {
-                let code = report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-                self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
+                if report.forced {
+                    self.services.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
+                } else {
+                    let code = report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+                    self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
+                }
+                if let Some(wav) = self.open_recording.take() {
+                    self.services.convert_recording(wav);
+                }
             }
-            Err(e) => self.services.log(LOG_APP, format!("ksip: the engine could not be stopped cleanly ({e})")),
+            Err(e) => {
+                self.services.log(LOG_APP, format!("ksip: the engine's end could not be confirmed ({e})"));
+                self.view.error = message_with("ENGINE_STOP_UNCONFIRMED", [e]);
+            }
         }
-        // The process is gone, so the WAV it was writing is closed: turned
-        // into an MP3 as one that ended with its call would be.
-        if let Some(wav) = self.pending_conversion.take() {
+    }
+    /// The engine has closed the recording's file, by its answer to the stop
+    /// or by its own word (the "closed" event): the window stops showing the
+    /// recording, and the file becomes an MP3, once. An incomplete file
+    /// (dropped samples, a write error) is converted all the same and the
+    /// window told.
+    fn recording_closed(&mut self, complete: bool) {
+        self.view.recording = false;
+        self.view.recording_call.clear();
+        if let Some(wav) = self.open_recording.take() {
             self.services.convert_recording(wav);
         }
+        if !complete {
+            self.view.error = message("RECORDING_WRITE_PROBLEM");
+        }
+    }
+    /// The engine could not open the file of a recording it had reserved:
+    /// there is no recording, and none is tried again for the same call.
+    fn recording_failed(&mut self, detail: &str) {
+        self.services.log(LOG_APP, format!("ksip: the recording could not be opened ({detail})"));
+        self.recording_refused = Some(std::mem::take(&mut self.view.recording_call));
+        self.view.recording = false;
+        self.open_recording = None;
+        self.view.error = message("RECORDING_START_FAILED");
     }
     /// Writes down which endpoints the engine got; the window shows the same.
     fn take_endpoints(&mut self, endpoints: &AudioEndpoints) {
@@ -922,19 +1070,22 @@ impl Phone {
 /// Sends a request and waits for its answer: the receive number with the
 /// data, so that a state report can be placed in the order. The wait ends
 /// with the answer, with the loss of the connection, or with the timeout.
-async fn request(s: &Shared, command: &str, params: &str) -> Result<(u64, String), String> {
+/// One command to the engine and its answer. A `?` on the result turns the
+/// error into the app's message; a flow that has to know whether the engine
+/// heard the command looks at the RequestError itself.
+async fn request(s: &Shared, command: &str, params: &str) -> Result<(u64, String), RequestError> {
     {
         let mut p = s.borrow_mut();
-        let engine = p.link.as_mut().ok_or_else(|| message("ENGINE_NOT_RUNNING"))?;
+        let engine = p.link.as_mut().ok_or(RequestError::NotRunning)?;
         let generation = engine.generation();
-        let token = engine.send(command, params)?;
+        let token = engine.send(command, params).map_err(RequestError::Send)?;
         p.waiting = Some(Waiting::Response { token, generation, deadline: Instant::now() + RESPONSE_TIMEOUT });
         p.delivered = None;
     }
     let delivered = Await(s.clone()).await;
     s.borrow_mut().waiting = None;
     let Delivered::Response(answer) = delivered else {
-        return Err(message("ENGINE_DISCONNECTED"));
+        return Err(RequestError::Disconnected);
     };
     let (seq, response) = answer?;
     if response["ok"] != true {
@@ -942,7 +1093,7 @@ async fn request(s: &Shared, command: &str, params: &str) -> Result<(u64, String
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| message("ACTION_FAILED"));
-        return Err(message_with("ENGINE_COMMAND_FAILED", [command, &detail]));
+        return Err(RequestError::Remote { command: command.to_string(), detail });
     }
     Ok((seq, response["data"].as_str().unwrap_or("").into()))
 }
@@ -952,15 +1103,25 @@ async fn request(s: &Shared, command: &str, params: &str) -> Result<(u64, String
 async fn await_work(s: &Shared, timeout: Duration) -> Result<Work, String> {
     {
         let mut p = s.borrow_mut();
-        p.waiting = Some(Waiting::Work { serial: p.work_serial.get(), deadline: Instant::now() + timeout });
+        p.waiting = Some(Waiting::Work { serial: p.work_serial, deadline: Instant::now() + timeout });
         p.delivered = None;
     }
     let delivered = Await(s.clone()).await;
     s.borrow_mut().waiting = None;
     match delivered {
         Delivered::Work(work) => Ok(work),
-        Delivered::Response(Err(e)) => Err(e),
+        Delivered::Response(Err(RequestError::Timeout)) => Err(message("WORK_TIMEOUT")),
+        Delivered::Response(Err(e)) => Err(e.into()),
         Delivered::Response(Ok(_)) => Err(message("APP_CLOSING")),
+    }
+}
+/// How the engine's end is written down: the exit code, "killed", or the
+/// reason it could not be confirmed.
+fn exit_code(report: &Result<StopReport, String>) -> String {
+    match report {
+        Ok(report) if report.forced => "killed".to_string(),
+        Ok(report) => report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+        Err(e) => e.clone(),
     }
 }
 /// How long each kind of work may take: the engine start has its own twelve
@@ -999,8 +1160,15 @@ async fn enter_maintenance(s: &Shared) -> Result<(), String> {
     // call: a call that came in after the look above is what its refusal
     // means, and the maintenance is then not begun.
     if let Err(e) = tell_maintenance(s, "on").await {
-        s.borrow_mut().phone.end_maintenance();
-        return Err(if e.contains("EBUSY") || e.contains("busy") { message("CALL_IN_PROGRESS") } else { e });
+        let mut p = s.borrow_mut();
+        p.phone.end_maintenance();
+        // No answer is not a "no": the engine may have taken the maintenance
+        // and be refusing calls on it. It is told to end it at the next look,
+        // as after a failed leave.
+        if e.unknown() {
+            p.maintenance_off_owed = true;
+        }
+        return Err(if e.busy() { message("CALL_IN_PROGRESS") } else { e.into() });
     }
     Ok(())
 }
@@ -1013,7 +1181,7 @@ async fn leave_maintenance(s: &Shared) {
 }
 /// Tells the engine that maintenance begins or ends. Without an engine there
 /// is nothing to tell, and nothing to refuse.
-async fn tell_maintenance(s: &Shared, value: &str) -> Result<(), String> {
+async fn tell_maintenance(s: &Shared, value: &str) -> Result<(), RequestError> {
     if s.borrow().link.is_none() {
         return Ok(());
     }
@@ -1035,22 +1203,27 @@ async fn recover(s: Shared) {
     let Some(engine) = s.borrow_mut().lost.take() else {
         return;
     };
-    s.borrow().work(move || Work::Stopped(engine.stop()));
+    s.borrow_mut().work_exclusive(move || Work::Stopped(engine.stop()));
     let report = match await_work(&s, STOP_TIMEOUT).await {
-        Ok(Work::Stopped(report)) => report,
-        Ok(_) => Err(message("APP_CLOSING")),
-        Err(e) => Err(e),
+        Ok(Work::Stopped(report)) => Some(report),
+        _ => None,
     };
     let mut p = s.borrow_mut();
-    let code = match &report {
-        Ok(report) if report.forced => "killed".to_string(),
-        Ok(report) => report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-        Err(e) => e.clone(),
-    };
-    p.log_stop(report);
-    let notice = message_with("ENGINE_EXITED", [code]);
-    p.close_calls_on_exit(Some(notice.clone()));
-    p.services.log(LOG_APP, notice);
+    match report {
+        Some(report) => {
+            let code = exit_code(&report);
+            p.log_stop(report);
+            p.settle_exit(code);
+        }
+        None => {
+            // The stop worker has not reported: whether the process is gone
+            // is unknown, so nothing is said to be over yet. The report,
+            // when it comes, settles it (stray); the window is told meanwhile.
+            p.exit_unsettled = true;
+            p.services.log(LOG_APP, message("ENGINE_STOP_PENDING"));
+            p.view.error = message("ENGINE_STOP_PENDING");
+        }
+    }
 }
 /// Starts the engine on the saved settings, stopping the one that runs. The
 /// phone is in maintenance until the start has reported.
@@ -1064,6 +1237,11 @@ async fn connect(s: &Shared) -> Result<(), String> {
     result
 }
 async fn restart(s: &Shared) -> Result<(), String> {
+    // A start or stop given up on may still hold the ports: no new engine
+    // until its report has come.
+    if s.borrow().exclusive_outstanding() {
+        return Err(message("WORKER_OUTSTANDING"));
+    }
     let (account, settings, watched) = s.borrow_mut().prepare_restart()?;
     // The old engine is asked to close what it holds while it can still
     // answer; the process is the worker's to end, before the new one starts
@@ -1071,9 +1249,9 @@ async fn restart(s: &Shared) -> Result<(), String> {
     let old = release_link(s).await;
     let generation = s.borrow_mut().begin_start(&settings);
     {
-        let p = s.borrow();
+        let mut p = s.borrow_mut();
         let (services, devices, tx) = (p.services.clone(), p.view.devices.clone(), p.tx.clone());
-        p.work(move || {
+        p.work_exclusive(move || {
             let stopped = old.map(EngineLink::stop);
             let result = services.prepare_start(&settings, &account, &devices).and_then(|prepared| {
                 EngineLink::start(prepared.plan, generation, tx).map(|link| {
@@ -1110,8 +1288,8 @@ async fn restart(s: &Shared) -> Result<(), String> {
     }
     s.borrow_mut().take_ready(ready);
     let registered = match request(s, "ksip_login", "").await {
-        Ok(_) => request(s, "ksip_parking", &watched).await.map(|_| ()),
-        Err(e) => Err(e),
+        Ok(_) => request(s, "ksip_parking", &watched).await.map(|_| ()).map_err(String::from),
+        Err(e) => Err(e.into()),
     };
     if let Err(e) = registered {
         if let Some(engine) = release_link(s).await {
@@ -1135,7 +1313,7 @@ async fn release_link(s: &Shared) -> Option<EngineLink> {
 /// Ends an engine process that is no longer the phone's, on a worker, and
 /// waits for it to be gone.
 async fn stop_and_wait(s: &Shared, engine: EngineLink) {
-    s.borrow().work(move || Work::Stopped(engine.stop()));
+    s.borrow_mut().work_exclusive(move || Work::Stopped(engine.stop()));
     match await_work(s, STOP_TIMEOUT).await {
         Ok(Work::Stopped(report)) => s.borrow_mut().log_stop(report),
         Ok(_) => {}
@@ -1154,7 +1332,7 @@ async fn stop_engine(s: &Shared) {
 /// has come back is taken into use, and one that has gone gives way to the
 /// default; the engine is only restarted when it does not take the change.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
-    s.borrow().work(|| Work::Devices(crate::audio::devices()));
+    s.borrow_mut().work(|| Work::Devices(crate::audio::devices()));
     let devices = match await_work(s, DEVICES_TIMEOUT).await {
         Ok(Work::Devices(devices)) => devices,
         Ok(_) => return Err(message("APP_CLOSING")),
@@ -1263,8 +1441,12 @@ async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(
 /// The calibration plays and records for a while, so it runs on a thread of
 /// its own; the phone is in maintenance until it reports back.
 async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful: bool) -> Result<Calibration, String> {
+    // A calibration given up on may still hold the devices.
+    if s.borrow().exclusive_outstanding() {
+        return Err(message("WORKER_OUTSTANDING"));
+    }
     enter_maintenance(s).await?;
-    s.borrow().work(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
+    s.borrow_mut().work_exclusive(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
     let result = match await_work(s, CALIBRATION_TIMEOUT).await {
         Ok(Work::Calibrated(result)) => result,
         Ok(_) => Err(message("APP_CLOSING")),
@@ -1379,34 +1561,51 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         (folder.join(&name), name)
     };
     let text = path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?.to_string();
-    request(s, "ksip_record", &format!("{id} {text}")).await?;
+    let (_, answer) = request(s, "ksip_record", &format!("{id} {text}")).await?;
     let mut p = s.borrow_mut();
     p.phone.note_recording(id, &name);
+    p.recording_refused = None;
+    // "started": the file is open. "reserved": the call has no audio yet, and
+    // the engine's "active" event will say when the file is open (or "failed"
+    // that it never will be).
+    p.open_recording = (!answer.contains("reserved")).then(|| path.clone());
     let v = &mut p.view;
     v.recording = true;
     v.recording_call = id.into();
     v.recording_path = path.to_string_lossy().into();
     Ok(())
 }
+/// Ends the recording. The engine's answer says what became of the file:
+/// Ok, it is closed and whole; an error from the engine, it is closed but
+/// incomplete (samples dropped or a write failed). No answer says nothing:
+/// the engine may still be writing, so the recording stays as the window
+/// shows it and the file is left alone until the engine's "closed" event,
+/// a later stop, or the confirmed end of the process.
 async fn stop_recording(s: &Shared) -> Result<(), String> {
-    let recording = s.borrow().view.recording;
-    // The engine's answer says how the file ended: an error is a recording
-    // that lost samples or could not be written whole. Either way it is
-    // closed now, so what there is goes on to become an MP3, and the
-    // window is told that the recording has a problem.
-    let outcome = if recording { request(s, "ksip_record_stop", "").await.map(|_| ()) } else { Ok(()) };
-    let mut p = s.borrow_mut();
-    p.view.recording = false;
-    p.view.recording_call.clear();
-    if recording {
-        let wav = PathBuf::from(p.view.recording_path.clone());
-        p.services.convert_recording(wav);
+    if !s.borrow().view.recording {
+        return Ok(());
     }
-    if let Err(e) = outcome {
-        p.services.log(LOG_APP, format!("ksip: the recording did not end cleanly ({e})"));
-        p.view.error = message("RECORDING_WRITE_PROBLEM");
+    match request(s, "ksip_record_stop", "").await {
+        Ok(_) => {
+            s.borrow_mut().recording_closed(true);
+            Ok(())
+        }
+        Err(e @ RequestError::Remote { .. }) => {
+            // The engine answered: the file is closed, but not whole.
+            let mut p = s.borrow_mut();
+            p.services.log(LOG_APP, format!("ksip: the recording did not end cleanly ({e})"));
+            p.recording_closed(false);
+            Ok(())
+        }
+        Err(e) => {
+            // No answer, or none could be asked for: nothing is known about
+            // the file. It is converted once the engine's "closed" event or
+            // the confirmed end of its process says it is closed.
+            let p = s.borrow();
+            p.services.log(LOG_APP, format!("ksip: the recording stop was not answered ({e})"));
+            Err(message("RECORDING_STOP_UNCONFIRMED"))
+        }
     }
-    Ok(())
 }
 async fn sync_auto_record(s: &Shared) -> Result<(), String> {
     let (auto_record, target, recording, recording_call, idle) = {
@@ -1434,6 +1633,10 @@ async fn sync_auto_record(s: &Shared) -> Result<(), String> {
         p.view.recording_call = target.unwrap_or_default();
     } else if !recording {
         if let Some(id) = target {
+            // A call whose file the engine could not open is not tried again.
+            if s.borrow().recording_refused.as_deref() == Some(id.as_str()) {
+                return Ok(());
+            }
             start_recording(s, &id).await?;
         }
     }
@@ -1659,7 +1862,7 @@ mod tests {
         let mut a = actor();
         a.shared.borrow_mut().waiting = Some(Waiting::Response { token: "1-1".into(), generation: 1, deadline: Instant::now() - Duration::from_secs(1) });
         a.tick();
-        assert!(matches!(a.shared.borrow_mut().delivered.take(), Some(Delivered::Response(Err(e))) if e == message("ENGINE_RESPONSE_TIMEOUT")));
+        assert!(matches!(a.shared.borrow_mut().delivered.take(), Some(Delivered::Response(Err(RequestError::Timeout)))));
     }
     #[test]
     fn leaving_answers_what_was_still_waiting_once_the_engine_is_gone() {
@@ -1701,7 +1904,7 @@ mod tests {
     #[test]
     fn a_request_without_an_engine_is_refused_at_once() {
         let a = actor();
-        assert_eq!(run_now(request(&a.shared, "ksip_state", "")), Err(message("ENGINE_NOT_RUNNING")));
+        assert_eq!(run_now(request(&a.shared, "ksip_state", "")), Err(RequestError::NotRunning));
         assert!(a.shared.borrow().waiting.is_none());
     }
 }

@@ -3,13 +3,13 @@
 //! the window side is given, which only connects: a way to send commands to
 //! the phone actor and a way to read the snapshot it publishes.
 use crate::history::{CallHistory, History};
-use crate::logs::{data_dir, stamp, LogLine, Logs, LOG_APP};
+use crate::logs::{data_dir, keep_last_lines, stamp, LogLine, Logs, LOG_APP, LOG_FILE};
 use crate::message::{message, message_with};
 use crate::phone_actor::{PhoneHandle, Published};
 use crate::phone_message::Command;
 use std::sync::OnceLock;
 use crate::phone_state::{Mwi, Snapshot, Transfer};
-use crate::settings::Settings;
+use crate::settings::{Settings, SAVE_MARK};
 use crate::storage::{Account, Store};
 use std::{
     path::{Path, PathBuf},
@@ -56,8 +56,9 @@ enum FileJob {
     History(Vec<CallHistory>),
     /// The history is emptied, on disk first; answered once done.
     Clear(Sender<Result<(), String>>),
-    /// The last lines and rows are written and the thread ends; answered once done.
-    Stop(Sender<()>),
+    /// The last lines and rows are written and the thread ends; answered
+    /// with the first failure, if any.
+    Stop(Sender<Result<(), String>>),
 }
 /// What the file thread holds: the files and the way to the window, not the
 /// whole of the services (which would hold its own queue open).
@@ -85,23 +86,45 @@ impl FileWorker {
     /// quiet moment would leave the last lines only in memory, and what
     /// another process appended unseen; rows the history could not write
     /// earlier get another try. The first failure of either file is said
-    /// once, in the log and the window.
-    fn move_files_along(&self, force: bool) {
-        let journal = {
+    /// once, in the log and the window, and returned. The log's lock is
+    /// held only to plan and to book the sync, never while the disk is
+    /// touched, so that the actor's log() never waits on the disk.
+    fn move_files_along(&self, force: bool) -> Result<(), String> {
+        let plan = {
             let mut logs = self.logs.lock().unwrap();
-            let result = if force { logs.sync(&self.data) } else { logs.sync_if_due(&self.data) };
-            self.log_sequence.store(logs.sequence(), Ordering::Relaxed);
-            result
+            (force || logs.due()).then(|| logs.plan_sync())
         };
+        let mut journal = Ok(());
+        if let Some(plan) = plan {
+            let outcome = Logs::perform_sync(&self.data, &plan);
+            let (booked, limit) = {
+                let mut logs = self.logs.lock().unwrap();
+                let booked = logs.commit_sync(plan, outcome);
+                self.log_sequence.store(logs.sequence(), Ordering::Relaxed);
+                (booked, logs.file_limit())
+            };
+            match booked {
+                Ok(true) => {
+                    if let Ok((length, lines)) = keep_last_lines(&self.data.join(LOG_FILE), limit) {
+                        self.logs.lock().unwrap().file_shortened(length, lines);
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => journal = Err(e),
+            }
+        }
         let history = {
             let mut history = self.history.lock().unwrap();
             let result = history.flush(&self.data);
             self.history_sequence.store(history.sequence(), Ordering::Relaxed);
             result
         };
+        let mut first = None;
         for e in [journal, history].into_iter().filter_map(Result::err) {
-            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
+            self.show_error(message_with("JOURNAL_WRITE_FAILED", [&e]));
+            first.get_or_insert(e);
         }
+        first.map_or(Ok(()), Err)
     }
     fn run(self, jobs: Receiver<FileJob>) {
         loop {
@@ -130,14 +153,13 @@ impl FileWorker {
                     let _ = reply.send(result);
                 }
                 Ok(FileJob::Stop(reply)) => {
-                    self.move_files_along(true);
-                    let _ = reply.send(());
+                    let _ = reply.send(self.move_files_along(true));
                     return;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            self.move_files_along(false);
+            let _ = self.move_files_along(false);
         }
     }
 }
@@ -163,6 +185,13 @@ impl Services {
                 Account::default().public()
             }
         };
+        // A save that did not finish (the process ended in the middle, or a
+        // value could not be put back) leaves its mark: the stored values may
+        // be old and new mixed, and the phone does not connect on them until
+        // a save has gone through whole.
+        if startup_error.is_empty() && !store.read_text(SAVE_MARK).is_empty() {
+            startup_error = message("SETTINGS_SAVE_INTERRUPTED");
+        }
         let history = History::open(&data);
         let view = Snapshot {
             running: false,
@@ -240,13 +269,15 @@ impl Services {
         done.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| Err(message_with("JOURNAL_WRITE_FAILED", ["timeout"])))
     }
     /// The app is leaving: the last lines and rows are written and the file
-    /// thread ends. Waited for, within reason; a disk that does not answer
-    /// does not hold the exit forever.
-    pub fn stop_files(&self) {
+    /// thread ends. Waited for up to three seconds; a disk that does not
+    /// answer does not hold the exit forever, and then what was not written
+    /// is lost with the process (the history rows of ended calls went to the
+    /// queue ahead of the Stop, so they are written before it if anything is).
+    /// Err says what could not be written, or that the wait ran out.
+    pub fn stop_files(&self) -> Result<(), String> {
         let (reply, done) = mpsc::channel();
-        if self.files.send(FileJob::Stop(reply)).is_ok() {
-            let _ = done.recv_timeout(Duration::from_secs(3));
-        }
+        self.files.send(FileJob::Stop(reply)).map_err(|_| message("APP_CLOSING"))?;
+        done.recv_timeout(Duration::from_secs(3)).unwrap_or_else(|_| Err(message_with("JOURNAL_WRITE_FAILED", ["timeout"])))
     }
     /// Told once the phone actor exists, so that the services can reach the
     /// window through it.
@@ -315,12 +346,17 @@ impl AppState {
     pub fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
         let _ = self.phone.call(Command::Shutdown);
-        // The engine is stopped; the rows of its last calls are on the queue
-        // by now, and the file thread writes them before it ends.
-        self.services.stop_files();
+        // The engine is stopped and its last calls' rows are on the file
+        // queue. The conversions still running get a moment to finish and
+        // say so; only then does the file thread write its last lines and
+        // end, so that what they said is in the file. If even that cannot be
+        // written, the failure goes to the file directly, as a last resort.
         let end = Instant::now() + Duration::from_secs(5);
         while self.services.converting.load(Ordering::Relaxed) > 0 && Instant::now() < end {
             thread::sleep(Duration::from_millis(100));
+        }
+        if let Err(e) = self.services.stop_files() {
+            crate::logs::append_log(self.services.data(), e);
         }
     }
 }

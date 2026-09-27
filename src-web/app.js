@@ -14,7 +14,7 @@
 //   links.js     browser links and shortcut keys arriving from the app
 import {invoke, logUi} from './ui.js';
 import {useLanguage} from './i18n.js';
-import {busy, update, setError} from './session.js';
+import {update, setError} from './session.js';
 import {render, init as initPhone} from './phone.js';
 import {buildButtonSets} from './buttons.js';
 import {syncHistory} from './history.js';
@@ -35,10 +35,13 @@ initAudio();
 initSettings();
 initLinks();
 
+// The snapshot is read whether or not an operation is under way: the phone
+// goes on (a call comes in, ends, the engine reports) while the page waits
+// for an answer, and the page shows it. What `busy` keeps back is a second
+// operation, not the looking.
 async function poll(){
-  try{
-    if(!busy){update(await invoke('snapshot'));await syncLogs();await syncHistory();}
-  }catch(e){setError(String(e));logUi('poll',e);render();}
+  try{update(await invoke('snapshot'));await syncLogs();await syncHistory();}
+  catch(e){setError(String(e));logUi('poll',e);render();}
   setTimeout(poll,300);
 }
 render();poll();pollVolumes();pollAudioPeaks();
