@@ -2,7 +2,8 @@
 from pathlib import Path
 import ctypes as C
 from ctypes import wintypes as W
-import json, os, re, secrets, socket, subprocess, threading, time
+import json, os, re, socket, subprocess, threading, time
+import engine_control
 
 ROOT = Path(__file__).resolve().parents[2]
 class Credential(C.Structure):
@@ -170,8 +171,8 @@ class Phone:
             w.setparams((1,2,48000,0,'NONE','not compressed'));w.writeframes(b'\0'*(48000*2*120))
         if audio_source is None:
             audio_source=f'aufile,{(self.dir/"silence.wav").as_posix()}'
-        with socket.socket() as reserve:
-            reserve.bind(('127.0.0.1',0));ctrl=reserve.getsockname()[1]
+        # The engine connects to this listener, held until it has, as the app's does.
+        control,ctrl=engine_control.listen()
         codec_modules=chr(10).join(f'module {name}.dll' for name in codecs)
         if mediaenc:codec_modules+=chr(10)+'module srtp.dll'+chr(10)+'module dtls_srtp.dll'
         trust=f'sip_cafile {Path(ca_file).as_posix()}'+chr(10)+'sip_verify_server yes'+chr(10) if ca_file else ''
@@ -206,7 +207,7 @@ opus_packet_loss 10
 opus_dtx no
 opus_application voip
 rtp_ports {rtp_port}-{rtp_port+20}
-ksip_ctrl_listen 127.0.0.1:{ctrl}
+ksip_ctrl_connect 127.0.0.1:{ctrl}
 {codec_modules}
 module aufile.dll
 module ksip_audio_filter.dll
@@ -218,22 +219,16 @@ module ksip.dll
 {extra_config}
 ''',encoding='utf-8')
         self.log=open(self.dir/'engine.log','wb')
-        # The control connection takes commands only after the start's secret.
-        self.secret=secrets.token_hex(32)
+        # The engine names this secret when it connects.
+        self.secret=engine_control.new_secret()
         env=dict(os.environ,KSIP_CREDENTIAL_TARGET=self.target,KSIP_CONTROL_SECRET=self.secret)
         engine=os.environ.get('KSIP_TEST_ENGINE_EXE')
         command=[engine,'--engine',str(os.getpid()),'-f',str(self.dir)] if engine else [str(ROOT/'temp/build/native/bin/baresip.exe'),'-f',str(self.dir)]
         self.proc=subprocess.Popen(command,cwd=ROOT/'temp/build/native/bin',env=env,stdin=subprocess.DEVNULL,stdout=self.log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
         try:
-            deadline=time.monotonic()+10
-            while True:
-                try:self.sock=socket.create_connection(('127.0.0.1',ctrl),.3);break
-                except OSError:
-                    if self.proc.poll() is not None or time.monotonic()>deadline:raise RuntimeError('Engine startup failed')
-                    time.sleep(.1)
-            self.sock.settimeout(None)
+            try:self.sock=engine_control.accept(control,self.proc,self.secret)
+            finally:control.close()
             threading.Thread(target=self.read,daemon=True).start()
-            self.command('auth',self.secret)
             self.command('ksip_login')
             self.wait(lambda s:s['registration']=='REGISTER_OK',timeout=20)
         except BaseException:self.close();raise

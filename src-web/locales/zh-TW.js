@@ -153,7 +153,6 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       WORKER_OUTSTANDING:'上一次的啟動、停止或校正尚未完成，無法開始',
       SETTINGS_SAVE_INTERRUPTED:'上次的設定儲存未完成。請確認設定後再儲存一次',
       MAINTENANCE_IN_PROGRESS:'另一項設定變更或校正尚未完成，目前無法進行',
-      ENGINE_CONTROL_AUTH_FAILED:'無法驗證與語音引擎的控制連線',
       WORK_TIMEOUT:'處理未在時間內完成',
       OPERATION_WAIT_TIMEOUT:'因其他處理尚未結束，已取消操作',
       ENGINE_START_FAILED:'語音引擎啟動失敗：{0}。請查看記錄',

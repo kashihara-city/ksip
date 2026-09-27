@@ -1,6 +1,7 @@
 """Verify that an unavailable WASAPI microphone still produces timed RTP."""
 from pathlib import Path
-import array, json, math, os, secrets, socket, subprocess, threading, time, wave
+import array, json, math, os, socket, subprocess, threading, time, wave
+import engine_control
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "temp" / "build" / "silent-fallback-test"
@@ -38,7 +39,7 @@ auplay_format s16
 auenc_format s16
 audec_format s16
 rtp_ports {rtp}-{rtp + 20}
-ksip_ctrl_listen 127.0.0.1:{ctrl}
+ksip_ctrl_connect 127.0.0.1:{ctrl}
 module g711.dll
 module ksip_audio.dll
 module aufile.dll
@@ -49,7 +50,8 @@ module ksip_ctrl.dll
 module menu.dll
 module_app account.dll
 """
-        self.secret = secrets.token_hex(32)
+        self.secret = engine_control.new_secret()
+        control, _ = engine_control.listen(ctrl)
         (self.directory / "config").write_text(config, encoding="utf-8")
         (self.directory / "accounts").write_text(
             f"<sip:{name}@localhost:{sip};transport=udp>;regint=0;audio_codecs=PCMU/8000/1;answermode=manual\n",
@@ -65,18 +67,13 @@ module_app account.dll
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                self.socket = socket.create_connection(("127.0.0.1", ctrl), 0.3)
-                break
-            except OSError:
-                if self.process.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError(f"{name} startup failed")
-                time.sleep(0.1)
-        self.socket.settimeout(None)
+        try:
+            self.socket = engine_control.accept(control, self.process, self.secret)
+        except RuntimeError as e:
+            raise RuntimeError(f"{name} startup failed ({e})")
+        finally:
+            control.close()
         threading.Thread(target=self.read, daemon=True).start()
-        self.command("auth", self.secret)
 
     def read(self):
         try:

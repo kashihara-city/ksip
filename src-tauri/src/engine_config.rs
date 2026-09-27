@@ -145,9 +145,10 @@ impl Services {
         let speaker = endpoints.speaker.clone();
         let profile = self.profile_dir();
         std::fs::create_dir_all(&profile).map_err(err)?;
-        // Reserve an ephemeral control port until immediately before spawn.
-        let reservation = TcpListener::bind("127.0.0.1:0").map_err(err)?;
-        let ctrl = reservation.local_addr().map_err(err)?.port();
+        // The app's listener for the engine's control connection: held from
+        // here until the engine has connected, so the port is never free.
+        let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
+        let ctrl = listener.local_addr().map_err(err)?.port();
         if ctrl == s.sip_port || (s.rtp_port..=s.rtp_port + 20).contains(&ctrl) {
             return Err(message("ENGINE_CONTROL_PORT_TAKEN"));
         }
@@ -233,7 +234,7 @@ impl Services {
         put(format!("ksip_speaker_gain {}", s.speaker_gain));
         put(format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20));
         put("rtp_timeout 60".into());
-        put(format!("ksip_ctrl_listen 127.0.0.1:{ctrl}"));
+        put(format!("ksip_ctrl_connect 127.0.0.1:{ctrl}"));
         for module in [
             "g711", "libg722", "opus", "wasapi", "ksip_audio", "ksip_audio_filter", "auconv", "auresamp",
             "ksip_ctrl", "menu", "srtp", "dtls_srtp", "ksip",
@@ -280,7 +281,7 @@ impl Services {
             plan: StartPlan {
                 exe,
                 profile,
-                control: reservation,
+                control: listener,
                 credential_target: self.store.target.clone(),
                 control_secret: control_secret()?,
             },

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     os::windows::process::CommandExt,
     path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
@@ -53,6 +53,9 @@ pub struct EngineReport {
 pub struct StartPlan {
     pub exe: PathBuf,
     pub profile: PathBuf,
+    /// The app's own listener for the engine's control connection, bound on
+    /// the loopback address before the engine starts and held until the
+    /// engine has connected: no other process can take the port meanwhile.
     pub control: TcpListener,
     pub credential_target: String,
     /// The secret this engine takes commands for: made for this start, handed
@@ -97,7 +100,6 @@ impl EngineLink {
     /// threads started here deliver its output lines, its answers and its
     /// events to `sink`, and `Lost` when the connection ends.
     pub fn start(plan: StartPlan, generation: u64, sink: Sender<Message>) -> Result<Self, String> {
-        let ctrl = plan.control.local_addr().map_err(err)?.port();
         let profile = plan
             .profile
             .to_str()
@@ -105,7 +107,6 @@ impl EngineLink {
             .to_string();
         let seq = Arc::new(AtomicU64::new(0));
         let mut threads = Vec::new();
-        drop(plan.control);
         let mut child = Command::new(&plan.exe)
             .args(["--engine", &std::process::id().to_string(), "-f", &profile])
             .current_dir(plan.exe.parent().unwrap())
@@ -142,40 +143,22 @@ impl EngineLink {
             }));
         }
         let deadline = Instant::now() + Duration::from_secs(12);
-        let mut writer = loop {
-            if let Ok(socket) = TcpStream::connect((Ipv4Addr::LOCALHOST, ctrl)) {
-                break socket;
-            }
-            if let Some(status) = child.try_wait().map_err(err)? {
-                return Err(message_with("ENGINE_START_FAILED", [status]));
-            }
-            if Instant::now() > deadline {
+        let accepted = accept_engine(&plan.control, &plan.control_secret, deadline, || {
+            child.try_wait().map(|status| status.map(|s| s.to_string())).map_err(err)
+        });
+        // The listener goes with the plan: no further connection is taken.
+        drop(plan.control);
+        let writer = match accepted {
+            Ok(stream) => stream,
+            Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(message("ENGINE_CONNECT_TIMEOUT"));
+                return Err(e);
             }
-            thread::sleep(Duration::from_millis(100));
         };
         writer
             .set_write_timeout(Some(Duration::from_secs(3)))
             .map_err(err)?;
-        // The first word is the secret; the engine takes commands from this
-        // connection only once it has said yes, and takes no other connection
-        // while this one holds. The answer is read here, frame by frame from
-        // the socket itself, so that nothing after it is swallowed.
-        writer.set_read_timeout(Some(Duration::from_secs(5))).map_err(err)?;
-        let hello = serde_json::to_vec(&json!({"command":"auth","params":plan.control_secret,"token":"auth"})).map_err(err)?;
-        let accepted = write_netstring(&mut writer, &hello)
-            .and_then(|()| read_netstring(&mut writer))
-            .ok()
-            .and_then(|answer| serde_json::from_slice::<Value>(&answer).ok())
-            .is_some_and(|answer| answer["ok"] == true && answer["token"] == "auth");
-        if !accepted {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(message("ENGINE_CONTROL_AUTH_FAILED"));
-        }
-        writer.set_read_timeout(None).map_err(err)?;
         let mut reader = BufReader::new(writer.try_clone().map_err(err)?);
         let (s, q) = (sink.clone(), seq.clone());
         threads.push(thread::spawn(move || {
@@ -268,6 +251,53 @@ impl EngineLink {
     }
 }
 
+/// Waits on the app's own listener for the engine to connect and name the
+/// secret in its first frame (`{"hello":"ksip_ctrl","secret":…}`), and
+/// returns that connection. The app says nothing on a connection before it
+/// has heard the secret, so the secret never goes to anyone; a connection
+/// that says anything else, or nothing within two seconds, is closed and the
+/// wait goes on. `exited` tells an engine that ended before connecting.
+pub(crate) fn accept_engine(
+    listener: &TcpListener,
+    secret: &str,
+    deadline: Instant,
+    mut exited: impl FnMut() -> Result<Option<String>, String>,
+) -> Result<TcpStream, String> {
+    listener.set_nonblocking(true).map_err(err)?;
+    loop {
+        match listener.accept() {
+            Ok((mut stream, peer)) if peer.ip().is_loopback() => {
+                // An accepted socket takes the listener's mode; the greeting
+                // is read blocking, within its own time.
+                stream.set_nonblocking(false).map_err(err)?;
+                stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(err)?;
+                let greeted = read_netstring(&mut stream)
+                    .ok()
+                    .and_then(|frame| serde_json::from_slice::<Value>(&frame).ok())
+                    .is_some_and(|hello| hello["hello"] == "ksip_ctrl" && same_secret(hello["secret"].as_str().unwrap_or(""), secret));
+                if greeted {
+                    stream.set_read_timeout(None).map_err(err)?;
+                    return Ok(stream);
+                }
+                // Anyone else is closed as the stream drops.
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(err(e)),
+        }
+        if let Some(status) = exited()? {
+            return Err(message_with("ENGINE_START_FAILED", [status]));
+        }
+        if Instant::now() > deadline {
+            return Err(message("ENGINE_CONNECT_TIMEOUT"));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+/// Compares the secret in time that does not depend on where it differs.
+fn same_secret(said: &str, secret: &str) -> bool {
+    said.len() == secret.len() && said.bytes().zip(secret.bytes()).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+}
 /// The engine colours its warnings for a terminal; the log wants the words.
 pub fn without_colour(line: &str) -> String {
     let mut plain = String::with_capacity(line.len());
@@ -376,5 +406,51 @@ mod tests {
         assert_eq!(stats.render_frames, 1200);
         assert_eq!(stats.capture_frames, 1198);
         assert_eq!(stats.render_errors + stats.capture_errors, 0);
+    }
+}
+
+#[cfg(test)]
+mod accept_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+    fn greet(port: u16, payload: Value) -> TcpStream {
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write_netstring(&mut s, &serde_json::to_vec(&payload).unwrap()).unwrap();
+        s
+    }
+    #[test]
+    fn only_the_connection_that_names_the_secret_is_taken_and_the_app_says_nothing_first() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let secret = "0123456789abcdef";
+        // Strangers first: a wrong secret, a wrong greeting, and one that says nothing.
+        let mut wrong = greet(port, json!({"hello":"ksip_ctrl","secret":"fedcba9876543210"}));
+        let mut other = greet(port, json!({"command":"quit"}));
+        let silent = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let right = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            greet(port, json!({"hello":"ksip_ctrl","secret":"0123456789abcdef"}))
+        });
+        let mut taken = accept_engine(&listener, secret, Instant::now() + Duration::from_secs(10), || Ok(None)).expect("the engine is taken");
+        let mut engine = right.join().unwrap();
+        // The stranger heard nothing, and was closed.
+        wrong.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut buf = [0u8; 16];
+        assert!(matches!(std::io::Read::read(&mut wrong, &mut buf), Ok(0) | Err(_)), "a stranger is closed without a word");
+        other.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert!(matches!(std::io::Read::read(&mut other, &mut buf), Ok(0) | Err(_)));
+        drop(silent);
+        // The connection taken is the engine's.
+        write_netstring(&mut taken, b"{\"command\":\"help\"}").unwrap();
+        engine.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(read_netstring(&mut engine).unwrap(), b"{\"command\":\"help\"}");
+    }
+    #[test]
+    fn an_engine_that_ends_or_never_connects_is_reported() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let ended = accept_engine(&listener, "s", Instant::now() + Duration::from_secs(5), || Ok(Some("exit code: 1".into())));
+        assert_eq!(ended.err(), Some(message_with("ENGINE_START_FAILED", ["exit code: 1"])));
+        let late = accept_engine(&listener, "s", Instant::now() + Duration::from_millis(200), || Ok(None));
+        assert_eq!(late.err(), Some(message("ENGINE_CONNECT_TIMEOUT")));
     }
 }

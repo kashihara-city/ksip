@@ -1,23 +1,27 @@
 // The app's control connection to the engine: JSON commands and their
 // answers in netstring frames over TCP on the loopback address, and the
-// engine's events the same way back. Only the app may hold it: the engine is
-// started with a secret (the environment variable KSIP_CONTROL_SECRET, set
-// by the parent for this one process and never written to the profile or the
-// log), and a connection may do nothing until its first frame is
-// `{"command":"auth","params":"<secret>"}`. A connection that says anything
-// else, or nothing within a few seconds, is closed. While one connection is
-// authenticated, further connections are refused at the door, so that no
-// other process on the machine can take the app's place or push it off; the
-// app never reconnects to a running engine (a lost connection ends the
-// process), so one connection per engine lifetime is what is wanted.
+// engine's events the same way back.
+//
+// The engine listens on nothing. The app holds a listening socket from
+// before it starts the engine until the engine has connected, so there is no
+// moment in which another process could take the port; it tells the engine
+// the port (`ksip_ctrl_connect` in the config) and a secret made for this
+// start (the environment variable KSIP_CONTROL_SECRET, set for this one
+// process and never written to the profile or the log). The engine connects
+// out and its first frame names the secret:
+// `{"hello":"ksip_ctrl","secret":"<secret>"}`. The app takes the connection
+// that says it and closes any other; the secret only ever travels to the
+// socket the app has held throughout. One connection per engine lifetime:
+// when it ends, the engine quits, as it would on the app's `quit`, so an
+// engine never outlives the app that controls it.
 //
 // Frames: `<length>:<json>,` as netstring says. A command is
 // {"command","params","token"}; the answer is {"response":true,"ok","data",
 // "token"}; an event is {"event":true, ...} as baresip encodes it.
 //
-// Threads: baresip's main thread only (libre's TCP callbacks, its timers,
-// the events). Lifetime: module-static state; init() at module load,
-// close() at unload; not re-initialised.
+// Threads: baresip's main thread only (libre's TCP callbacks, the events).
+// Lifetime: module-static state; init() at module load, close() at unload;
+// not re-initialised.
 #define WIN32_LEAN_AND_MEAN
 #include <cmath>
 #include <algorithm>
@@ -25,54 +29,28 @@
 #include <baresip.h>
 #include <windows.h>
 #include <cstring>
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace {
-enum { kAuthGraceMs = 3000, kMaxFrame = 65536 };
+enum { kMaxFrame = 65536 };
 
-struct Client {
-    tcp_conn *tc = nullptr;
-    // Bytes received and not yet framed.
-    std::string in;
-    bool authenticated = false;
-    // Set once the connection is to be closed; the close itself happens from
-    // a timer, outside libre's callbacks for this connection.
-    bool closing = false;
-    tmr timer{};
-    ~Client() {
-        tmr_cancel(&timer);
-        mem_deref(tc);
-    }
-};
-
-tcp_sock *listener = nullptr;
+tcp_conn *conn = nullptr;
+bool established = false;
+// Bytes received and not yet framed.
+std::string in;
 std::string secret;
-std::vector<std::unique_ptr<Client>> clients;
-
-Client *authenticated_client() {
-    for (auto &c : clients)
-        if (c->authenticated && !c->closing) return c.get();
-    return nullptr;
-}
-void drop_now(void *arg) {
-    auto c = static_cast<Client *>(arg);
-    clients.erase(std::remove_if(clients.begin(), clients.end(), [c](const std::unique_ptr<Client> &p) { return p.get() == c; }), clients.end());
-}
-// Ends a connection at the next turn of the loop: never from inside one of
-// its own callbacks.
-void drop_later(Client *c) {
-    if (c->closing) return;
-    c->closing = true;
-    tmr_start(&c->timer, 0, drop_now, c);
-}
+// Set once the connection has ended: the engine is on its way out.
+bool ended = false;
+// Lets go of the connection at the next turn of the loop, never from inside
+// one of its own callbacks.
+tmr release_timer;
 
 int print_to_string(const char *p, size_t size, void *arg) {
     static_cast<std::string *>(arg)->append(p, size);
     return 0;
 }
-int send_frame(tcp_conn *tc, const std::string &body) {
+int send_frame(const std::string &body) {
+    if (!conn || !established) return ENOTCONN;
     mbuf *mb = mbuf_alloc(body.size() + 24);
     if (!mb) return ENOMEM;
     int err = mbuf_printf(mb, "%zu:", body.size());
@@ -80,7 +58,7 @@ int send_frame(tcp_conn *tc, const std::string &body) {
     err |= mbuf_write_u8(mb, ',');
     if (!err) {
         mb->pos = 0;
-        err = tcp_send(tc, mb);
+        err = tcp_send(conn, mb);
     }
     mem_deref(mb);
     return err;
@@ -100,104 +78,81 @@ std::string encode_response(int cmd_error, const std::string &data, const char *
     mem_deref(od);
     return out;
 }
+void release(void *) { conn = static_cast<tcp_conn *>(mem_deref(conn)); }
+// The engine's controller is gone: the engine goes too.
+void end(const char *why) {
+    if (ended) return;
+    ended = true;
+    info("ksip_ctrl: %s; the engine quits\n", why);
+    established = false;
+    tmr_start(&release_timer, 0, release, nullptr);
+    ua_stop_all(false);
+}
 
-// One frame from an authenticated connection: the command runs, the answer
-// goes back with the token.
-void run_command(Client *c, odict *od) {
-    const char *cmd = odict_string(od, "command"), *prm = odict_string(od, "params"), *tok = odict_string(od, "token");
-    std::string line = cmd;
-    if (prm && *prm) line += std::string(" ") + prm;
-    std::string data;
-    re_printf pf = {print_to_string, &data};
-    int err = cmd_process_long(baresip_commands(), line.c_str(), line.size(), &pf, nullptr);
-    if (err) warning("ksip_ctrl: command %s failed (%m)\n", cmd, err);
-    auto body = encode_response(err, data, tok);
-    if (!body.empty() && send_frame(c->tc, body)) warning("ksip_ctrl: failed to send the response\n");
-}
-// The first frame of a connection: the secret, or the door.
-void authenticate(Client *c, odict *od) {
-    const char *cmd = odict_string(od, "command"), *prm = odict_string(od, "params"), *tok = odict_string(od, "token");
-    const bool right = cmd && prm && !secret.empty() && str_casecmp(cmd, "auth") == 0 && strlen(prm) == secret.size() && memcmp(prm, secret.data(), secret.size()) == 0;
-    if (!right || authenticated_client()) {
-        // The words are not repeated: whatever was sent is not the log's.
-        info("ksip_ctrl: a connection did not authenticate and is closed\n");
-        drop_later(c);
-        return;
-    }
-    c->authenticated = true;
-    tmr_cancel(&c->timer);
-    info("ksip_ctrl: the control connection is authenticated\n");
-    auto body = encode_response(0, "", tok);
-    if (!body.empty()) (void)send_frame(c->tc, body);
-}
-void handle_frame(Client *c, const char *data, size_t len) {
+// One frame: the command runs, the answer goes back with the token.
+void run_command(const char *data, size_t len) {
     odict *od = nullptr;
     if (json_decode_odict(&od, 32, data, len, 16) || !odict_string(od, "command")) {
         mem_deref(od);
-        if (!c->authenticated) drop_later(c);
-        else warning("ksip_ctrl: a frame could not be read\n");
+        warning("ksip_ctrl: a frame could not be read\n");
         return;
     }
-    if (c->authenticated) run_command(c, od);
-    else authenticate(c, od);
+    const char *cmd = odict_string(od, "command"), *prm = odict_string(od, "params"), *tok = odict_string(od, "token");
+    std::string line = cmd;
+    if (prm && *prm) line += std::string(" ") + prm;
+    std::string answer;
+    re_printf pf = {print_to_string, &answer};
+    int err = cmd_process_long(baresip_commands(), line.c_str(), line.size(), &pf, nullptr);
+    if (err) warning("ksip_ctrl: command %s failed (%m)\n", cmd, err);
+    auto body = encode_response(err, answer, tok);
     mem_deref(od);
+    if (!body.empty() && send_frame(body)) warning("ksip_ctrl: failed to send the response\n");
 }
 // Netstring framing over what has arrived so far.
-void recv_handler(mbuf *mb, void *arg) {
-    auto c = static_cast<Client *>(arg);
-    if (c->closing) return;
-    c->in.append(reinterpret_cast<const char *>(mbuf_buf(mb)), mbuf_get_left(mb));
+void recv_handler(mbuf *mb, void *) {
+    if (ended) return;
+    in.append(reinterpret_cast<const char *>(mbuf_buf(mb)), mbuf_get_left(mb));
     for (;;) {
-        auto colon = c->in.find(':');
+        auto colon = in.find(':');
         if (colon == std::string::npos) {
-            if (c->in.size() > 10) drop_later(c); // no length in sight: not a frame
+            if (in.size() > 10) end("the app sent something that is not a frame");
             return;
         }
-        if (colon == 0 || colon > 9 || c->in.find_first_not_of("0123456789") < colon) {
-            drop_later(c);
-            return;
-        }
-        size_t len = std::stoul(c->in.substr(0, colon));
-        if (len > kMaxFrame) {
-            drop_later(c);
-            return;
-        }
-        if (c->in.size() < colon + 1 + len + 1) return; // the rest is still to come
-        if (c->in[colon + 1 + len] != ',') {
-            drop_later(c);
-            return;
-        }
-        std::string frame = c->in.substr(colon + 1, len);
-        c->in.erase(0, colon + 1 + len + 1);
-        handle_frame(c, frame.data(), frame.size());
-        if (c->closing) return;
+        if (colon == 0 || colon > 9 || in.find_first_not_of("0123456789") < colon) return end("the app sent something that is not a frame");
+        size_t len = std::stoul(in.substr(0, colon));
+        if (len > kMaxFrame) return end("the app sent a frame too long");
+        if (in.size() < colon + 1 + len + 1) return; // the rest is still to come
+        if (in[colon + 1 + len] != ',') return end("the app sent something that is not a frame");
+        std::string frame = in.substr(colon + 1, len);
+        in.erase(0, colon + 1 + len + 1);
+        run_command(frame.data(), frame.size());
+        if (ended) return;
     }
 }
-void close_handler(int, void *arg) {
-    auto c = static_cast<Client *>(arg);
-    if (c->authenticated) info("ksip_ctrl: the control connection closed\n");
-    drop_later(c);
+// Connected: the first word is the secret.
+void estab_handler(void *) {
+    established = true;
+    odict *od = nullptr;
+    if (odict_alloc(&od, 4)) return end("out of memory");
+    odict_entry_add(od, "hello", ODICT_STRING, "ksip_ctrl");
+    odict_entry_add(od, "secret", ODICT_STRING, secret.c_str());
+    std::string body;
+    re_printf pf = {print_to_string, &body};
+    int err = json_encode_odict(&pf, od);
+    mem_deref(od);
+    if (err || send_frame(body)) return end("the greeting could not be sent");
+    info("ksip_ctrl: connected to the app\n");
 }
-void grace_over(void *arg) {
-    auto c = static_cast<Client *>(arg);
-    info("ksip_ctrl: a connection said nothing in time and is closed\n");
-    drop_later(c);
-}
-void conn_handler(const sa *, void *) {
-    if (authenticated_client() || clients.size() >= 4) {
-        // The app holds the connection; nobody takes its place.
-        (void)tcp_reject(listener);
-        return;
+void close_handler(int err, void *) {
+    if (established) end("the control connection closed");
+    else {
+        warning("ksip_ctrl: could not connect to the app (%m)\n", err);
+        end("no control connection");
     }
-    auto c = std::make_unique<Client>();
-    if (tcp_accept(&c->tc, listener, nullptr, recv_handler, close_handler, c.get())) return;
-    tmr_start(&c->timer, kAuthGraceMs, grace_over, c.get());
-    clients.push_back(std::move(c));
 }
 // The engine's events, to the app.
 void event_handler(bevent_ev, bevent *event, void *) {
-    auto c = authenticated_client();
-    if (!c) return;
+    if (!established || ended) return;
     odict *od = nullptr;
     if (odict_alloc(&od, 8)) return;
     int err = odict_entry_add(od, "event", ODICT_BOOL, true);
@@ -206,27 +161,49 @@ void event_handler(bevent_ev, bevent *event, void *) {
     re_printf pf = {print_to_string, &body};
     if (!err) err = json_encode_odict(&pf, od);
     mem_deref(od);
-    if (err || send_frame(c->tc, body)) warning("ksip_ctrl: failed to send an event\n");
+    if (err || send_frame(body)) warning("ksip_ctrl: failed to send an event\n");
 }
 
+// The engine cannot be controlled: it ends as soon as its loop runs, rather
+// than go on uncontrolled. baresip carries on past a module that fails to
+// load, so returning the error alone would not stop it.
+// Its own timer: libre closes a module whose init failed, and close() must
+// not cancel this one.
+tmr quit_timer;
+const char *quit_reason = "";
+void quit_uncontrolled(void *) {
+    warning("ksip_ctrl: %s; the engine quits\n", quit_reason);
+    ended = true;
+    ua_stop_all(false);
+}
+int refuse(const char *why, int err) {
+    quit_reason = why;
+    tmr_start(&quit_timer, 0, quit_uncontrolled, nullptr);
+    return err;
+}
 int init() {
+    tmr_init(&release_timer);
+    tmr_init(&quit_timer);
     char value[256] = {};
     DWORD n = GetEnvironmentVariableA("KSIP_CONTROL_SECRET", value, sizeof(value));
     if (n > 0 && n < sizeof(value)) secret.assign(value, n);
-    if (secret.empty()) warning("ksip_ctrl: no control secret in the environment; every connection will be refused\n");
-    sa laddr;
-    if (conf_get_sa(conf_cur(), "ksip_ctrl_listen", &laddr)) sa_set_str(&laddr, "127.0.0.1", 0);
-    int err = tcp_listen(&listener, &laddr, conn_handler, nullptr);
-    if (err) {
-        warning("ksip_ctrl: failed to listen on %J (%m)\n", &laddr, err);
-        return err;
-    }
-    return bevent_register(event_handler, nullptr);
+    SecureZeroMemory(value, sizeof(value));
+    if (secret.empty()) return refuse("no control secret in the environment", EINVAL);
+    sa peer;
+    if (conf_get_sa(conf_cur(), "ksip_ctrl_connect", &peer) || !sa_is_loopback(&peer))
+        return refuse("ksip_ctrl_connect must name the app's loopback address and port", EINVAL);
+    int err = bevent_register(event_handler, nullptr);
+    if (err) return refuse("the engine's events could not be followed", err);
+    err = tcp_connect(&conn, &peer, estab_handler, recv_handler, close_handler, nullptr);
+    if (err) return refuse("the connection to the app could not be started", err);
+    return 0;
 }
 int close() {
+    tmr_cancel(&release_timer);
     bevent_unregister(event_handler);
-    clients.clear();
-    listener = static_cast<tcp_sock *>(mem_deref(listener));
+    established = false;
+    conn = static_cast<tcp_conn *>(mem_deref(conn));
+    if (!secret.empty()) SecureZeroMemory(&secret[0], secret.size());
     secret.clear();
     return 0;
 }

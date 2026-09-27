@@ -153,7 +153,6 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       WORKER_OUTSTANDING:'The previous start, stop or calibration has not finished yet',
       SETTINGS_SAVE_INTERRUPTED:'The last settings save did not finish. Check the settings and save them again',
       MAINTENANCE_IN_PROGRESS:'Another settings change or calibration has not finished yet',
-      ENGINE_CONTROL_AUTH_FAILED:'The control connection to the audio engine could not be authenticated',
       WORK_TIMEOUT:'The operation did not finish in time',
       OPERATION_WAIT_TIMEOUT:'The operation was dropped because another one did not finish',
       ENGINE_START_FAILED:'The audio engine failed to start: {0}. Check the log',

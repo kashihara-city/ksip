@@ -1,133 +1,98 @@
-"""The engine's control connection takes commands only from the one connection that says the start's secret: an unauthenticated, a wrongly authenticated and a second correct connection are all closed and the first goes on working."""
-import json, secrets, socket, subprocess, sys, time
+"""The engine listens for no control: it connects out to the listener its starter holds, names the start's secret first, takes commands only on that connection, and quits when it closes or cannot be made."""
+import os, subprocess, sys, time
 from pathlib import Path
 
+import engine_control
+
 ROOT = Path(__file__).resolve().parents[2]
-PROFILE = ROOT / 'temp/build/ksip-control-test'
+BASE = ROOT / 'temp/build/ksip-control-test'
+ENGINE = ROOT / 'temp/build/native/bin/baresip.exe'
 
 
-def frame(payload):
+def start(name, port, secret):
+    """An isolated engine with no account, told to connect to `port`."""
+    profile = BASE / name
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / 'config').write_text(f'sip_listen 127.0.0.1:0\nksip_ctrl_connect 127.0.0.1:{port}\nmodule ksip_ctrl.dll\nmodule menu.dll\n', encoding='utf-8')
+    (profile / 'accounts').write_text('', encoding='utf-8')
+    env = dict(os.environ)
+    env.pop('KSIP_CONTROL_SECRET', None)
+    if secret is not None:
+        env['KSIP_CONTROL_SECRET'] = secret
+    log = (profile / 'engine.log').open('wb')
+    process = subprocess.Popen([str(ENGINE), '-f', str(profile)], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW)
+    return process, log, profile / 'engine.log'
+
+
+def frame(sock, payload):
+    import json
     data = json.dumps(payload).encode()
-    return str(len(data)).encode() + b':' + data + b','
+    sock.sendall(str(len(data)).encode() + b':' + data + b',')
 
 
-def read_frame(sock, timeout=3.0):
-    """One netstring frame, or None when the engine closed the connection."""
-    sock.settimeout(timeout)
-    header = b''
-    while True:
-        byte = sock.recv(1)
-        if not byte:
-            return None
-        if byte == b':':
-            break
-        header += byte
-    length = int(header)
-    body = b''
-    while len(body) < length + 1:
-        chunk = sock.recv(length + 1 - len(body))
-        if not chunk:
-            return None
-        body += chunk
-    assert body[-1:] == b',', body
-    return json.loads(body[:-1])
-
-
-def closed_by_engine(sock):
-    """True when the engine closes the connection within the grace time."""
-    try:
-        return read_frame(sock, 6.0) is None
-    except socket.timeout:
-        return False
-    except OSError:
-        # Refused at the door: the engine resets rather than closes.
-        return True
+def stop(process):
+    if process.poll() is None:
+        process.kill()
+        process.wait()
 
 
 def main():
-    PROFILE.mkdir(parents=True, exist_ok=True)
-    with socket.socket() as reserve:
-        reserve.bind(('127.0.0.1', 0))
-        port = reserve.getsockname()[1]
-    secret = secrets.token_hex(32)
-    (PROFILE / 'config').write_text(f'sip_listen 127.0.0.1:0\nksip_ctrl_listen 127.0.0.1:{port}\nmodule ksip_ctrl.dll\nmodule menu.dll\n', encoding='utf-8')
-    (PROFILE / 'accounts').write_text('', encoding='utf-8')
-    env = dict(__import__('os').environ, KSIP_CONTROL_SECRET=secret)
-    with (PROFILE / 'engine.log').open('wb') as log:
-        engine = subprocess.Popen([str(ROOT / 'temp/build/native/bin/baresip.exe'), '-f', str(PROFILE)], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW)
-        sockets = []
-        try:
-            deadline = time.monotonic() + 10
-            while True:
-                try:
-                    first = socket.create_connection(('127.0.0.1', port), .5)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline or engine.poll() is not None:
-                        raise RuntimeError('the isolated engine did not start; see ' + str(PROFILE / 'engine.log'))
-                    time.sleep(.05)
-            sockets.append(first)
-            # The app's connection: the secret first, then a command.
-            first.sendall(frame({'command': 'auth', 'params': secret, 'token': 'auth'}))
-            answer = read_frame(first)
-            assert answer and answer.get('ok') is True and answer.get('token') == 'auth', answer
-            first.sendall(frame({'command': 'help', 'token': 'h1'}))
-            answer = read_frame(first)
-            assert answer and answer.get('ok') is True, answer
-            print('PASS: the connection that says the secret is answered', flush=True)
+    # The engine's greeting names the secret, and it then takes commands.
+    secret = engine_control.new_secret()
+    listener, port = engine_control.listen()
+    process, log, log_path = start('greeting', port, secret)
+    try:
+        conn = engine_control.accept(listener, process, secret)
+        frame(conn, {'command': 'help', 'token': 'h1'})
+        conn.settimeout(3)
+        answer = engine_control.read_frame(conn)
+        assert answer and answer.get('ok') is True and answer.get('token') == 'h1', answer
+        print('PASS: the engine connects to its starter, names the secret, and is answered', flush=True)
+        # When the connection ends, so does the engine.
+        conn.close()
+        code = process.wait(timeout=10)
+        assert code == 0, code
+        print('PASS: the engine quits when its control connection closes', flush=True)
+    finally:
+        stop(process)
+        log.close()
+    assert secret.encode() not in log_path.read_bytes(), 'the secret reached the log'
+    print('PASS: the secret is not in the log', flush=True)
 
-            # Nobody else: a second connection is refused at the door while the first holds.
-            intruder = socket.create_connection(('127.0.0.1', port), 2)
-            sockets.append(intruder)
-            intruder.sendall(frame({'command': 'quit', 'token': 'q'}))
-            assert closed_by_engine(intruder), 'an unauthenticated connection was not closed'
-            time.sleep(.5)
-            assert engine.poll() is None, 'an unauthenticated quit ended the engine'
-            print('PASS: an unauthenticated quit is refused and the engine goes on', flush=True)
+    # Nobody to connect to: the engine does not wait around uncontrolled.
+    listener, port = engine_control.listen()
+    listener.close()
+    process, log, _ = start('nobody', port, engine_control.new_secret())
+    try:
+        process.wait(timeout=15)
+        print('PASS: an engine that cannot reach its starter ends', flush=True)
+    finally:
+        stop(process)
+        log.close()
 
-            rival = socket.create_connection(('127.0.0.1', port), 2)
-            sockets.append(rival)
-            rival.sendall(frame({'command': 'auth', 'params': secret, 'token': 'auth'}))
-            assert closed_by_engine(rival), 'a second connection with the right secret took over'
-            first.sendall(frame({'command': 'help', 'token': 'h2'}))
-            answer = read_frame(first)
-            assert answer and answer.get('ok') is True and answer.get('token') == 'h2', answer
-            print('PASS: even the right secret does not push the first connection off', flush=True)
-
-            # Without the first: a wrong secret is closed, then the right one is taken.
-            first.close()
-            time.sleep(.3)
-            wrong = socket.create_connection(('127.0.0.1', port), 2)
-            sockets.append(wrong)
-            wrong.sendall(frame({'command': 'auth', 'params': secret[::-1], 'token': 'auth'}))
-            assert closed_by_engine(wrong), 'a wrong secret was not closed'
-            silent = socket.create_connection(('127.0.0.1', port), 2)
-            sockets.append(silent)
-            assert closed_by_engine(silent), 'a connection that says nothing was not closed in time'
-            print('PASS: a wrong secret and a silent connection are closed', flush=True)
-
-            second = socket.create_connection(('127.0.0.1', port), 2)
-            sockets.append(second)
-            second.sendall(frame({'command': 'auth', 'params': secret, 'token': 'auth'}))
-            answer = read_frame(second)
-            assert answer and answer.get('ok') is True, answer
-            second.sendall(frame({'command': 'quit', 'token': 'bye'}))
-            code = engine.wait(timeout=10)
-            assert code == 0, code
-            print('PASS: the authenticated connection can end the engine', flush=True)
-            log_text = (PROFILE / 'engine.log').read_bytes()
-            assert secret.encode() not in log_text, 'the secret reached the log'
-            print('PASS: the secret is not in the log', flush=True)
-        finally:
-            for sock in sockets:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-            if engine.poll() is None:
-                engine.kill()
-                engine.wait()
-    print('PASS: control connection authentication')
+    # Without a secret the control module refuses to load and the engine ends
+    # without connecting.
+    listener, port = engine_control.listen()
+    process, log, _ = start('no-secret', port, None)
+    try:
+        listener.settimeout(0.2)
+        deadline = time.monotonic() + 15
+        connected = False
+        while process.poll() is None and time.monotonic() < deadline:
+            try:
+                conn, _ = listener.accept()
+                connected = True
+                conn.close()
+            except OSError:
+                pass
+        assert process.poll() is not None, 'an engine without a secret kept running'
+        assert not connected, 'an engine without a secret connected'
+        print('PASS: an engine without a secret neither connects nor runs', flush=True)
+    finally:
+        listener.close()
+        stop(process)
+        log.close()
+    print('PASS: control connection')
 
 
 if __name__ == '__main__':

@@ -2,7 +2,8 @@
 A sends silence; B sends a tone. RX recording must contain only the peer.
 """
 from pathlib import Path
-import array, json, math, os, secrets, socket, subprocess, threading, time, wave
+import array, json, math, os, socket, subprocess, threading, time, wave
+import engine_control
 
 ROOT=Path(__file__).resolve().parents[2]
 BASE=ROOT/'temp/build/call-test'
@@ -36,7 +37,7 @@ auplay_format s16
 auenc_format s16
 audec_format s16
 rtp_ports {rtp}-{rtp+20}
-ksip_ctrl_listen 127.0.0.1:{ctrl}
+ksip_ctrl_connect 127.0.0.1:{ctrl}
 module g711.dll
 module aufile.dll
 module ksip_audio_filter.dll
@@ -46,21 +47,17 @@ module ksip_ctrl.dll
 module menu.dll
 module_app account.dll
 '''
-        self.secret=secrets.token_hex(32)
+        self.secret=engine_control.new_secret()
+        control,_=engine_control.listen(ctrl)
         (self.dir/'config').write_text(config,encoding='utf-8')
         (self.dir/'accounts').write_text(f'<sip:{name}@localhost:{sip};transport=udp>;regint=0;audio_codecs=PCMU/8000/1;answermode=manual\n',encoding='utf-8')
         self.log=open(self.dir/'engine.log','wb')
         self.proc=subprocess.Popen([str(ROOT/'temp/build/native/bin/baresip.exe'),'-f',str(self.dir)],cwd=self.dir,env=dict(os.environ,KSIP_CONTROL_SECRET=self.secret),stdin=subprocess.DEVNULL,stdout=self.log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
         try:
-            end=time.monotonic()+10
-            while True:
-                try:self.sock=socket.create_connection(('127.0.0.1',ctrl),.3);break
-                except OSError:
-                    if self.proc.poll() is not None or time.monotonic()>end:raise RuntimeError(f'{name} startup failed; see {self.dir}/engine.log')
-                    time.sleep(.1)
-            self.sock.settimeout(None)
+            try:self.sock=engine_control.accept(control,self.proc,self.secret)
+            except RuntimeError as e:raise RuntimeError(f'{name} startup failed ({e}); see {self.dir}/engine.log')
+            finally:control.close()
             threading.Thread(target=self.read,daemon=True).start()
-            self.command('auth',self.secret)
         except BaseException:
             self.proc.kill();self.proc.wait();self.log.close();raise
     def read(self):
