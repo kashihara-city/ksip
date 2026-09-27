@@ -269,6 +269,14 @@ ksip.exe ksip:ANSWER
 - 端末や利用者ごとに異なる `microphone`・`speaker`・`network_adapter`・`extension` と、資格情報（認証IDとパスワード）は含めません。
 - カスタムボタンは1ボタン1ポリシーで、5つの値をまとめて書きます（無効で5つとも消してボタンを出さない）。
 
+配布した値を KSIP がどう読んだかは、端末で次のように書き出して確かめられます。窓もエンジンも起動せず、ファイルを書いて終わります。
+
+```powershell
+ksip.exe --export-settings C:\temp\ksip-settings.json
+```
+
+中身は、KSIP が読んだ設定（値が無い項目は既定値で埋め、名前は正規化したもの）、`server`・`port`・`extension` とサインイン済みかどうか（パスワードは含めません）、読めなかった値名の一覧（`unreadable`）、接続時の検査に通るか（`valid` と `error`）、各値を KSIP が書き戻すとしたときの型と値（`stored`）です。
+
 `network_adapter` を指定すると、登録もRTPもそのアダプターから出ます。待ち受けるアドレスは、保存した値ではなく**接続のたびにアダプターから解決**します。アドレスが変わったときは、通話中でなければ自動で接続し直します（通話中は終わるまで待ちます）。指定したアダプターが無い場合は「指定NICが見つかりませんでした」、アドレスを持たない場合は「指定NICのIPアドレスが取得できませんでした」として保存・接続を拒否します。
 
 `sound_ring`〜`sound_error` に指定したファイルは、起動時に16bit PCMへ変換します。読めない形式や見つからない場合も内蔵音のままとし、理由をログへ残します。呼出音だけは通話用の再生経路（48 kHzモノラル）を通るため、その形式のWAVに限ります。通話中の着信は画面に出るだけで、音は鳴りません。
@@ -399,6 +407,7 @@ python -X utf8 scripts/test/i18n.py
 python -X utf8 scripts/test/no-secrets.py
 python -X utf8 scripts/test/build-paths.py
 python -X utf8 scripts/test/line-endings.py
+python -X utf8 scripts/test/admx.py
 ```
 
 `test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。
@@ -408,6 +417,8 @@ python -X utf8 scripts/test/line-endings.py
 `test/audio-devices.py` にはWindowsの実音声デバイスが必要です。
 
 `test/no-secrets.py` は、Gitが追跡しているファイルに私有IPアドレス・社内ホスト名・秘密らしき文字列・鍵や証明書の中身が混ざっていないかを調べます。開発用サーバーの接続先はリポジトリに置かず `test-pbx/` から読む決まりで、この検査がそれを守ります。
+
+`test/admx.py` は、`docs/admx` のテンプレートと、`release/ksip.exe --export-settings` が空のテスト用プロファイルから書き出す既定の設定を突き合わせます。テンプレートが書く値名がすべて KSIP の設定にあり、KSIP の設定のうち意図して外したもの（`microphone`・`speaker`・`network_adapter`）以外がすべてテンプレートにあり、型（数値と真偽は REG_DWORD、文字列と選択は REG_SZ）と画面の初期値が KSIP と一致することを確かめます。設定を足したのにテンプレートを直し忘れた、を止めるためのもので、1秒かかりません。
 
 `test/build-paths.py` は、ビルドした `release/ksip.exe` に組んだ機械の絶対パス（利用者のフォルダ、リポジトリの場所、cargoのレジストリ）が残っていないかを調べ、結果を `temp/reports/build-paths.json` に残します。`test/line-endings.py` は、`src-web/` の追跡ファイルが作業ツリーでCRLFであることを確かめます。改行がexeへ届くのはここだけです。どちらも数秒で終わります。
 
@@ -467,6 +478,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 `accounts` は書いた順に使います。テストは1件目と2件目の両方に登録してから、その間で発着信します（`app-*.ps1` では1件目がKSIP本体、2件目がPython側の相手）。`pbx-record-switch` は3件目も使います。`encryption` はサーバー側でその内線がどう振る舞うかで、`none`（平文）、`osrtp`（鍵をRTP/AVPで提示し、平文も受ける。Asteriskの `media_encryption_optimistic=yes`）、`sdes`（SRTP必須）、`dtls`（DTLS-SRTP必須）のどれかです。先頭3件は平文で使うので `none` か `osrtp` にします。`pbx-tls` は `sdes` の内線と `dtls` の内線を使い、`pbx-osrtp` は `osrtp` の内線があるときだけ動きます（FreeSWITCHはOSRTPの提示に規格どおりの応答を返さないので、その開発機では `none` にしてあります）。`ca_certificate` はTLSの検証に使う認証局の証明書で、省略するとそのフォルダーの `LocalCA.crt` です。別のPBXと同じ認証局を指してもかまいません（FreeSWITCHの開発機はAsteriskと同じ認証局が発行した証明書を使っています）。`numbers` はサーバー側の約束事で、省略した項目は上の値になります。`park_watch` は駐車枠のBLFで購読する相手で、Asteriskは枠の番号そのもの、FreeSWITCHは `sip:park+{slot}@{server}`（valet parkingが公開する名前）です。`features` には、そのPBXが持たない振る舞いを `false` で書きます。対応するテストは「SKIP:」と理由を出して正常終了するか、その段だけ「NOTE:」と出して先へ進みます。`connected_identity` は保留取得時に相手の番号を P-Asserted-Identity で知らせること、`windows_trust` はそのサーバー証明書がWindowsの証明書ストアの認証局につながること、`unassigned_rejected` は無い番号への発信を404などの応答で断ること（案内を流して応答するPBXでは `false`。3CXの既定はこちら）です（FreeSWITCHの開発機では `connected_identity` が `false`）。
 
 サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。任意で、応答前に183で音を流してから応答する番号（`early_media`。開発用Asteriskでは `Progress()` と `Playback(...,noanswer)` の後に `Answer()`）があれば、`pbx-early-media.py` がアーリーメディア中の録音の振る舞いを確かめます。無ければそのテストは飛ばします。留守番電話のテストは、声の入った短いWAV（48 kHz・モノラル・16 bit）を `test-pbx/irodori-rusuden.wav` に置いておくと、それを話者として流します。無音だけの録音を捨てるPBX（3CX）があるためです。
+
+`app-settings.py` は、テンプレートが書くのと同じ型の値をテスト用プロファイルへ置き、`ksip.exe --export-settings` で読み戻します。全ポリシーを既定と違う値で同時に有効にした状態、各数値の最小値、各選択肢（SDES と OSRTP は TLS と組で）が、書いたとおりに読まれて接続時の検査にも通ること、型の違う値（REG_BINARY、範囲外の数値、真偽として読めない文字列）が読めない値として名指しされること、手で文字列として書いた真偽と数値も読まれることを確かめます。10秒ほどで終わります。
 
 `app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices`・`app-call-events`（ポーリングの間に終わった着信と、DND で断った着信が履歴に残る）・`app-engine-exit`（通話中にエンジンが死んでも履歴・録音・再接続が保たれる）があります。`-Folder` で別の場所の `ksip.exe`（公開版など）を対象にできます。そのフォルダーには `ksip.exe` と版付きの `ksip-v<版>.exe` の両方を置きます。
 

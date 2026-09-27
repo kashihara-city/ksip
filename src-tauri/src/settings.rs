@@ -5,7 +5,7 @@
 use crate::app::Services;
 use crate::logs::LOG_APP;
 use crate::message::{message, message_with};
-use crate::storage::{Account, StoredValue, ACCOUNT_VALUES};
+use crate::storage::{Account, Store, StoredValue, ACCOUNT_VALUES, DEFAULT_PORT, DEFAULT_SERVER};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -450,6 +450,64 @@ impl Settings {
             &self.sound_notfound,
             &self.sound_error,
         ]
+    }
+}
+/// What KSIP makes of the settings in `store`, as a JSON document: the
+/// settings as it reads them (defaults filled in, names normalised), the
+/// account's registry values and whether a credential is there (never the
+/// password), the values it could not read, whether the settings pass the
+/// checks a connect makes, and every value as KSIP would write it back (name,
+/// registry type, value). For diagnosis, and for the tests that hold the
+/// policy templates against what the app reads.
+pub fn export_settings(store: &Store) -> serde_json::Value {
+    use serde_json::json;
+    let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
+    let error = if unreadable.is_empty() {
+        validate(&settings).err()
+    } else {
+        Some(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]))
+    };
+    let stored: serde_json::Map<String, serde_json::Value> = settings
+        .stored_values()
+        .into_iter()
+        .map(|(name, value)| {
+            let value = match value {
+                StoredValue::Text(text) => json!({"type": "REG_SZ", "value": text}),
+                StoredValue::Number(number) => json!({"type": "REG_DWORD", "value": number}),
+            };
+            (name, value)
+        })
+        .collect();
+    // The account as read_account reads it, whether or not anyone has signed in.
+    let server = store.read_text("server");
+    let account = json!({
+        "server": if server.is_empty() { DEFAULT_SERVER.to_string() } else { server },
+        "port": store.read_text("port").parse::<u16>().unwrap_or(DEFAULT_PORT),
+        "extension": store.read_text("extension"),
+        "signed_in": store.read_secret().ok().flatten().is_some(),
+    });
+    json!({
+        "format": 1,
+        "settings": settings,
+        "account": account,
+        "unreadable": unreadable,
+        "valid": error.is_none(),
+        "error": error.unwrap_or_default(),
+        "stored": stored,
+    })
+}
+/// `ksip.exe --export-settings <path>`: the export of the store this process
+/// would use (KSIP_TEST_PROFILE chooses a test profile), written to `path` as
+/// UTF-8. The exit code: 0 written, 1 the file could not be written, 2 no path.
+pub fn export_command(path: Option<&str>) -> i32 {
+    let Some(path) = path.filter(|p| !p.is_empty()) else {
+        return 2;
+    };
+    let document = export_settings(&Store::new());
+    let text = serde_json::to_string_pretty(&document).unwrap_or_default();
+    match std::fs::write(path, text) {
+        Ok(()) => 0,
+        Err(_) => 1,
     }
 }
 /// Reads the registry values into the settings, one by one, noting the ones
@@ -1270,6 +1328,34 @@ mod tests {
             let (user, password) = app.store.read_secret()?.expect("the credential is back");
             assert_eq!((user.as_str(), password.as_str()), ("1001", "local-test-only"));
             assert_eq!(app.store.read_text("server"), "192.0.2.10");
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
+    }
+    #[test]
+    fn the_export_says_what_ksip_reads_and_never_the_password() {
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-export");
+        let store = guard.store();
+        let result = (|| -> Result<(), String> {
+            let empty = export_settings(&store);
+            assert_eq!(empty["valid"], true, "nothing stored is the defaults, which pass");
+            assert_eq!(empty["settings"]["sip_port"], 5060);
+            assert_eq!(empty["account"]["server"], DEFAULT_SERVER);
+            assert_eq!(empty["account"]["signed_in"], false);
+            assert_eq!(empty["stored"]["aec"], serde_json::json!({"type": "REG_DWORD", "value": 1}));
+            assert_eq!(empty["stored"]["language"], serde_json::json!({"type": "REG_SZ", "value": ""}));
+            store.write_account(&Account { server: "pbx.example".into(), port: 5061, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() })?;
+            store.write_text("transport", " TLS ")?;
+            store.write_text("agc", "maybe")?;
+            let read = export_settings(&store);
+            assert_eq!(read["settings"]["transport"], "tls", "normalised as the app reads it");
+            assert_eq!(read["account"]["port"], 5061);
+            assert_eq!(read["account"]["signed_in"], true);
+            assert_eq!(read["unreadable"], serde_json::json!(["agc"]));
+            assert_eq!(read["valid"], false);
+            assert!(!read.to_string().contains("local-test-only"), "the password never goes into the export");
             Ok(())
         })();
         drop(guard);

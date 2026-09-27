@@ -8,7 +8,7 @@ TESTS = ROOT / 'scripts/test'
 SUITE = [
     ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'audio-devices.py'),
     ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'no-secrets.py'),
-    ('offline', 'build-paths.py'), ('offline', 'line-endings.py'),
+    ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'),
     ('loopback', 'loopback-control.py'), ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'),
     ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'),
     ('pbx', 'pbx-record-switch.py'), ('pbx', 'pbx-early-media.py'), ('pbx', 'pbx-playback.py'), ('pbx', 'pbx-live-aec.py'),
@@ -16,7 +16,7 @@ SUITE = [
     ('app', 'app-transfer.ps1'), ('app', 'app-auto-answer.ps1'), ('app', 'app-unregister.ps1'),
     ('app', 'app-shortcut.ps1'), ('app', 'app-language.ps1'), ('app', 'app-devices.ps1'),
     ('app', 'app-adapter.ps1'), ('app', 'app-aec-calibration.ps1'), ('app', 'app-tls.ps1'),
-    ('app', 'app-single-exe.ps1'), ('app', 'app-call-events.ps1'), ('app', 'app-engine-exit.ps1'),
+    ('app', 'app-single-exe.ps1'), ('app', 'app-call-events.ps1'), ('app', 'app-engine-exit.ps1'), ('app', 'app-settings.py'),
 ]
 
 def stop_test_apps():
@@ -28,6 +28,8 @@ def stop_test_apps():
 def run(script, log, folder):
     if script.endswith('.py'):
         command = [sys.executable, '-X', 'utf8', str(TESTS / script)]
+        if folder and (script.startswith('app-') or script == 'admx.py'):
+            command += ['--folder', str(folder)]
     else:
         command = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(TESTS / script)]
         if folder and script.startswith('app-'):

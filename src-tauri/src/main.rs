@@ -29,6 +29,11 @@ fn main() {
     if args.first().is_some_and(|s| s == "--engine") {
         std::process::exit(native::run_engine(&args[1..]));
     }
+    // What KSIP makes of the stored settings, written to a file, and nothing
+    // else: no window, no engine, no single-instance check.
+    if args.first().is_some_and(|s| s == "--export-settings") {
+        std::process::exit(settings::export_command(args.get(1).map(String::as_str)));
+    }
     // A link is handed over as it came, so that the running app can record
     // exactly what the browser passed before it reads anything into it.
     let link = match args.first() {
