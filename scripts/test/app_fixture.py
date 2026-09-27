@@ -47,7 +47,11 @@ if sys.argv[1]=='setup':
         if mode=='buttons' and 'notray' not in flags:general['tray_after_call']=10
         # 'setup missing-device' saves a microphone that no machine has.
         if mode=='missing-device':general['microphone']='{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}'
-        winreg.SetValueEx(key,'Settings',0,winreg.REG_SZ,json.dumps(general))
+        # Each setting is a value of its own: numbers and switches as REG_DWORD
+        # (-1 in two's complement), text as REG_SZ, as the app writes them.
+        for name,value in general.items():
+            if isinstance(value,(bool,int)):winreg.SetValueEx(key,name,0,winreg.REG_DWORD,int(value)&0xFFFFFFFF)
+            else:winreg.SetValueEx(key,name,0,winreg.REG_SZ,value)
         for name,value in policy:
             winreg.SetValueEx(key,name,0,winreg.REG_SZ,value)
     (BASE/'peer-extension.txt').write_text(configured[1]['extension'])

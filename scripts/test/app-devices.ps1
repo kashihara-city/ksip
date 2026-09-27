@@ -13,11 +13,9 @@ $helper=Join-Path $root 'temp/cargo-target/debug/examples/audio-devices.exe'
 if(!(Test-Path $helper)){throw 'Run scripts/test/rust.ps1 first: the device helper is missing'}
 $real=(& $helper | ConvertFrom-Json) | Where-Object { $_.kind -eq 'microphone' } | Select-Object -First 1
 if(!$real){throw 'This machine has no microphone to test with'}
-function Get-SavedMicrophone { ((Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json).microphone }
+function Get-SavedMicrophone { (Get-ItemProperty -LiteralPath $key).microphone }
 function Set-SavedMicrophone([string]$value) {
-    $settings=(Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json
-    $settings | Add-Member -NotePropertyName 'microphone' -NotePropertyValue $value -Force
-    Set-ItemProperty -LiteralPath $key -Name 'Settings' -Value ($settings | ConvertTo-Json -Compress)
+    Set-ItemProperty -LiteralPath $key -Name 'microphone' -Value $value -Type String
 }
 $app=$null
 try {

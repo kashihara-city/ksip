@@ -1,10 +1,11 @@
-//! The settings: the document and the values a policy sets, the custom
-//! buttons, the transport and the media encryption, what is valid, and how
-//! the settings and the account are stored.
+//! The settings: what each is, the custom buttons, the transport and the
+//! media encryption, what is valid, and how the settings and the account are
+//! stored: every setting in a registry value of its own, named as the field,
+//! so that a group policy (docs/admx) can set any of them one at a time.
 use crate::app::Services;
 use crate::logs::LOG_APP;
 use crate::message::{message, message_with};
-use crate::storage::Account;
+use crate::storage::{Account, StoredValue};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -263,27 +264,59 @@ impl MediaEncryption {
 /// be put back; see persist_configuration.
 pub const SAVE_MARK: &str = "SaveInProgress";
 impl Settings {
-    /// Values a group policy can set one at a time. They live in their own
-    /// registry values rather than inside the settings document. The buttons
-    /// are among them, as `button_1_title`, `button_1_kind`, `button_1_number`,
-    /// `button_1_transfer` and `button_1_pickup` up to `button_30_…`; 1 to 6 sit on
-    /// the phone, 7 to 30 in the panel beside it.
+    /// The five values of each custom button: `button_1_title` to
+    /// `button_30_pickup`. 1 to 6 sit on the phone, 7 to 30 in the panel
+    /// beside it.
     const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
-    /// The document keys that are stored as policy values instead.
-    pub const POLICY_DOCUMENT_KEYS: [&'static str; 6] =
-        ["transport", "ca_file", "media_encryption", "codecs", "browser_integration", "buttons"];
-    pub fn policy_values(&self) -> Vec<(String, String)> {
-        let mut values = vec![
-            ("transport".to_string(), self.transport.clone()),
-            ("ca_file".to_string(), self.ca_file.clone()),
-            ("media_encryption".to_string(), self.media_encryption.clone()),
-            ("codecs".to_string(), self.codecs.clone()),
-            (
-                "browser_integration".to_string(),
-                if self.browser_integration { "true" } else { "false" }.to_string(),
-            ),
-        ];
-        for (index, button) in self.buttons.iter().enumerate().take(CustomButton::COUNT) {
+    /// Every setting as the registry holds it: its value name (the field's
+    /// name) and its value. Numbers and switches are REG_DWORD (a switch 1
+    /// or 0; `tray_after_call`'s -1 as 0xFFFFFFFF), the rest REG_SZ. The
+    /// order is the order they are written in.
+    pub fn stored_values(&self) -> Vec<(String, StoredValue)> {
+        use StoredValue::{Number, Text};
+        let flag = |on: bool| Number(u32::from(on));
+        let text = |value: &String| Text(value.clone());
+        let mut values: Vec<(String, StoredValue)> = [
+            ("network_adapter", text(&self.network_adapter)),
+            ("sip_port", Number(self.sip_port.into())),
+            ("rtp_port", Number(self.rtp_port.into())),
+            ("microphone", text(&self.microphone)),
+            ("speaker", text(&self.speaker)),
+            ("microphone_gain", Number(self.microphone_gain.into())),
+            ("speaker_gain", Number(self.speaker_gain.into())),
+            ("auto_record", flag(self.auto_record)),
+            ("transport", text(&self.transport)),
+            ("ca_file", text(&self.ca_file)),
+            ("media_encryption", text(&self.media_encryption)),
+            ("codecs", text(&self.codecs)),
+            ("auto_answer", flag(self.auto_answer)),
+            ("aec", flag(self.aec)),
+            ("aec_delay_ms", Number(self.aec_delay_ms.into())),
+            ("high_pass", flag(self.high_pass)),
+            ("noise_suppression", text(&self.noise_suppression)),
+            ("agc", flag(self.agc)),
+            ("register_interval", Number(self.register_interval.into())),
+            ("detail_log", flag(self.detail_log)),
+            ("browser_integration", flag(self.browser_integration)),
+            ("browser_dial_confirm", flag(self.browser_dial_confirm)),
+            ("shortcut_window", text(&self.shortcut_window)),
+            ("shortcut_call", text(&self.shortcut_call)),
+            ("incoming_action", text(&self.incoming_action)),
+            // Two's complement: -1 (never) is 0xFFFFFFFF, read back as -1.
+            ("tray_after_call", Number(self.tray_after_call as u32)),
+            ("language", text(&self.language)),
+            ("sound_ring", text(&self.sound_ring)),
+            ("sound_ringback", text(&self.sound_ringback)),
+            ("sound_busy", text(&self.sound_busy)),
+            ("sound_notfound", text(&self.sound_notfound)),
+            ("sound_error", text(&self.sound_error)),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect();
+        let empty = CustomButton::default();
+        for index in 0..CustomButton::COUNT {
+            let button = self.buttons.get(index).unwrap_or(&empty);
             for (field, value) in Self::BUTTON_FIELDS.iter().zip([
                 &button.title,
                 &button.kind,
@@ -291,32 +324,68 @@ impl Settings {
                 &button.transfer,
                 &button.pickup,
             ]) {
-                values.push((format!("button_{}_{field}", index + 1), value.clone()));
+                values.push((format!("button_{}_{field}", index + 1), text(value)));
             }
         }
         values
     }
-    pub fn read_policy(&mut self, read: impl Fn(&str) -> String) {
-        // A policy writes text by hand; the case and the surrounding blanks
-        // carry no meaning, and are not left to make a valid value look unknown.
-        self.transport = read("transport").trim().to_ascii_lowercase();
-        self.ca_file = read("ca_file");
-        self.media_encryption = read("media_encryption").trim().to_ascii_lowercase();
-        self.codecs = read("codecs");
-        // A policy writes text, and the ways of saying yes are worth accepting.
-        self.browser_integration = matches!(
-            read("browser_integration").trim().to_ascii_lowercase().as_str(),
-            "true" | "1" | "yes" | "on"
-        );
-        self.buttons = (1..=CustomButton::COUNT)
-            .map(|index| CustomButton {
-                title: read(&format!("button_{index}_title")),
-                kind: read(&format!("button_{index}_kind")).trim().to_ascii_lowercase(),
-                number: read(&format!("button_{index}_number")),
-                transfer: read(&format!("button_{index}_transfer")),
-                pickup: read(&format!("button_{index}_pickup")),
-            })
-            .collect();
+    /// The settings from their registry values. A value that is absent, or
+    /// text that is empty, leaves the setting at its default: a site's policy
+    /// sets only what it cares about, and the first start finds nothing. The
+    /// surrounding blanks of text, and the case of the names a setting picks
+    /// from (transport, encryption, button kind), carry no meaning. A switch
+    /// is 1 or 0, or `true`/`false`, `yes`/`no`, `on`/`off` as text; a number
+    /// may be text of digits. A value that cannot be read as its setting is
+    /// named in the second part of the result, and that setting keeps its
+    /// default; the caller decides what that means (see Services::settings).
+    pub fn read_stored(read: impl Fn(&str) -> Result<Option<StoredValue>, String>) -> (Self, Vec<String>) {
+        let mut reader = StoredReader { read, unreadable: Vec::new() };
+        let mut s = Self::default();
+        let r = &mut reader;
+        r.text("network_adapter", &mut s.network_adapter);
+        r.number("sip_port", &mut s.sip_port);
+        r.number("rtp_port", &mut s.rtp_port);
+        r.text("microphone", &mut s.microphone);
+        r.text("speaker", &mut s.speaker);
+        r.number("microphone_gain", &mut s.microphone_gain);
+        r.number("speaker_gain", &mut s.speaker_gain);
+        r.flag("auto_record", &mut s.auto_record);
+        r.text("transport", &mut s.transport);
+        s.transport = s.transport.to_ascii_lowercase();
+        r.text("ca_file", &mut s.ca_file);
+        r.text("media_encryption", &mut s.media_encryption);
+        s.media_encryption = s.media_encryption.to_ascii_lowercase();
+        r.text("codecs", &mut s.codecs);
+        r.flag("auto_answer", &mut s.auto_answer);
+        r.flag("aec", &mut s.aec);
+        r.number("aec_delay_ms", &mut s.aec_delay_ms);
+        r.flag("high_pass", &mut s.high_pass);
+        r.text("noise_suppression", &mut s.noise_suppression);
+        r.flag("agc", &mut s.agc);
+        r.number("register_interval", &mut s.register_interval);
+        r.flag("detail_log", &mut s.detail_log);
+        r.flag("browser_integration", &mut s.browser_integration);
+        r.flag("browser_dial_confirm", &mut s.browser_dial_confirm);
+        r.text("shortcut_window", &mut s.shortcut_window);
+        r.text("shortcut_call", &mut s.shortcut_call);
+        r.text("incoming_action", &mut s.incoming_action);
+        r.signed("tray_after_call", &mut s.tray_after_call);
+        r.text("language", &mut s.language);
+        r.text("sound_ring", &mut s.sound_ring);
+        r.text("sound_ringback", &mut s.sound_ringback);
+        r.text("sound_busy", &mut s.sound_busy);
+        r.text("sound_notfound", &mut s.sound_notfound);
+        r.text("sound_error", &mut s.sound_error);
+        for (index, button) in s.buttons.iter_mut().enumerate() {
+            let name = |field: &str| format!("button_{}_{field}", index + 1);
+            r.text(&name("title"), &mut button.title);
+            r.text(&name("kind"), &mut button.kind);
+            button.kind = button.kind.to_ascii_lowercase();
+            r.text(&name("number"), &mut button.number);
+            r.text(&name("transfer"), &mut button.transfer);
+            r.text(&name("pickup"), &mut button.pickup);
+        }
+        (s, reader.unreadable)
     }
     /// The numbers the engine watches, each once, in button order.
     pub fn watched_numbers(&self) -> Vec<&str> {
@@ -381,6 +450,71 @@ impl Settings {
             &self.sound_notfound,
             &self.sound_error,
         ]
+    }
+}
+/// Reads the registry values into the settings, one by one, noting the ones
+/// that cannot be read as what they are for.
+struct StoredReader<F> {
+    read: F,
+    unreadable: Vec<String>,
+}
+impl<F: Fn(&str) -> Result<Option<StoredValue>, String>> StoredReader<F> {
+    /// The value, or None when it is absent or empty text; one that cannot be
+    /// read at all is noted.
+    fn value(&mut self, name: &str) -> Option<StoredValue> {
+        match (self.read)(name) {
+            Ok(Some(StoredValue::Text(text))) if text.trim().is_empty() => None,
+            Ok(Some(StoredValue::Text(text))) => Some(StoredValue::Text(text.trim().to_string())),
+            Ok(value) => value,
+            Err(_) => {
+                self.unreadable.push(name.to_string());
+                None
+            }
+        }
+    }
+    fn text(&mut self, name: &str, into: &mut String) {
+        match self.value(name) {
+            Some(StoredValue::Text(text)) => *into = text,
+            Some(StoredValue::Number(number)) => *into = number.to_string(),
+            None => {}
+        }
+    }
+    fn number(&mut self, name: &str, into: &mut u16) {
+        let read = match self.value(name) {
+            Some(StoredValue::Number(number)) => u16::try_from(number).ok(),
+            Some(StoredValue::Text(text)) => text.parse().ok(),
+            None => return,
+        };
+        match read {
+            Some(number) => *into = number,
+            None => self.unreadable.push(name.to_string()),
+        }
+    }
+    fn signed(&mut self, name: &str, into: &mut i32) {
+        let read = match self.value(name) {
+            Some(StoredValue::Number(number)) => Some(number as i32),
+            Some(StoredValue::Text(text)) => text.parse().ok(),
+            None => return,
+        };
+        match read {
+            Some(number) => *into = number,
+            None => self.unreadable.push(name.to_string()),
+        }
+    }
+    fn flag(&mut self, name: &str, into: &mut bool) {
+        let read = match self.value(name) {
+            Some(StoredValue::Number(number)) => Some(number != 0),
+            Some(StoredValue::Text(text)) => match text.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            },
+            None => return,
+        };
+        match read {
+            Some(on) => *into = on,
+            None => self.unreadable.push(name.to_string()),
+        }
     }
 }
 /// What the registrar is asked to call. A SIP URI is taken as written, one
@@ -536,27 +670,24 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     Ok(())
 }
 impl Services {
-    /// Settings come from the JSON document plus the values a policy can set.
+    /// The settings as stored. A value that cannot be read as its setting is
+    /// an error naming it: the phone does not start on a setting that is not
+    /// what someone meant, which is the same rule as for a value out of range.
     pub fn settings(&self) -> Result<Settings, String> {
-        let mut settings = self.store.read_settings::<Settings>()?;
-        settings.read_policy(|key| self.store.read_text(key));
+        let (settings, unreadable) = Settings::read_stored(|name| self.store.read_value(name));
+        if !unreadable.is_empty() {
+            return Err(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]));
+        }
         Ok(settings)
     }
-    /// The policy values own a registry value each, so they are removed from
-    /// the settings document instead of being stored twice. Every value is
-    /// written whatever became of the ones before it, so that one value that
-    /// cannot be written does not keep the rest from landing; the first
-    /// failure is the one reported.
+    /// Writes every setting to its own value. Each is written whatever
+    /// became of the ones before it, so that one value that cannot be written
+    /// does not keep the rest from landing; the first failure is the one
+    /// reported.
     pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
-        let mut document = serde_json::to_value(settings).map_err(|e| e.to_string())?;
-        if let Some(fields) = document.as_object_mut() {
-            for key in Settings::POLICY_DOCUMENT_KEYS {
-                fields.remove(key);
-            }
-        }
-        let mut first = self.store.write_settings(&document).err();
-        for (key, value) in settings.policy_values() {
-            if let Err(e) = self.store.write_text(&key, &value) {
+        let mut first = None;
+        for (name, value) in settings.stored_values() {
+            if let Err(e) = self.store.write_value(&name, &value) {
                 first.get_or_insert(e);
             }
         }
@@ -574,7 +705,7 @@ impl Services {
         Ok(previous.password)
     }
     /// Writes the account and the settings, or leaves the store as it was.
-    /// Both are several registry values and a credential written one by one,
+    /// Both are many registry values and a credential written one by one,
     /// so a failure part way through would leave old and new mixed. What is
     /// there is read first as stored (a value that was absent stays absent),
     /// and after a failure every piece is put back on its own, so that one
@@ -590,11 +721,10 @@ impl Services {
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
         let marked_before = !self.store.read_text(SAVE_MARK).is_empty();
         let old_account = self.store.read_account()?;
-        let old_document = self.store.read_settings::<serde_json::Value>()?;
-        let mut old_policy = Vec::new();
-        for (key, _) in settings.policy_values() {
-            let value = self.store.read_text_raw(&key)?;
-            old_policy.push((key, value));
+        let mut old_values = Vec::new();
+        for (name, _) in settings.stored_values() {
+            let value = self.store.read_value(&name)?;
+            old_values.push((name, value));
         }
         self.store.write_text(SAVE_MARK, "1")?;
         let written = self.store.write_account(account).and_then(|()| self.save_settings(settings));
@@ -602,7 +732,7 @@ impl Services {
             // Saved whole: the mark goes. If it cannot go, the next start
             // would refuse to connect on values that are in fact whole, so
             // the person is asked to save again, which clears it.
-            return self.store.delete_text(SAVE_MARK).map_err(|e| message_with("ACCOUNT_ROLLBACK_FAILED", [e]));
+            return self.store.delete_value(SAVE_MARK).map_err(|e| message_with("ACCOUNT_ROLLBACK_FAILED", [e]));
         };
         let mut failures = Vec::new();
         failures.extend(
@@ -612,18 +742,11 @@ impl Services {
             }
             .err(),
         );
-        failures.extend(
-            match &old_document {
-                serde_json::Value::Null => self.store.delete_text("Settings"),
-                document => self.store.write_settings(document),
-            }
-            .err(),
-        );
-        for (key, value) in &old_policy {
+        for (name, value) in &old_values {
             failures.extend(
                 match value {
-                    Some(value) => self.store.write_text(key, value),
-                    None => self.store.delete_text(key),
+                    Some(value) => self.store.write_value(name, value),
+                    None => self.store.delete_value(name),
                 }
                 .err(),
             );
@@ -631,7 +754,7 @@ impl Services {
         if failures.is_empty() && !marked_before {
             // Put back whole, to values that were whole: the mark goes, with
             // the same proviso as above.
-            failures.extend(self.store.delete_text(SAVE_MARK).err());
+            failures.extend(self.store.delete_value(SAVE_MARK).err());
         }
         Err(if failures.is_empty() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) })
     }
@@ -733,8 +856,14 @@ mod tests {
         assert_eq!(validate(&with("tls", "srtp")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
         assert_eq!(validate(&with("tls", "srtp-mand")), Err(message("SETTINGS_MEDIA_ENCRYPTION_INVALID")));
         // Policy text is normalised on the way in, so "TLS" and " sdes " are the known values.
-        let mut policy = Settings::default();
-        policy.read_policy(|key| match key { "transport" => " TLS ".into(), "media_encryption" => "SDES".into(), _ => String::new() });
+        let (policy, unreadable) = Settings::read_stored(|key| {
+            Ok(match key {
+                "transport" => Some(StoredValue::Text(" TLS ".into())),
+                "media_encryption" => Some(StoredValue::Text("SDES".into())),
+                _ => None,
+            })
+        });
+        assert!(unreadable.is_empty());
         assert_eq!((policy.transport.as_str(), policy.media_encryption.as_str()), ("tls", "sdes"));
         assert!(validate(&policy).is_ok());
     }
@@ -811,10 +940,9 @@ mod tests {
         assert!(validate(&Settings { tray_after_call: -2, ..Settings::default() }).is_err());
         assert!(validate(&Settings { tray_after_call: 3601, ..Settings::default() }).is_err());
         assert!(validate(&with(vec![button("transfer", &format!("sip:{}@pbx", "6".repeat(200)), "")])).is_err());
-        // The policy values round-trip through their registry names.
-        let mut read_back = Settings::default();
-        let stored: std::collections::HashMap<String, String> = ok.policy_values().into_iter().collect();
-        read_back.read_policy(|key| stored.get(key).cloned().unwrap_or_default());
+        // The buttons round-trip through their registry names.
+        let stored: std::collections::HashMap<String, StoredValue> = ok.stored_values().into_iter().collect();
+        let (read_back, _) = Settings::read_stored(|key| Ok(stored.get(key).cloned()));
         assert_eq!(read_back.buttons[..3], ok.buttons[..3]);
         assert!(read_back.buttons[3..].iter().all(|b| !b.configured()));
     }
@@ -831,11 +959,19 @@ mod tests {
         assert!(validate(&s).is_err(), "a codec the app does not have is refused");
     }
     #[test]
-    fn settings_migrate_and_auto_record_selects_active_line() {
-        let settings: Settings = serde_json::from_str(
-            r#"{"sip_port":5060,"rtp_port":10000,"microphone":"default","speaker":"default","aec":true}"#,
-        )
-        .unwrap();
+    fn settings_absent_from_the_registry_keep_their_defaults_and_auto_record_selects_active_line() {
+        // A store that holds a few values: the rest are their defaults.
+        let (settings, unreadable) = Settings::read_stored(|key| {
+            Ok(match key {
+                "sip_port" => Some(StoredValue::Number(5060)),
+                "microphone" => Some(StoredValue::Text("default".into())),
+                "aec" => Some(StoredValue::Number(1)),
+                // Empty text is the same as no value.
+                "noise_suppression" => Some(StoredValue::Text("  ".into())),
+                _ => None,
+            })
+        });
+        assert!(unreadable.is_empty());
         assert_eq!(settings.microphone_gain, 100);
         assert_eq!(settings.speaker_gain, 100);
         assert_eq!(settings.aec_delay_ms, 20);
@@ -879,6 +1015,87 @@ mod tests {
             Some("active")
         );
         assert!(automatic_recording_target(false, &calls).is_none());
+    }
+    #[test]
+    fn every_setting_round_trips_through_its_own_value() {
+        let changed = Settings {
+            network_adapter: "{00000000-0000-0000-0000-000000000001}".into(),
+            sip_port: 5070,
+            rtp_port: 12000,
+            microphone: "{mic}".into(),
+            speaker: "{spk}".into(),
+            microphone_gain: 150,
+            speaker_gain: 120,
+            auto_record: true,
+            buttons: {
+                let mut buttons = CustomButton::empty_set();
+                buttons[29] = CustomButton { title: "Last".into(), kind: "dial".into(), number: "701".into(), transfer: String::new(), pickup: "*8701".into() };
+                buttons
+            },
+            transport: "tls".into(),
+            ca_file: r"C:\ca.pem".into(),
+            media_encryption: "sdes".into(),
+            codecs: "PCMU,opus".into(),
+            auto_answer: true,
+            aec: false,
+            aec_delay_ms: 40,
+            high_pass: false,
+            noise_suppression: "low".into(),
+            agc: true,
+            register_interval: 600,
+            detail_log: true,
+            browser_integration: true,
+            browser_dial_confirm: false,
+            shortcut_window: "SHIFT+F2".into(),
+            shortcut_call: "SHIFT+F3".into(),
+            incoming_action: "notify".into(),
+            tray_after_call: -1,
+            language: "en".into(),
+            sound_ring: r"C:\ring.wav".into(),
+            sound_ringback: r"C:\back.wav".into(),
+            sound_busy: r"C:\busy.wav".into(),
+            sound_notfound: r"C:\none.wav".into(),
+            sound_error: r"C:\error.wav".into(),
+        };
+        let stored: std::collections::HashMap<String, StoredValue> = changed.stored_values().into_iter().collect();
+        assert_eq!(stored.len(), changed.stored_values().len(), "no value name is used twice");
+        let asked = std::cell::RefCell::new(std::collections::HashSet::new());
+        let (read_back, unreadable) = Settings::read_stored(|key| {
+            asked.borrow_mut().insert(key.to_string());
+            Ok(stored.get(key).cloned())
+        });
+        assert!(unreadable.is_empty());
+        assert_eq!(serde_json::to_value(&read_back).unwrap(), serde_json::to_value(&changed).unwrap(), "every setting comes back");
+        let written: std::collections::HashSet<String> = stored.keys().cloned().collect();
+        assert_eq!(*asked.borrow(), written, "what is written is exactly what is read");
+        // The types: numbers and switches as numbers, -1 in two's complement.
+        assert_eq!(stored["tray_after_call"], StoredValue::Number(u32::MAX));
+        assert_eq!(stored["aec"], StoredValue::Number(0));
+        assert_eq!(stored["sip_port"], StoredValue::Number(5070));
+        assert_eq!(stored["language"], StoredValue::Text("en".into()));
+    }
+    #[test]
+    fn a_value_in_the_other_type_is_read_and_one_that_means_nothing_is_named() {
+        let (s, unreadable) = Settings::read_stored(|key| {
+            Ok(match key {
+                // Written by hand as text: still what it says.
+                "sip_port" => Some(StoredValue::Text(" 5080 ".into())),
+                "aec" => Some(StoredValue::Text("Off".into())),
+                "browser_integration" => Some(StoredValue::Text("yes".into())),
+                "tray_after_call" => Some(StoredValue::Text("-1".into())),
+                "language" => Some(StoredValue::Number(7)),
+                // Nothing a setting can be.
+                "rtp_port" => Some(StoredValue::Number(70000)),
+                "agc" => Some(StoredValue::Text("maybe".into())),
+                "register_interval" => Some(StoredValue::Text("often".into())),
+                "detail_log" => return Err(String::from("binary")),
+                _ => None,
+            })
+        });
+        assert_eq!((s.sip_port, s.aec, s.browser_integration, s.tray_after_call), (5080, false, true, -1));
+        assert_eq!(s.language, "7");
+        assert_eq!(unreadable, ["rtp_port", "agc", "register_interval", "detail_log"]);
+        assert_eq!((s.rtp_port, s.agc, s.register_interval), (10000, false, 300), "what cannot be read keeps its default");
     }
     #[test]
     fn a_number_is_reduced_to_what_the_registrar_dials() {
@@ -957,9 +1174,9 @@ mod tests {
             crate::storage::fail_next_write_of("");
             assert!(failed.is_err(), "the injected failure must surface");
             assert!(app.store.read_account()?.is_none(), "no account is left behind");
-            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "put back whole, the save leaves no mark");
-            assert_eq!(app.store.read_text_raw("transport")?, None, "a value that was absent is absent again");
-            assert_eq!(app.store.read_settings::<serde_json::Value>()?, serde_json::Value::Null, "no settings document is left behind");
+            assert_eq!(app.store.read_value(SAVE_MARK)?, None, "put back whole, the save leaves no mark");
+            assert_eq!(app.store.read_value("transport")?, None, "a value that was absent is absent again");
+            assert_eq!(app.store.read_value("aec")?, None, "no setting is left behind");
             // With values stored, a failure that also keeps the rollback of
             // its own value from working still puts the other values back.
             app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
@@ -971,16 +1188,16 @@ mod tests {
             assert_eq!(app.store.read_account()?.expect("account").server, "192.0.2.10", "the account is back");
             assert_eq!(app.settings()?.transport, "udp", "the transport, written before the failure, is back");
             assert_eq!(app.settings()?.codecs, "opus", "the codecs never changed");
-            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, Some("1".into()), "a rollback that failed leaves the mark for the next start");
+            assert_eq!(app.store.read_value(SAVE_MARK)?, Some(StoredValue::Text("1".into())), "a rollback that failed leaves the mark for the next start");
             // With the mark standing, a save that fails before it writes
             // anything (a password too long for the vault) is put back whole,
             // and the mark stays: the values it went back to were suspect already.
             let too_long = Account { password: "x".repeat(1025), ..account("192.0.2.10") };
             assert!(app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &too_long).is_err());
-            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, Some("1".into()), "a rollback does not clear a mark it did not set");
+            assert_eq!(app.store.read_value(SAVE_MARK)?, Some(StoredValue::Text("1".into())), "a rollback does not clear a mark it did not set");
             // A save that goes through whole takes the mark away.
             app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
-            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "a whole save clears the mark");
+            assert_eq!(app.store.read_value(SAVE_MARK)?, None, "a whole save clears the mark");
             Ok(())
         })();
         drop(guard);

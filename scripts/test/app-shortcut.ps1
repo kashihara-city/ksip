@@ -16,12 +16,14 @@ public static class KsipKeys {
 }
 '@
 function Set-Setting([string]$name, $value) {
-    $settings=(Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json
-    $settings | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force
-    Set-ItemProperty -LiteralPath $key -Name 'Settings' -Value ($settings | ConvertTo-Json -Compress)
+    # Each setting is a registry value of its own: a switch or a number as
+    # REG_DWORD, text as REG_SZ, as the app writes them.
+    if($value -is [bool]){Set-ItemProperty -LiteralPath $key -Name $name -Value ([int]$value) -Type DWord}
+    elseif($value -is [int]){Set-ItemProperty -LiteralPath $key -Name $name -Value $value -Type DWord}
+    else{Set-ItemProperty -LiteralPath $key -Name $name -Value ([string]$value) -Type String}
 }
 function Get-Setting([string]$name) {
-    ((Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json).$name
+    (Get-ItemProperty -LiteralPath $key).$name
 }
 function Send-Shortcut([string]$keys) {
     # A global shortcut answers wherever the keys are typed, so they go to

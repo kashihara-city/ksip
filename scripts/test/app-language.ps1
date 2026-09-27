@@ -32,7 +32,7 @@ try {
     Set-Language 2
     Wait-Text 'dial' '^Call$' | Out-Null
     Wait-Text 'settings-button' '^Settings$' | Out-Null
-    if(((Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json).language -ne 'en'){throw 'The language was not stored'}
+    if((Get-ItemProperty -LiteralPath $key).language -ne 'en'){throw 'The language was not stored'}
     'PASS: 英語へ切り替わり、設定にも残る'
 
     Set-Language 3

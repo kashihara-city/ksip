@@ -15,10 +15,8 @@ $address=(Get-NetIPAddress -AddressFamily IPv4 -PrefixOrigin Dhcp,Manual -ErrorA
 if(!$address){throw 'No usable IPv4 address on this machine'}
 $guid=(Get-NetAdapter -InterfaceIndex $address.InterfaceIndex).InterfaceGuid
 function Set-Adapter([string]$value) {
-    # The adapter lives in the settings document, like the other client choices.
-    $settings = (Get-ItemProperty -LiteralPath $key).Settings | ConvertFrom-Json
-    $settings | Add-Member -NotePropertyName 'network_adapter' -NotePropertyValue $value -Force
-    Set-ItemProperty -LiteralPath $key -Name 'Settings' -Value ($settings | ConvertTo-Json -Compress)
+    # The adapter is a registry value of its own, like every setting.
+    Set-ItemProperty -LiteralPath $key -Name 'network_adapter' -Value $value -Type String
 }
 $app=$null
 try {

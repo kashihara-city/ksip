@@ -5,6 +5,16 @@ use std::{io, ptr, slice};
 use windows_sys::Win32::Security::Credentials::*;
 use winreg::{enums::*, RegKey};
 
+/// A value as the registry holds it: text (REG_SZ, or REG_EXPAND_SZ when
+/// read) or a number (REG_DWORD). The app writes numbers and switches as
+/// numbers and the rest as text; a value written by hand or by a policy in
+/// the other type is still read (see Settings::read_stored).
+#[derive(Clone, Debug, PartialEq)]
+pub enum StoredValue {
+    Text(String),
+    Number(u32),
+}
+
 pub const DEFAULT_SERVER: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 5060;
 
@@ -145,21 +155,47 @@ impl Store {
         }
     }
     /// One value as it is stored, or None when there is no such value: what
-    /// a rollback has to put back, absence included.
-    pub fn read_text_raw(&self, name: &str) -> Result<Option<String>, String> {
+    /// the settings are read from, and what a rollback has to put back,
+    /// absence included. A value of a type the app never writes (binary,
+    /// multi-string, QWORD) is an error naming it.
+    pub fn read_value(&self, name: &str) -> Result<Option<StoredValue>, String> {
         let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(&self.key) {
             Ok(key) => key,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.to_string()),
         };
-        match key.get_value::<String, _>(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.to_string()),
+        let raw = match key.get_raw_value(name) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        match raw.vtype {
+            REG_SZ | REG_EXPAND_SZ => key.get_value::<String, _>(name).map(|t| Some(StoredValue::Text(t))).map_err(|e| e.to_string()),
+            REG_DWORD => key.get_value::<u32, _>(name).map(|n| Some(StoredValue::Number(n))).map_err(|e| e.to_string()),
+            _ => Err(message_with("SETTINGS_VALUE_INVALID", [name])),
         }
     }
+    /// Writes one value in its type and reads it back.
+    pub fn write_value(&self, name: &str, value: &StoredValue) -> Result<(), String> {
+        #[cfg(test)]
+        if FAIL_WRITE.with(|fail| fail.borrow().as_deref() == Some(name)) {
+            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
+        }
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey(&self.key)
+            .map_err(|e| e.to_string())?;
+        match value {
+            StoredValue::Text(text) => key.set_value(name, text),
+            StoredValue::Number(number) => key.set_value(name, number),
+        }
+        .map_err(|e| e.to_string())?;
+        if self.read_value(name)?.as_ref() != Some(value) {
+            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
+        }
+        Ok(())
+    }
     /// Removes one value; one that is not there is no error.
-    pub fn delete_text(&self, name: &str) -> Result<(), String> {
+    pub fn delete_value(&self, name: &str) -> Result<(), String> {
         let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(&self.key, KEY_SET_VALUE) {
             Ok(key) => key,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -171,57 +207,17 @@ impl Store {
             Err(e) => Err(e.to_string()),
         }
     }
-    /// Reads one policy value. These sit on their own rather than inside the
-    /// settings document so that a group policy can push them individually.
+    /// One value as text, trimmed, whichever type it is stored in (a number
+    /// reads as its decimal digits); empty when absent or unreadable.
     pub fn read_text(&self, name: &str) -> String {
-        RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey(&self.key)
-            .and_then(|key| key.get_value::<String, _>(name))
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default()
+        match self.read_value(name) {
+            Ok(Some(StoredValue::Text(text))) => text.trim().to_string(),
+            Ok(Some(StoredValue::Number(number))) => number.to_string(),
+            _ => String::new(),
+        }
     }
     pub fn write_text(&self, name: &str, value: &str) -> Result<(), String> {
-        #[cfg(test)]
-        if FAIL_WRITE.with(|fail| fail.borrow().as_deref() == Some(name)) {
-            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
-        }
-        let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
-            .create_subkey(&self.key)
-            .map_err(|e| e.to_string())?;
-        key.set_value(name, &value.to_string())
-            .map_err(|e| e.to_string())?;
-        let actual: String = key.get_value(name).map_err(|e| e.to_string())?;
-        if actual != value {
-            return Err(message_with("STORAGE_VERIFY_FAILED", [name]));
-        }
-        Ok(())
-    }
-    pub fn read_settings<T: serde::de::DeserializeOwned + Default>(&self) -> Result<T, String> {
-        let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(&self.key) {
-            Ok(key) => key,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(T::default()),
-            Err(e) => return Err(e.to_string()),
-        };
-        match key.get_value::<String, _>("Settings") {
-            Ok(text) => {
-                serde_json::from_str(&text).map_err(|_| message("SETTINGS_READ_FAILED"))
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(T::default()),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-    pub fn write_settings<T: Serialize>(&self, settings: &T) -> Result<(), String> {
-        let text = serde_json::to_string(settings).map_err(|e| e.to_string())?;
-        let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
-            .create_subkey(&self.key)
-            .map_err(|e| e.to_string())?;
-        key.set_value("Settings", &text)
-            .map_err(|e| e.to_string())?;
-        let actual: String = key.get_value("Settings").map_err(|e| e.to_string())?;
-        if actual != text {
-            return Err(message("SETTINGS_VERIFY_FAILED"));
-        }
-        Ok(())
+        self.write_value(name, &StoredValue::Text(value.to_string()))
     }
     /// The address comes from the registry and only the sign-in secret from the
     /// vault. Without a stored secret the account counts as unconfigured.
@@ -303,7 +299,7 @@ impl Store {
             return Err(message_with("CREDENTIAL_WRITE_FAILED", [error]));
         }
         self.write_text("server", &account.server)?;
-        self.write_text("port", &account.port.to_string())?;
+        self.write_value("port", &StoredValue::Number(account.port.into()))?;
         self.write_text("extension", &account.extension)?;
         let actual = self
             .read_account()?
@@ -341,9 +337,14 @@ mod tests {
         };
         let result = (|| -> Result<(), String> {
             store.write_account(&account)?;
-            store.write_settings(&serde_json::json!({"aec":true}))?;
-            let general: serde_json::Value = store.read_settings()?;
-            assert_eq!(general, serde_json::json!({"aec":true}));
+            // A value keeps its type, and text is read whichever type it is in.
+            store.write_value("aec", &StoredValue::Number(1))?;
+            assert_eq!(store.read_value("aec")?, Some(StoredValue::Number(1)));
+            assert_eq!(store.read_value("absent")?, None);
+            assert_eq!(store.read_text("port"), "5070", "the port is a number and reads as its digits");
+            store.delete_value("aec")?;
+            assert_eq!(store.read_value("aec")?, None);
+            store.delete_value("aec")?;
             let stored = store.read_account()?.unwrap();
             assert!(stored.password == account.password);
             // The address and the buttons are single values a policy can set.

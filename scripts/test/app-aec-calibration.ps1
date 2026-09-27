@@ -44,7 +44,7 @@ try {
     (Delay-Edit).SetValue('24')
     Click-Id 'save-settings';Wait-Class 'registration' 'reg-register_ok'
     $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\KashiharaCity\ksip\Test\test-ui-ksip')
-    try{$saved=($key.GetValue('Settings')|ConvertFrom-Json).aec_delay_ms}finally{$key.Dispose()}
+    try{$saved=$key.GetValue('aec_delay_ms')}finally{$key.Dispose()}
     if($saved -ne 24){throw "Saved delay is $saved instead of 24"}
     # The engine keeps its profile under the OS temp folder.
     $config=Get-Content (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config') -Raw

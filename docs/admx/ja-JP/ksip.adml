@@ -1,0 +1,1194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>KSIP の設定</displayName>
+  <description>KSIP の利用者ごとの設定（HKCU\Software\KashiharaCity\ksip）。音声デバイス、ネットワークアダプター、内線番号、認証IDとパスワードは端末や利用者ごとに異なるため含めません。</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_KSIP">KSIP（設定を値ごとにレジストリへ保存する版）</string>
+      <string id="Category_KSIP">KSIP</string>
+      <string id="Category_Account">アカウント</string>
+      <string id="Category_Connection">接続</string>
+      <string id="Category_Audio">音声処理</string>
+      <string id="Category_Calls">通話</string>
+      <string id="Category_Browser">ブラウザ連携</string>
+      <string id="Category_Display">表示と操作</string>
+      <string id="Category_Sounds">音</string>
+      <string id="Category_ButtonsPhone">カスタムボタン（電話）</string>
+      <string id="Category_ButtonsPanel">カスタムボタン（パネル）</string>
+      <string id="Category_Diagnostics">障害調査</string>
+      <string id="ButtonKind_0">使わない（ボタンを出さない）</string>
+      <string id="ButtonKind_1">転送</string>
+      <string id="ButtonKind_2">ダイヤル（BLFあり）</string>
+      <string id="ButtonKind_3">ダイヤル（BLFなし）</string>
+      <string id="ButtonKind_4">パーク保留（BLFあり）</string>
+      <string id="ButtonKind_5">リンクを開く</string>
+      <string id="ButtonKind_6">着信拒否</string>
+      <string id="ButtonKind_7">留守番電話</string>
+      <string id="server">SIPサーバー</string>
+      <string id="server_Help">SIPサーバーのホスト名かIPアドレス。半角英数字と . - のみ、253文字以内。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 127.0.0.1）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="port">SIPサーバーのポート</string>
+      <string id="port_Help">SIPサーバーのポート。1〜65535。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 5060）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="transport">SIPの信号の運び方</string>
+      <string id="transport_Help">SIPの信号をUDP・TCP・TLSのどれで運ぶか。TLSでは、「信頼する認証局の証明書」を指定したときはその証明書で、指定しないときはWindowsの「信頼されたルート証明機関」でサーバーを検証します。無効にすると値を消し、KSIP の既定値に戻ります。（既定: UDP）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="transport_0">UDP（暗号化しない）</string>
+      <string id="transport_1">TCP（暗号化しない）</string>
+      <string id="transport_2">TLS</string>
+      <string id="media_encryption">音声の暗号化</string>
+      <string id="media_encryption_Help">通話音声の暗号化。SDES と OSRTP は鍵を信号に載せるため、「SIPの信号の運び方」が TLS でないと KSIP は接続しません。SDES は暗号化できない相手とは通話せず、OSRTP は相手が鍵を返さなければ平文で通話します。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 暗号化しない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="media_encryption_0">暗号化しない</string>
+      <string id="media_encryption_1">SRTP必須（SDES、RFC 4568）</string>
+      <string id="media_encryption_2">SRTPを試す（OSRTP、RFC 8643）</string>
+      <string id="media_encryption_3">SRTP（DTLS-SRTP）</string>
+      <string id="ca_file">信頼する認証局の証明書</string>
+      <string id="ca_file_Help">TLSでサーバーを検証する認証局の証明書（PEM）のパス。400文字以内。無効にすると値を消し、KSIP の既定値に戻ります。（既定: Windowsの証明書ストアで検証）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="codecs">音声コーデックと順位</string>
+      <string id="codecs_Help">提示する音声コーデックを順にカンマ区切りで並べます。opus、G722、PCMU、PCMA から選び、書かないものは使いません。名前の重複と知らない名前があると KSIP は接続しません。例: PCMU,opus。無効にすると値を消し、KSIP の既定値に戻ります。（既定: opus,G722,PCMU,PCMA）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sip_port">ローカルSIPポート</string>
+      <string id="sip_port_Help">KSIPがSIPを待ち受けるポート。1024〜65535。RTPのポート範囲と重なると接続しません。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 5060）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="rtp_port">RTP開始ポート</string>
+      <string id="rtp_port_Help">音声(RTP)に使う最初のポート。1024〜65400の偶数で、そこから20ポートを使います。奇数とSIPポートとの重なりは接続時に拒否します。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 10000）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="register_interval">登録の更新周期</string>
+      <string id="register_interval_Help">SIPサーバーへの登録（REGISTER）を更新する周期（秒）。30〜3600。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 300）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="aec">エコーキャンセル</string>
+      <string id="aec_Help">WebRTC のエコーキャンセル（AEC3）を使うか。有効で使い、無効で使いません。（既定: 使う）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="aec_delay_ms">エコーキャンセルの遅延ヒント</string>
+      <string id="aec_delay_ms_Help">エコーキャンセルに渡す遅延の目安（ミリ秒）。0〜500。音声デバイスが実測値を返すときはそちらを使います。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 20）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="high_pass">ハイパスフィルター</string>
+      <string id="high_pass_Help">低域を切るハイパスフィルターを使うか。（既定: 使う）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="noise_suppression">ノイズ抑制</string>
+      <string id="noise_suppression_Help">ノイズ抑制の強さ。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 強）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="noise_suppression_0">オフ</string>
+      <string id="noise_suppression_1">弱</string>
+      <string id="noise_suppression_2">中</string>
+      <string id="noise_suppression_3">強</string>
+      <string id="noise_suppression_4">最強</string>
+      <string id="agc">自動利得調整</string>
+      <string id="agc_Help">WebRTC AGC2 のデジタル利得で声の大きさをそろえるか。マイクの音量そのものは変えません。静かな部屋の雑音も持ち上げるため、既定では使いません。（既定: 使わない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="microphone_gain">マイクのソフト増幅</string>
+      <string id="microphone_gain_Help">マイクの音をソフトウェアで増幅する率（%）。100〜200。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 100、増幅しない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="speaker_gain">スピーカーのソフト増幅</string>
+      <string id="speaker_gain_Help">スピーカーの音をソフトウェアで増幅する率（%）。100〜200。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 100、増幅しない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="auto_record">自動録音</string>
+      <string id="auto_record_Help">通話が始まったら自動で録音するか。録音は利用者ごとの %LocalAppData%\KashiharaCity\ksip\recordings に MP3 で残ります。（既定: 録音しない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="auto_answer">自動応答</string>
+      <string id="auto_answer_Help">着信に即座に応答するか。動作確認用です。（既定: 応答しない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="incoming_action">タスクトレイにいるときの着信</string>
+      <string id="incoming_action_Help">ウィンドウがタスクトレイにあるときの着信で、ウィンドウを出すか、タスクバーへ通知するか。無効にすると値を消し、KSIP の既定値に戻ります。（既定: ウィンドウを出す）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="incoming_action_0">ウィンドウを出す</string>
+      <string id="incoming_action_1">タスクバーへ通知する</string>
+      <string id="tray_after_call">通話後にタスクトレイへしまう</string>
+      <string id="tray_after_call_Help">通話がすべて終わってから、ウィンドウをタスクトレイへしまうまでの秒数。0〜3600。その間に着信や発信があれば取りやめます。無効にすると値を消し、しまいません（既定）。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="browser_integration">ksip: リンクを受け付ける</string>
+      <string id="browser_integration_Help">ブラウザーの ksip: リンク（発信・応答・切断）を受け付けるか。有効にすると起動時に HKCU\Software\Classes\ksip へ登録し、無効にすると登録を消します。（既定: 受け付けない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="browser_dial_confirm">リンクからの発信を確認する</string>
+      <string id="browser_dial_confirm_Help">ksip: リンクから発信する前に確認を求めるか。（既定: 確認する）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="language">画面の言語</string>
+      <string id="language_Help">画面の言語。Windowsに合わせる場合、対応していない言語では日本語になります。無効にすると値を消し、KSIP の既定値に戻ります。（既定: Windowsに合わせる）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="language_0">Windowsの表示言語に合わせる</string>
+      <string id="language_1">日本語</string>
+      <string id="language_2">英語</string>
+      <string id="language_3">繁体字中国語</string>
+      <string id="shortcut_window">ウィンドウを出す・しまうキー</string>
+      <string id="shortcut_window_Help">ウィンドウを出す・しまうグローバルショートカット。SHIFT+F2 のように修飾キーとキーを + で区切ります。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 使わない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="shortcut_call">電話に出る・切るキー</string>
+      <string id="shortcut_call_Help">電話に出る・切るグローバルショートカット。書き方は「ウィンドウを出す・しまうキー」と同じ。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 使わない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sound_ring">着信音のWAV</string>
+      <string id="sound_ring_Help">着信音に使うWAVファイルのパス。400文字以内。読めないときは内蔵音を鳴らします。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 内蔵音）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sound_ringback">呼出音のWAV</string>
+      <string id="sound_ringback_Help">呼出音に使うWAVファイルのパス。400文字以内。通話用の再生経路を通るため、48 kHz モノラルのWAVに限ります。読めないときは内蔵音を鳴らします。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 内蔵音）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sound_busy">話中音のWAV</string>
+      <string id="sound_busy_Help">話中音に使うWAVファイルのパス。400文字以内。読めないときは内蔵音を鳴らします。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 内蔵音）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sound_notfound">宛先なしの音のWAV</string>
+      <string id="sound_notfound_Help">宛先なしの音に使うWAVファイルのパス。400文字以内。読めないときは内蔵音を鳴らします。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 内蔵音）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="sound_error">エラー音のWAV</string>
+      <string id="sound_error_Help">エラー音に使うWAVファイルのパス。400文字以内。読めないときは内蔵音を鳴らします。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 内蔵音）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="detail_log">詳細ログ</string>
+      <string id="detail_log_Help">障害調査用の詳細をログへ出すか。SIPメッセージ全文（認証ヘッダーは伏せ字）、baresipのデバッグ行、WebRTC音声処理の情報行が増えます。（既定: 出さない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_1">ボタン 1</string>
+      <string id="button_1_Help">カスタムボタン 1 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_2">ボタン 2</string>
+      <string id="button_2_Help">カスタムボタン 2 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_3">ボタン 3</string>
+      <string id="button_3_Help">カスタムボタン 3 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_4">ボタン 4</string>
+      <string id="button_4_Help">カスタムボタン 4 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_5">ボタン 5</string>
+      <string id="button_5_Help">カスタムボタン 5 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_6">ボタン 6</string>
+      <string id="button_6_Help">カスタムボタン 6 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_7">ボタン 7</string>
+      <string id="button_7_Help">カスタムボタン 7 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_8">ボタン 8</string>
+      <string id="button_8_Help">カスタムボタン 8 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_9">ボタン 9</string>
+      <string id="button_9_Help">カスタムボタン 9 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_10">ボタン 10</string>
+      <string id="button_10_Help">カスタムボタン 10 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_11">ボタン 11</string>
+      <string id="button_11_Help">カスタムボタン 11 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_12">ボタン 12</string>
+      <string id="button_12_Help">カスタムボタン 12 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_13">ボタン 13</string>
+      <string id="button_13_Help">カスタムボタン 13 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_14">ボタン 14</string>
+      <string id="button_14_Help">カスタムボタン 14 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_15">ボタン 15</string>
+      <string id="button_15_Help">カスタムボタン 15 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_16">ボタン 16</string>
+      <string id="button_16_Help">カスタムボタン 16 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_17">ボタン 17</string>
+      <string id="button_17_Help">カスタムボタン 17 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_18">ボタン 18</string>
+      <string id="button_18_Help">カスタムボタン 18 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_19">ボタン 19</string>
+      <string id="button_19_Help">カスタムボタン 19 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_20">ボタン 20</string>
+      <string id="button_20_Help">カスタムボタン 20 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_21">ボタン 21</string>
+      <string id="button_21_Help">カスタムボタン 21 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_22">ボタン 22</string>
+      <string id="button_22_Help">カスタムボタン 22 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_23">ボタン 23</string>
+      <string id="button_23_Help">カスタムボタン 23 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_24">ボタン 24</string>
+      <string id="button_24_Help">カスタムボタン 24 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_25">ボタン 25</string>
+      <string id="button_25_Help">カスタムボタン 25 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_26">ボタン 26</string>
+      <string id="button_26_Help">カスタムボタン 26 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_27">ボタン 27</string>
+      <string id="button_27_Help">カスタムボタン 27 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_28">ボタン 28</string>
+      <string id="button_28_Help">カスタムボタン 28 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_29">ボタン 29</string>
+      <string id="button_29_Help">カスタムボタン 29 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="button_30">ボタン 30</string>
+      <string id="button_30_Help">カスタムボタン 30 の設定。有効にすると5つの値（タイトル・機能・番号・転送先・使用中の発信先）を書き、無効にすると5つとも消してボタンを出しません。
+
+タイトル: 40文字以内。空なら番号を出します（着信拒否・留守番電話は表示言語の名前）。
+機能: 転送・ダイヤル（BLFあり）・ダイヤル（BLFなし）・パーク保留（BLFあり）・リンクを開く・着信拒否・留守番電話。
+番号: 数字と * #（先頭に + も可）で30文字以内、または sip: で始まるSIP URI。ダイヤル（BLFなし）では - . ( ) と空白の区切りと tel: も可。リンクを開くでは http:// か https:// のURL。着信拒否では空。
+転送先: パーク保留のとき、番号が空いているときに通話中の相手を転送する先。空なら番号へ。
+使用中の発信先: ダイヤルとパーク保留のとき、番号が使用中のときに発信する先（ピックアップ番号など）。空なら番号へ。
+
+同じ番号を2つのボタンでBLF監視することはできません。値が正しくないと KSIP は接続しません。ボタン1〜6は電話の下に、7〜30は電話の横のパネルに出ます。
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="server">
+        <textBox refId="server">
+          <label>サーバー</label>
+        </textBox>
+      </presentation>
+      <presentation id="port">
+        <decimalTextBox refId="port" defaultValue="5060" spinStep="1">ポート</decimalTextBox>
+      </presentation>
+      <presentation id="transport">
+        <dropdownList refId="transport" noSort="true" defaultItem="0">SIPの信号の運び方</dropdownList>
+      </presentation>
+      <presentation id="media_encryption">
+        <dropdownList refId="media_encryption" noSort="true" defaultItem="0">音声の暗号化</dropdownList>
+      </presentation>
+      <presentation id="ca_file">
+        <textBox refId="ca_file">
+          <label>証明書のパス</label>
+        </textBox>
+      </presentation>
+      <presentation id="codecs">
+        <textBox refId="codecs">
+          <label>コーデック</label>
+        </textBox>
+      </presentation>
+      <presentation id="sip_port">
+        <decimalTextBox refId="sip_port" defaultValue="5060" spinStep="1">ポート</decimalTextBox>
+      </presentation>
+      <presentation id="rtp_port">
+        <decimalTextBox refId="rtp_port" defaultValue="10000" spinStep="1">開始ポート</decimalTextBox>
+      </presentation>
+      <presentation id="register_interval">
+        <decimalTextBox refId="register_interval" defaultValue="300" spinStep="1">秒</decimalTextBox>
+      </presentation>
+      <presentation id="aec_delay_ms">
+        <decimalTextBox refId="aec_delay_ms" defaultValue="20" spinStep="1">ミリ秒</decimalTextBox>
+      </presentation>
+      <presentation id="noise_suppression">
+        <dropdownList refId="noise_suppression" noSort="true" defaultItem="3">ノイズ抑制</dropdownList>
+      </presentation>
+      <presentation id="microphone_gain">
+        <decimalTextBox refId="microphone_gain" defaultValue="100" spinStep="1">%</decimalTextBox>
+      </presentation>
+      <presentation id="speaker_gain">
+        <decimalTextBox refId="speaker_gain" defaultValue="100" spinStep="1">%</decimalTextBox>
+      </presentation>
+      <presentation id="incoming_action">
+        <dropdownList refId="incoming_action" noSort="true" defaultItem="0">タスクトレイにいるときの着信</dropdownList>
+      </presentation>
+      <presentation id="tray_after_call">
+        <decimalTextBox refId="tray_after_call" defaultValue="10" spinStep="1">秒</decimalTextBox>
+      </presentation>
+      <presentation id="language">
+        <dropdownList refId="language" noSort="true" defaultItem="0">画面の言語</dropdownList>
+      </presentation>
+      <presentation id="shortcut_window">
+        <textBox refId="shortcut_window">
+          <label>キー</label>
+        </textBox>
+      </presentation>
+      <presentation id="shortcut_call">
+        <textBox refId="shortcut_call">
+          <label>キー</label>
+        </textBox>
+      </presentation>
+      <presentation id="sound_ring">
+        <textBox refId="sound_ring">
+          <label>パス</label>
+        </textBox>
+      </presentation>
+      <presentation id="sound_ringback">
+        <textBox refId="sound_ringback">
+          <label>パス</label>
+        </textBox>
+      </presentation>
+      <presentation id="sound_busy">
+        <textBox refId="sound_busy">
+          <label>パス</label>
+        </textBox>
+      </presentation>
+      <presentation id="sound_notfound">
+        <textBox refId="sound_notfound">
+          <label>パス</label>
+        </textBox>
+      </presentation>
+      <presentation id="sound_error">
+        <textBox refId="sound_error">
+          <label>パス</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_1">
+        <textBox refId="button_1_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_1_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_1_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_1_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_1_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_2">
+        <textBox refId="button_2_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_2_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_2_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_2_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_2_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_3">
+        <textBox refId="button_3_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_3_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_3_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_3_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_3_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_4">
+        <textBox refId="button_4_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_4_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_4_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_4_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_4_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_5">
+        <textBox refId="button_5_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_5_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_5_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_5_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_5_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_6">
+        <textBox refId="button_6_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_6_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_6_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_6_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_6_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_7">
+        <textBox refId="button_7_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_7_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_7_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_7_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_7_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_8">
+        <textBox refId="button_8_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_8_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_8_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_8_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_8_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_9">
+        <textBox refId="button_9_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_9_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_9_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_9_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_9_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_10">
+        <textBox refId="button_10_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_10_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_10_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_10_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_10_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_11">
+        <textBox refId="button_11_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_11_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_11_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_11_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_11_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_12">
+        <textBox refId="button_12_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_12_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_12_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_12_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_12_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_13">
+        <textBox refId="button_13_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_13_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_13_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_13_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_13_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_14">
+        <textBox refId="button_14_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_14_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_14_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_14_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_14_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_15">
+        <textBox refId="button_15_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_15_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_15_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_15_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_15_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_16">
+        <textBox refId="button_16_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_16_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_16_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_16_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_16_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_17">
+        <textBox refId="button_17_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_17_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_17_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_17_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_17_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_18">
+        <textBox refId="button_18_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_18_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_18_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_18_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_18_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_19">
+        <textBox refId="button_19_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_19_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_19_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_19_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_19_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_20">
+        <textBox refId="button_20_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_20_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_20_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_20_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_20_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_21">
+        <textBox refId="button_21_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_21_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_21_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_21_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_21_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_22">
+        <textBox refId="button_22_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_22_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_22_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_22_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_22_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_23">
+        <textBox refId="button_23_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_23_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_23_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_23_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_23_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_24">
+        <textBox refId="button_24_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_24_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_24_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_24_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_24_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_25">
+        <textBox refId="button_25_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_25_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_25_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_25_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_25_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_26">
+        <textBox refId="button_26_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_26_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_26_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_26_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_26_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_27">
+        <textBox refId="button_27_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_27_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_27_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_27_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_27_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_28">
+        <textBox refId="button_28_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_28_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_28_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_28_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_28_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_29">
+        <textBox refId="button_29_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_29_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_29_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_29_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_29_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_30">
+        <textBox refId="button_30_title">
+          <label>タイトル</label>
+        </textBox>
+        <dropdownList refId="button_30_kind" noSort="true" defaultItem="0">機能</dropdownList>
+        <textBox refId="button_30_number">
+          <label>番号</label>
+        </textBox>
+        <textBox refId="button_30_transfer">
+          <label>転送先（パーク保留）</label>
+        </textBox>
+        <textBox refId="button_30_pickup">
+          <label>使用中の発信先（ダイヤル・パーク保留）</label>
+        </textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

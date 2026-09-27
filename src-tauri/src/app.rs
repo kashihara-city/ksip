@@ -193,11 +193,16 @@ impl Services {
         let store = Store::new();
         let data = data_dir(&store);
         let mut logs = Logs::open(&data);
-        let loaded = store.read_settings::<Settings>();
-        let mut startup_error = loaded.as_ref().err().cloned().unwrap_or_default();
-        let mut settings = loaded.unwrap_or_default();
-        // The policy values live outside the document, also on the first snapshot.
-        settings.read_policy(|key| store.read_text(key));
+        // Earlier versions kept most settings as one JSON document in the value
+        // `Settings`. It is not read any more, only removed: every setting now
+        // has a value of its own.
+        let _ = store.delete_value("Settings");
+        let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
+        let mut startup_error = if unreadable.is_empty() {
+            String::new()
+        } else {
+            message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")])
+        };
         logs.set_detail(settings.detail_log);
         let account = match store.read_account() {
             Ok(Some(a)) => a.public(),

@@ -14,7 +14,7 @@ def selected_audio():
     delay = 100
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\KashiharaCity\ksip") as key:
-            delay = int(json.loads(winreg.QueryValueEx(key, "Settings")[0]).get("aec_delay_ms", delay))
+            delay = int(winreg.QueryValueEx(key, "aec_delay_ms")[0])
     except OSError:
         pass
     return "default", "default", delay
