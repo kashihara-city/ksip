@@ -28,7 +28,7 @@ use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
 use crate::phone_state::{automatic_recording_target, MaintenanceRefused, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
-use crate::settings::{dial_target, validate, CustomButton, Settings, SAVE_MARK};
+use crate::settings::{connect_prerequisites, dial_target, validate, CustomButton, Settings, SAVE_MARK};
 use crate::storage::Account;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -1005,17 +1005,9 @@ impl Phone {
         // automatic reason that checked first; either way the phone is wanted
         // registered from here on.
         self.view.unregistered_by_choice = false;
-        let mut account = self
-            .services
-            .store
-            .read_account()?
-            .ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
-        account.validate()?;
-        let settings = self.services.settings()?;
-        // What is stored may not have passed through the dialog (a policy, a
-        // hand-edited registry, an older version's values), so it is checked
-        // here as well before the engine is started with it.
-        validate(&settings)?;
+        // The same check the export reports on: the mark again, the
+        // credential, the account, and the settings read and checked.
+        let (account, settings) = connect_prerequisites(&self.services.store)?;
         // The engine takes thirty comma-separated numbers to watch, empty ones included.
         let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
         watched.resize(CustomButton::COUNT, String::new());

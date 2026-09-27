@@ -5,7 +5,7 @@
 use crate::app::Services;
 use crate::logs::LOG_APP;
 use crate::message::{message, message_with};
-use crate::storage::{Account, Store, StoredValue, ACCOUNT_VALUES, DEFAULT_PORT, DEFAULT_SERVER};
+use crate::storage::{Account, Store, StoredValue, ACCOUNT_VALUES};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -267,7 +267,7 @@ impl Settings {
     /// The five values of each custom button: `button_1_title` to
     /// `button_30_pickup`. 1 to 6 sit on the phone, 7 to 30 in the panel
     /// beside it.
-    const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
+    pub const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
     /// Every setting as the registry holds it: its value name (the field's
     /// name) and its value. Numbers and switches are REG_DWORD (a switch 1
     /// or 0; `tray_after_call`'s -1 as 0xFFFFFFFF), the rest REG_SZ. The
@@ -452,21 +452,69 @@ impl Settings {
         ]
     }
 }
-/// What KSIP makes of the settings in `store`, as a JSON document: the
-/// settings as it reads them (defaults filled in, names normalised), the
-/// account's registry values and whether a credential is there (never the
-/// password), the values it could not read, whether the settings pass the
-/// checks a connect makes, and every value as KSIP would write it back (name,
-/// registry type, value). For diagnosis, and for the tests that hold the
-/// policy templates against what the app reads.
+/// The settings as stored: a value that cannot be read as its setting is an
+/// error naming it, the same rule as for a value out of range.
+pub fn stored_settings(store: &Store) -> Result<Settings, String> {
+    let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
+    if !unreadable.is_empty() {
+        return Err(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]));
+    }
+    Ok(settings)
+}
+/// Everything a connect needs before it starts the engine, checked in the
+/// order a connect checks it: a save that did not finish, a credential, an
+/// account that SIP takes, settings that can be read and pass. The connect
+/// (prepare_restart) and the export both come here, so that what the export
+/// calls valid is what a connect would go ahead with.
+pub fn connect_prerequisites(store: &Store) -> Result<(Account, Settings), String> {
+    if !store.read_text(SAVE_MARK).is_empty() {
+        return Err(message("SETTINGS_SAVE_INTERRUPTED"));
+    }
+    let mut account = store.read_account()?.ok_or(message("SIP_ACCOUNT_REQUIRED"))?;
+    account.validate()?;
+    let settings = stored_settings(store)?;
+    // What is stored may not have passed through the dialog (a policy, a
+    // hand-edited registry, an older version's values), so it is checked
+    // here as well before the engine is started with it.
+    validate(&settings)?;
+    Ok((account, settings))
+}
+/// What KSIP makes of the settings in `store`, as a JSON document:
+/// - `settings`: the settings as it reads them (defaults filled in, names
+///   normalised); `account`: the registry's server, port and extension as a
+///   connect reads them, and whether a credential is there (never the
+///   password), or why the credential could not be read;
+/// - `unreadable`: the values it could not read as what they are for,
+///   settings and account alike;
+/// - `save_complete`: no save was left unfinished;
+/// - `settings_valid`/`settings_error`: the settings read and pass their
+///   checks; `account_valid`/`account_error`: the server, port and extension
+///   pass theirs (the credential aside, so that a profile nobody signed in
+///   to can still be checked);
+/// - `valid`/`error`: what a connect would decide, from the same check the
+///   connect makes (connect_prerequisites);
+/// - `stored`: every value as KSIP would write it back (name, registry type,
+///   value).
+///
+/// For diagnosis, for importing into another machine's dialog, and for the
+/// tests that hold the policy templates against what the app reads.
 pub fn export_settings(store: &Store) -> serde_json::Value {
     use serde_json::json;
-    let (settings, unreadable) = Settings::read_stored(|name| store.read_value(name));
-    let error = if unreadable.is_empty() {
+    let (settings, mut unreadable) = Settings::read_stored(|name| store.read_value(name));
+    let settings_error = if unreadable.is_empty() {
         validate(&settings).err()
     } else {
         Some(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]))
     };
+    let ((server, port, extension), account_unreadable) = store.account_values();
+    let account_error = if account_unreadable.is_empty() {
+        Account { server: server.clone(), port, extension: extension.clone(), ..Account::default() }.validate_address().err()
+    } else {
+        Some(message_with("SETTINGS_VALUE_INVALID", [account_unreadable.join(", ")]))
+    };
+    unreadable.extend(account_unreadable);
+    let credential = store.read_secret();
+    let connect = connect_prerequisites(store).err();
     let stored: serde_json::Map<String, serde_json::Value> = settings
         .stored_values()
         .into_iter()
@@ -478,23 +526,119 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
             (name, value)
         })
         .collect();
-    // The account as read_account reads it, whether or not anyone has signed in.
-    let server = store.read_text("server");
     let account = json!({
-        "server": if server.is_empty() { DEFAULT_SERVER.to_string() } else { server },
-        "port": store.read_text("port").parse::<u16>().unwrap_or(DEFAULT_PORT),
-        "extension": store.read_text("extension"),
-        "signed_in": store.read_secret().ok().flatten().is_some(),
+        "server": server,
+        "port": port,
+        "extension": extension,
+        "signed_in": matches!(credential, Ok(Some(_))),
+        "credential_error": credential.err().unwrap_or_default(),
     });
     json!({
         "format": 1,
         "settings": settings,
         "account": account,
         "unreadable": unreadable,
-        "valid": error.is_none(),
-        "error": error.unwrap_or_default(),
+        "save_complete": store.read_text(SAVE_MARK).is_empty(),
+        "settings_valid": settings_error.is_none(),
+        "settings_error": settings_error.unwrap_or_default(),
+        "account_valid": account_error.is_none(),
+        "account_error": account_error.unwrap_or_default(),
+        "valid": connect.is_none(),
+        "error": connect.unwrap_or_default(),
         "stored": stored,
     })
+}
+/// The settings a settings file (an export, or a part of one) brings to the
+/// dialog, as the dialog takes them:
+/// - `settings`: the settings fields the file names, each of the type the
+///   field has; the custom buttons as `buttons`, a list of the buttons the
+///   file names (`n`, 1 to 30, and the fields it gives);
+/// - `account`: the server, port and extension the file gives;
+/// - `unreadable`: the names the file names but the machine it came from
+///   could not read (their values there are defaults, not the machine's);
+/// - `invalid`: the names whose value is not of the field's type.
+///
+/// What a file leaves out is not there, so the dialog keeps what it has. The
+/// microphone, the speaker and the network adapter belong to the machine and
+/// are never taken. A file that is not a KSIP settings file (format 1) is refused.
+pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
+    use serde_json::{json, Map, Value};
+    let refused = || message("SETTINGS_IMPORT_FORMAT");
+    let document: Value = serde_json::from_str(text).map_err(|_| refused())?;
+    if document.get("format").and_then(Value::as_u64) != Some(1) {
+        return Err(refused());
+    }
+    let skip: Vec<String> = document["unreadable"]
+        .as_array()
+        .map(|names| names.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let defaults = serde_json::to_value(Settings::default()).map_err(|e| e.to_string())?;
+    let same_type = |a: &Value, b: &Value| match (a, b) {
+        (Value::Bool(_), Value::Bool(_)) | (Value::String(_), Value::String(_)) => true,
+        (Value::Number(want), Value::Number(have)) => want.is_i64() == have.is_i64() || have.is_u64() || have.is_i64(),
+        _ => false,
+    };
+    let mut settings = Map::new();
+    let mut buttons = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut invalid = Vec::new();
+    for (name, value) in document["settings"].as_object().into_iter().flatten() {
+        if matches!(name.as_str(), "microphone" | "speaker" | "network_adapter") {
+            continue;
+        }
+        if name == "buttons" {
+            for (index, button) in value.as_array().into_iter().flatten().enumerate().take(CustomButton::COUNT) {
+                let mut fields = Map::new();
+                fields.insert("n".into(), json!(index + 1));
+                for (field, field_value) in button.as_object().into_iter().flatten() {
+                    let full = format!("button_{}_{field}", index + 1);
+                    if !Settings::BUTTON_FIELDS.contains(&field.as_str()) {
+                        continue;
+                    }
+                    if skip.contains(&full) {
+                        unreadable.push(full);
+                    } else if field_value.is_string() {
+                        fields.insert(field.clone(), field_value.clone());
+                    } else {
+                        invalid.push(full);
+                    }
+                }
+                if fields.len() > 1 {
+                    buttons.push(Value::Object(fields));
+                }
+            }
+            continue;
+        }
+        let Some(default) = defaults.get(name) else {
+            // A name this version does not know is passed over.
+            continue;
+        };
+        if skip.contains(name) {
+            unreadable.push(name.clone());
+        } else if same_type(default, value) && (!value.is_number() || value.as_i64().is_some()) {
+            settings.insert(name.clone(), value.clone());
+        } else {
+            invalid.push(name.clone());
+        }
+    }
+    let mut account = Map::new();
+    for (name, value) in document["account"].as_object().into_iter().flatten() {
+        let fits = match name.as_str() {
+            "server" | "extension" => value.is_string(),
+            "port" => value.as_u64().is_some_and(|p| p <= u16::MAX as u64),
+            _ => continue,
+        };
+        if skip.contains(name) {
+            unreadable.push(name.clone());
+        } else if fits {
+            account.insert(name.clone(), value.clone());
+        } else {
+            invalid.push(name.clone());
+        }
+    }
+    unreadable.sort();
+    invalid.sort();
+    Ok(json!({"settings": settings, "buttons": buttons, "account": account, "unreadable": unreadable, "invalid": invalid}))
 }
 /// `ksip.exe --export-settings <path>`: the export of the store this process
 /// would use (KSIP_TEST_PROFILE chooses a test profile), written to `path` as
@@ -728,15 +872,9 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     Ok(())
 }
 impl Services {
-    /// The settings as stored. A value that cannot be read as its setting is
-    /// an error naming it: the phone does not start on a setting that is not
-    /// what someone meant, which is the same rule as for a value out of range.
+    /// The settings as stored; see stored_settings.
     pub fn settings(&self) -> Result<Settings, String> {
-        let (settings, unreadable) = Settings::read_stored(|name| self.store.read_value(name));
-        if !unreadable.is_empty() {
-            return Err(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]));
-        }
-        Ok(settings)
+        stored_settings(&self.store)
     }
     /// Writes every setting to its own value. Each is written whatever
     /// became of the ones before it, so that one value that cannot be written
@@ -841,13 +979,7 @@ mod tests {
     use super::*;
     use crate::phone_state::{automatic_recording_target, CallInfo};
     use crate::storage::Store;
-    /// The tests that write the store run one at a time: the credential
-    /// vault has been seen to answer a read of one target with "not found"
-    /// while another target was being deleted from a second thread.
-    fn store_tests_one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
-        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
+    use crate::storage::store_tests_one_at_a_time;
     /// A test's own store: named after the test, the process and a count, so
     /// that no two tests share one; emptied before the test, in case an
     /// earlier run left it behind, and after it, even when an assertion fails.
@@ -1340,9 +1472,12 @@ mod tests {
         let store = guard.store();
         let result = (|| -> Result<(), String> {
             let empty = export_settings(&store);
-            assert_eq!(empty["valid"], true, "nothing stored is the defaults, which pass");
+            assert_eq!(empty["settings_valid"], true, "nothing stored is the defaults, which pass");
+            assert_eq!(empty["account_valid"], true);
+            assert_eq!(empty["valid"], false, "but nobody signed in: a connect would not go ahead");
+            assert_eq!(empty["error"], message("SIP_ACCOUNT_REQUIRED"));
             assert_eq!(empty["settings"]["sip_port"], 5060);
-            assert_eq!(empty["account"]["server"], DEFAULT_SERVER);
+            assert_eq!(empty["account"]["server"], crate::storage::DEFAULT_SERVER);
             assert_eq!(empty["account"]["signed_in"], false);
             assert_eq!(empty["stored"]["aec"], serde_json::json!({"type": "REG_DWORD", "value": 1}));
             assert_eq!(empty["stored"]["language"], serde_json::json!({"type": "REG_SZ", "value": ""}));
@@ -1355,11 +1490,72 @@ mod tests {
             assert_eq!(read["account"]["signed_in"], true);
             assert_eq!(read["unreadable"], serde_json::json!(["agc"]));
             assert_eq!(read["valid"], false);
+            assert_eq!(read["settings_valid"], false);
             assert!(!read.to_string().contains("local-test-only"), "the password never goes into the export");
+            // Signed in, but an account a connect refuses: valid says so.
+            store.write_text("agc", "0")?;
+            store.write_text("server", "invalid/server")?;
+            store.write_text("port", "0")?;
+            let refused = export_settings(&store);
+            assert_eq!((refused["settings_valid"].clone(), refused["account_valid"].clone(), refused["valid"].clone()), (serde_json::json!(true), serde_json::json!(false), serde_json::json!(false)));
+            assert_eq!(refused["error"], message("ACCOUNT_SERVER_INVALID"));
+            assert!(connect_prerequisites(&store).is_err(), "the connect agrees");
+            // Account values of a type nobody writes are named, for the export and for a connect.
+            {
+                use winreg::{enums::*, RegKey, RegValue};
+                let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(&store.key).unwrap();
+                key.set_raw_value("server", &RegValue { bytes: vec![1, 2], vtype: REG_BINARY }).unwrap();
+            }
+            store.write_value("port", &StoredValue::Number(5060))?;
+            let binary = export_settings(&store);
+            assert_eq!(binary["unreadable"], serde_json::json!(["server"]));
+            assert_eq!(binary["valid"], false);
+            assert!(store.read_account().is_err(), "a connect does not fall back to the default server");
+            // A save left unfinished: a connect refuses, and the export says why.
+            store.write_text("server", "pbx.example")?;
+            store.write_text(SAVE_MARK, "1")?;
+            let unfinished = export_settings(&store);
+            assert_eq!((unfinished["save_complete"].clone(), unfinished["valid"].clone()), (serde_json::json!(false), serde_json::json!(false)));
+            assert_eq!(unfinished["error"], message("SETTINGS_SAVE_INTERRUPTED"));
+            store.delete_value(SAVE_MARK)?;
+            assert_eq!(export_settings(&store)["valid"], true, "with all of it in order, a connect would go ahead");
             Ok(())
         })();
         drop(guard);
         result.unwrap();
+    }
+    #[test]
+    fn a_settings_file_brings_what_it_names_and_nothing_of_the_machine() {
+        let file = serde_json::json!({
+            "format": 1,
+            "settings": {
+                "sip_port": 5070, "aec": false, "language": "en", "agc": true,
+                "microphone": "{mic}", "speaker": "{spk}", "network_adapter": "{nic}",
+                "tray_after_call": -1, "register_interval": "often", "unknown_to_this_version": 1,
+                "buttons": [{"title": "Park", "kind": "park", "number": "701"}, {}, {"title": 3}]
+            },
+            "account": {"server": "pbx.example", "port": 5061, "extension": "1001", "signed_in": true},
+            "unreadable": ["agc", "extension"],
+            "valid": false, "stored": {}
+        });
+        let read = import_settings(&file.to_string()).unwrap();
+        assert_eq!(read["settings"], serde_json::json!({"sip_port": 5070, "aec": false, "language": "en", "tray_after_call": -1}));
+        assert_eq!(read["buttons"], serde_json::json!([{"n": 1, "title": "Park", "kind": "park", "number": "701"}]));
+        assert_eq!(read["account"], serde_json::json!({"server": "pbx.example", "port": 5061}));
+        assert_eq!(read["unreadable"], serde_json::json!(["agc", "extension"]));
+        assert_eq!(read["invalid"], serde_json::json!(["button_3_title", "register_interval"]));
+        // What is not a KSIP settings file is refused.
+        for bad in ["", "[]", "{}", r#"{"format":2,"settings":{}}"#, "not json"] {
+            assert_eq!(import_settings(bad).err(), Some(message("SETTINGS_IMPORT_FORMAT")), "{bad}");
+        }
+        // An export of one machine is a file another can read.
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-import");
+        let exported = export_settings(&guard.store());
+        let back = import_settings(&exported.to_string()).unwrap();
+        assert!(back["invalid"].as_array().unwrap().is_empty() && back["unreadable"].as_array().unwrap().is_empty());
+        assert_eq!(back["settings"]["sip_port"], 5060);
+        assert_eq!(back["buttons"].as_array().unwrap().len(), CustomButton::COUNT);
     }
     #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {

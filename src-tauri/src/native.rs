@@ -35,6 +35,8 @@ pub fn choose_file(kind: &str) -> Option<String> {
     let text = crate::message::windows_text;
     let (pattern, caption) = if kind == "certificate" {
         (text("DIALOG_CA_FILTER"), text("DIALOG_CA_FILE"))
+    } else if kind == "settings" {
+        (text("DIALOG_SETTINGS_FILTER"), text("DIALOG_SETTINGS_IMPORT"))
     } else {
         (text("DIALOG_SOUND_FILTER"), text("DIALOG_SOUND_FILE"))
     };
@@ -51,6 +53,35 @@ pub fn choose_file(kind: &str) -> Option<String> {
         ..unsafe { std::mem::zeroed() }
     };
     if unsafe { GetOpenFileNameW(&mut options) } == 0 {
+        return None;
+    }
+    let end = file.iter().position(|c| *c == 0).unwrap_or(file.len());
+    Some(String::from_utf16_lossy(&file[..end]))
+}
+/// Shows the standard save dialog for a settings file, starting at
+/// `suggested`, and returns the chosen path, or None if the person cancelled.
+/// An existing file is only replaced once the person has said so.
+pub fn choose_save_file(suggested: &str) -> Option<String> {
+    use windows_sys::Win32::UI::Controls::Dialogs::{GetSaveFileNameW, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW};
+    let text = crate::message::windows_text;
+    let filter: Vec<u16> = format!("{}\0", text("DIALOG_SETTINGS_FILTER")).encode_utf16().collect();
+    let title: Vec<u16> = format!("{}\0", text("DIALOG_SETTINGS_EXPORT")).encode_utf16().collect();
+    let extension: Vec<u16> = "json\0".encode_utf16().collect();
+    let mut file = vec![0u16; 1024];
+    for (slot, unit) in file.iter_mut().zip(suggested.encode_utf16().take(1000)) {
+        *slot = unit;
+    }
+    let mut options = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        lpstrFilter: filter.as_ptr(),
+        lpstrFile: file.as_mut_ptr(),
+        nMaxFile: file.len() as u32,
+        lpstrTitle: title.as_ptr(),
+        lpstrDefExt: extension.as_ptr(),
+        Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+        ..unsafe { std::mem::zeroed() }
+    };
+    if unsafe { GetSaveFileNameW(&mut options) } == 0 {
         return None;
     }
     let end = file.iter().position(|c| *c == 0).unwrap_or(file.len());

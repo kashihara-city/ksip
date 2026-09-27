@@ -10,13 +10,16 @@ NS = '{http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions}'
 ACCOUNT = ('server', 'port')
 
 
-def policies():
+def policies(path=None):
     """Every policy: its name, and each registry value it writes with what the
-    template says about it. A switch is {'kind': 'flag', 'on': 1, 'off': 0};
+    template says about it (from `path`, docs/admx/ksip.admx by default). A
+    switch is {'kind': 'flag', 'on': 1, 'off': 0}, with None for a value the
+    template does not give (never False, which would compare equal to 0);
     the elements carry their kind (decimal, text, enum), limits, the default
     the dialog shows, and an enum's values in order."""
-    admx = ET.parse(ADMX).getroot()
-    adml = ET.parse(ADMX.parent / 'ja-JP' / 'ksip.adml').getroot()
+    path = Path(path) if path else ADMX
+    admx = ET.parse(path).getroot()
+    adml = ET.parse(path.parent / 'ja-JP' / 'ksip.adml').getroot()
     shown = {}
     for pres in adml.iter(NS + 'presentation'):
         for control in pres:
@@ -25,9 +28,11 @@ def policies():
     for pol in admx.iter(NS + 'policy'):
         values = {}
         if pol.get('valueName'):
-            on = pol.find(NS + 'enabledValue/' + NS + 'decimal')
-            off = pol.find(NS + 'disabledValue/' + NS + 'decimal')
-            values[pol.get('valueName')] = {'kind': 'flag', 'on': on is not None and int(on.get('value')), 'off': off is not None and int(off.get('value'))}
+            def number(tag):
+                found = pol.find(NS + tag + '/' + NS + 'decimal')
+                text = found.get('value', '') if found is not None else ''
+                return int(text) if text.isdigit() else None
+            values[pol.get('valueName')] = {'kind': 'flag', 'on': number('enabledValue'), 'off': number('disabledValue')}
         elements = pol.find(NS + 'elements')
         for el in (elements if elements is not None else []):
             kind = el.tag[len(NS):]

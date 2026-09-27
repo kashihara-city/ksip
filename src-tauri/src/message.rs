@@ -129,6 +129,9 @@ fn text_in(language: &str, code: &str) -> Option<&'static str> {
             "DIALOG_CA_FILTER" => "Certificates (*.crt;*.pem;*.cer)\0*.crt;*.pem;*.cer\0",
             "DIALOG_SOUND_FILE" => "Sound file for the phone",
             "DIALOG_SOUND_FILTER" => "WAV (*.wav)\0*.wav\0",
+            "DIALOG_SETTINGS_IMPORT" => "Settings file to read",
+            "DIALOG_SETTINGS_EXPORT" => "Write the saved settings to",
+            "DIALOG_SETTINGS_FILTER" => "KSIP settings (*.json)\0*.json\0",
             "NOTIFY_INCOMING" => "Incoming call from {0}",
             _ => return None,
         },
@@ -140,6 +143,9 @@ fn text_in(language: &str, code: &str) -> Option<&'static str> {
             "DIALOG_CA_FILTER" => "憑證 (*.crt;*.pem;*.cer)\0*.crt;*.pem;*.cer\0",
             "DIALOG_SOUND_FILE" => "電話鈴聲的檔案",
             "DIALOG_SOUND_FILTER" => "WAV (*.wav)\0*.wav\0",
+            "DIALOG_SETTINGS_IMPORT" => "要讀取的設定檔",
+            "DIALOG_SETTINGS_EXPORT" => "匯出已儲存的設定",
+            "DIALOG_SETTINGS_FILTER" => "KSIP 設定 (*.json)\0*.json\0",
             "NOTIFY_INCOMING" => "{0} 來電",
             _ => return None,
         },
@@ -151,6 +157,9 @@ fn text_in(language: &str, code: &str) -> Option<&'static str> {
             "DIALOG_CA_FILTER" => "証明書 (*.crt;*.pem;*.cer)\0*.crt;*.pem;*.cer\0",
             "DIALOG_SOUND_FILE" => "着信音に使うファイル",
             "DIALOG_SOUND_FILTER" => "WAV (*.wav)\0*.wav\0",
+            "DIALOG_SETTINGS_IMPORT" => "読み込む設定ファイル",
+            "DIALOG_SETTINGS_EXPORT" => "保存済みの設定の書き出し先",
+            "DIALOG_SETTINGS_FILTER" => "KSIPの設定 (*.json)\0*.json\0",
             "NOTIFY_INCOMING" => "{0} から着信",
             _ => return None,
         },
@@ -197,7 +206,8 @@ mod tests {
         assert_eq!(text_in("zh-TW", "TRAY_QUIT"), Some("結束"));
         // Every language answers every name, with the same values.
         for code in ["TRAY_OPEN", "TRAY_QUIT", "TRAY_LICENSES", "DIALOG_CA_FILE",
-            "DIALOG_CA_FILTER", "DIALOG_SOUND_FILE", "DIALOG_SOUND_FILTER", "NOTIFY_INCOMING"]
+            "DIALOG_CA_FILTER", "DIALOG_SOUND_FILE", "DIALOG_SOUND_FILTER", "DIALOG_SETTINGS_IMPORT",
+            "DIALOG_SETTINGS_EXPORT", "DIALOG_SETTINGS_FILTER", "NOTIFY_INCOMING"]
         {
             let japanese = text_in("ja", code).unwrap();
             for language in LANGUAGES {

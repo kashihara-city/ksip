@@ -48,13 +48,19 @@ def main():
             want = bool(value) if isinstance(have, bool) else value
             if have != want:
                 wrong.append(f'{name}={have!r} (wrote {value!r})')
-        check(not wrong and not export['unreadable'] and export['valid'],
-              what + ('' if not wrong else f': {wrong[:4]}') + ('' if export['valid'] else f" (refused: {export['error']})"))
+        # Nobody signs in to the test profile, so what is asked of it is that
+        # the settings and the account's address pass their checks, not that
+        # a connect would go ahead.
+        ok = export['settings_valid'] and export['account_valid']
+        refused = '; '.join(e for e in (export['settings_error'], export['account_error']) if e)
+        check(not wrong and not export['unreadable'] and ok,
+              what + ('' if not wrong else f': {wrong[:4]}') + ('' if ok else f' (refused: {refused})'))
 
     templates = policies()
     with Profile('settings', exe) as profile:
         defaults = profile.export()
-        check(defaults['valid'] and not defaults['unreadable'], 'with nothing stored KSIP has its defaults, and they pass')
+        check(defaults['settings_valid'] and defaults['account_valid'] and not defaults['unreadable'], 'with nothing stored KSIP has its defaults, and they pass')
+        check(not defaults['valid'] and not defaults['account']['signed_in'], 'nobody signed in: the export says a connect would not go ahead')
 
         # Every policy enabled at once, each with a value other than KSIP's
         # default: the largest number, the last choice, a sample text; a switch
@@ -101,17 +107,29 @@ def main():
                     profile.write(written)
                     expect(profile.export(), written, f"{name} = '{item}' is read and passes")
 
-        # Values no policy writes are named, and the settings are refused.
+        # One below each number's minimum is refused, the account's port included:
+        # a template whose range reached below what KSIP takes would let a
+        # policy write values a connect refuses.
+        for p in templates:
+            for name, v in p['values'].items():
+                if v['kind'] == 'decimal' and v['min'] > 0:
+                    profile.clear()
+                    profile.write({name: v['min'] - 1})
+                    below = profile.export()
+                    check(not (below['settings_valid'] and below['account_valid']), f"{name} below its minimum ({v['min'] - 1}) is refused")
+
+        # Values no policy writes are named, and the settings are refused,
+        # the account's values as well.
         profile.clear()
-        profile.write({'aec': b'\x01\x02', 'agc': 'maybe', 'rtp_port': 70000, 'sip_port': 'often'})
+        profile.write({'aec': b'\x01\x02', 'agc': 'maybe', 'rtp_port': 70000, 'sip_port': 'often', 'server': b'\x01', 'port': 'x'})
         bad = profile.export()
-        check(sorted(bad['unreadable']) == ['aec', 'agc', 'rtp_port', 'sip_port'] and not bad['valid'],
-              f"values of the wrong type or out of reach are named and refused ({bad['unreadable']})")
+        check(sorted(bad['unreadable']) == ['aec', 'agc', 'port', 'rtp_port', 'server', 'sip_port'] and not bad['settings_valid'] and not bad['account_valid'],
+              f"values of the wrong type or out of reach are named and refused, the account's too ({bad['unreadable']})")
         # Written by hand as text, a switch and a number still read.
         profile.clear()
         profile.write({'aec': 'off', 'sip_port': ' 5070 ', 'tray_after_call': '-1'})
         by_hand = profile.export()
-        check(by_hand['valid'] and setting(by_hand, 'aec') is False and setting(by_hand, 'sip_port') == 5070 and setting(by_hand, 'tray_after_call') == -1,
+        check(by_hand['settings_valid'] and setting(by_hand, 'aec') is False and setting(by_hand, 'sip_port') == 5070 and setting(by_hand, 'tray_after_call') == -1,
               'a switch and numbers written as text by hand are read')
     print(f"{'FAIL' if failures else 'PASS'}: {len(failures)} failure(s)")
     sys.exit(1 if failures else 0)

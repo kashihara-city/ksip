@@ -45,16 +45,17 @@ impl Default for Account {
         }
     }
 }
+/// Whether a user part (extension or authentication user) is one SIP takes here.
+fn user_ok(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 100 && value.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.+-".contains(&c))
+}
 impl Account {
-    pub fn validate(&mut self) -> Result<(), String> {
+    /// The part of the account that lives in the registry and that a policy
+    /// can set: the server, the port, and the extension when there is one.
+    /// Checked without the credential, for the export as well as a connect.
+    pub fn validate_address(&mut self) -> Result<(), String> {
         self.server = self.server.trim().to_string();
         self.extension = self.extension.trim().to_string();
-        self.auth_user = self.auth_user.trim().to_string();
-        // The extension may be left out: the account then registers under the
-        // authentication user, which is the value the credential vault holds.
-        if self.extension.is_empty() {
-            self.extension = self.auth_user.clone();
-        }
         if self.server.is_empty()
             || self.server.len() > 253
             || !self
@@ -65,15 +66,21 @@ impl Account {
         {
             return Err(message("ACCOUNT_SERVER_INVALID"));
         }
-        for value in [&self.extension, &self.auth_user] {
-            if value.is_empty()
-                || value.len() > 100
-                || !value
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || b"_.+-".contains(&c))
-            {
-                return Err(message("ACCOUNT_EXTENSION_INVALID"));
-            }
+        if !self.extension.is_empty() && !user_ok(&self.extension) {
+            return Err(message("ACCOUNT_EXTENSION_INVALID"));
+        }
+        Ok(())
+    }
+    pub fn validate(&mut self) -> Result<(), String> {
+        self.validate_address()?;
+        self.auth_user = self.auth_user.trim().to_string();
+        // The extension may be left out: the account then registers under the
+        // authentication user, which is the value the credential vault holds.
+        if self.extension.is_empty() {
+            self.extension = self.auth_user.clone();
+        }
+        if !user_ok(&self.extension) || !user_ok(&self.auth_user) {
+            return Err(message("ACCOUNT_EXTENSION_INVALID"));
         }
         if self.password.is_empty()
             || self.password.len() > 512
@@ -257,24 +264,53 @@ impl Store {
         self.write_value(name, &StoredValue::Text(value.to_string()))
     }
     /// The address comes from the registry and only the sign-in secret from the
-    /// vault. Without a stored secret the account counts as unconfigured.
+    /// vault. Without a stored secret the account counts as unconfigured. A
+    /// registry value that cannot be read as what it is for (a type the app
+    /// never writes, a port that is not a port) is an error naming it, not a
+    /// quiet fall back to the defaults: the phone would register elsewhere.
     pub fn read_account(&self) -> Result<Option<Account>, String> {
         let Some((auth_user, password)) = self.read_secret()? else {
             return Ok(None);
         };
-        let server = self.read_text("server");
-        let port = self.read_text("port");
-        Ok(Some(Account {
-            server: if server.is_empty() {
-                DEFAULT_SERVER.into()
-            } else {
-                server
-            },
-            port: port.parse().unwrap_or(DEFAULT_PORT),
-            extension: self.read_text("extension"),
-            auth_user,
-            password,
-        }))
+        let (server, port, extension) = self.read_address()?;
+        Ok(Some(Account { server, port, extension, auth_user, password }))
+    }
+    /// The account's registry values, strictly: see account_values.
+    pub fn read_address(&self) -> Result<(String, u16, String), String> {
+        let (address, unreadable) = self.account_values();
+        if unreadable.is_empty() {
+            Ok(address)
+        } else {
+            Err(message_with("SETTINGS_VALUE_INVALID", [unreadable.join(", ")]))
+        }
+    }
+    /// The account's registry values as a connect reads them (server, port,
+    /// extension; absent or empty is the default), and the names of those
+    /// that cannot be read as what they are for, which keep their defaults.
+    pub fn account_values(&self) -> ((String, u16, String), Vec<String>) {
+        let mut unreadable = Vec::new();
+        let mut text = |name: &str, default: &str| match self.read_value(name) {
+            Ok(Some(StoredValue::Text(t))) if !t.trim().is_empty() => t.trim().to_string(),
+            Ok(Some(StoredValue::Number(n))) if name == "extension" => n.to_string(),
+            Ok(None) | Ok(Some(StoredValue::Text(_))) => default.to_string(),
+            _ => {
+                unreadable.push(name.to_string());
+                default.to_string()
+            }
+        };
+        let server = text("server", DEFAULT_SERVER);
+        let extension = text("extension", "");
+        let port = match self.read_value("port") {
+            Ok(None) => DEFAULT_PORT,
+            Ok(Some(StoredValue::Text(t))) if t.trim().is_empty() => DEFAULT_PORT,
+            Ok(Some(StoredValue::Number(n))) if u16::try_from(n).is_ok() => n as u16,
+            Ok(Some(StoredValue::Text(t))) if t.trim().parse::<u16>().is_ok() => t.trim().parse().unwrap_or(DEFAULT_PORT),
+            _ => {
+                unreadable.push("port".to_string());
+                DEFAULT_PORT
+            }
+        };
+        ((server, port, extension), unreadable)
     }
     /// The credential alone: authentication user and password, or None.
     pub fn read_secret(&self) -> Result<Option<(String, String)>, String> {
@@ -362,11 +398,21 @@ impl Store {
         let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.key);
     }
 }
+/// The tests that write the store run one at a time, in this module and in
+/// settings alike: the credential vault has been seen to answer a read of one
+/// target with "not found" while another target was being written or deleted
+/// from a second thread.
+#[cfg(test)]
+pub fn store_tests_one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn registry_and_credential_roundtrip_are_separate() {
+        let _one_at_a_time = store_tests_one_at_a_time();
         let suffix = format!("test-storage-{}", std::process::id());
         let store = Store {
             key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),

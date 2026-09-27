@@ -7,6 +7,10 @@ import {BUTTON_MAIN, BUTTON_INDEXES, defaultTitle} from './buttons.js';
 
 // The codecs the setting can name, in the order offered when it names none.
 const CODEC_NAMES=['opus','G722','PCMU','PCMA'];
+// Settings the dialog has no field for (the gains and the automatic
+// recording are set on the phone itself): a value an imported file brings
+// is carried here until the dialog is saved or closed.
+let carried={};
 
 async function fillAdapters(selected){
   // The list is read when the dialog opens: what is plugged in can change.
@@ -22,15 +26,19 @@ async function fillAdapters(selected){
   if(selected&&!adapters.some(adapter=>adapter.name===selected))add(selected,fill('ADAPTER_MISSING',selected));
   select.value=selected;
 }
+// The list shows the given order first, ticked, then the rest unticked in the usual order.
+function setCodecs(codecs){
+  const codecOrder=(codecs||'').split(',').map(s=>s.trim()).filter(Boolean),codecsInUse=codecOrder.length?codecOrder:CODEC_NAMES,codecList=$('codec-list');
+  for(const name of [...codecsInUse,...CODEC_NAMES.filter(n=>!codecsInUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=codecsInUse.includes(name);}}
+}
 export function openSettings(){
+  carried={};$('settings-file-note').hidden=true;
   for(const key of ['server','port','extension','auth_user'])$(key).value=state.account[key]??'';
   for(const key of ['sip_port','rtp_port'])$(key).value=state.settings[key];
   for(const n of BUTTON_INDEXES){const b=(state.settings.buttons||[])[n-1]||{};$('button_'+n+'_title').value=b.title||'';$('button_'+n+'_kind').value=b.kind||'';$('button_'+n+'_number').value=b.number||'';$('button_'+n+'_transfer').value=b.transfer||'';$('button_'+n+'_pickup').value=b.pickup||'';syncButtonRow(n);}
   fillAdapters(state.settings.network_adapter||'');
   for(const key of ['sound_ring', 'sound_ringback', 'sound_busy', 'sound_notfound', 'sound_error'])$(key).value=state.settings[key]||'';
-  // The list shows the saved order first, ticked, then the rest unticked in the usual order.
-  const codecOrder=(state.settings.codecs||'').split(',').map(s=>s.trim()).filter(Boolean),codecsInUse=codecOrder.length?codecOrder:CODEC_NAMES,codecList=$('codec-list');
-  for(const name of [...codecsInUse,...CODEC_NAMES.filter(n=>!codecsInUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=codecsInUse.includes(name);}}
+  setCodecs(state.settings.codecs);
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;
   $('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';
   $('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;
@@ -66,12 +74,42 @@ async function calibrateAec(careful){
   try{await run(async()=>{const result=await invoke('calibrate_aec',{microphone:state.settings.microphone||'default',speaker:state.settings.speaker||'default',careful});$('aec_delay_ms').value=result.recommended_ms;$('calibration-status').textContent=fill('CALIBRATION_RESULT',t(result.stable?'CALIBRATION_RECOMMENDED':'CALIBRATION_UNSTABLE'),result.recommended_ms,result.samples,result.spread_ms,result.confidence);});}
   catch(e){$('calibration-status').textContent=t(String(e));logUi('aec calibration',e);}
 }
+// A settings file's values (as import_settings_file hands them over) go
+// into the dialog; what the file leaves out stays as the dialog has it.
+// Nothing is saved until the dialog is.
+const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','browser_integration','browser_dial_confirm'];
+const CARRIED=['microphone_gain','speaker_gain','auto_record'];
+function applyImport(file){
+  const settings=file.settings||{};
+  // The transport first: the media encryption offers SDES and OSRTP only under TLS.
+  if('transport' in settings){$('transport').value=settings.transport||'udp';syncEncryptionChoices();}
+  for(const [key,value] of Object.entries(settings)){
+    if(key==='transport'||key==='media_encryption')continue;
+    if(SWITCHES.includes(key))$(key).checked=!!value;
+    else if(CARRIED.includes(key))carried[key]=value;
+    else if(key==='codecs')setCodecs(value);
+    else if($(key))$(key).value=value;
+  }
+  if('media_encryption' in settings){$('media_encryption').value=settings.media_encryption;syncEncryptionChoices();}
+  for(const button of file.buttons||[]){
+    const n=button.n;if(!BUTTON_INDEXES.includes(n))continue;
+    for(const field of ['title','kind','number','transfer','pickup'])if(field in button)$('button_'+n+'_'+field).value=button[field];
+    syncButtonRow(n);
+  }
+  for(const key of ['server','port','extension'])if(key in (file.account||{}))$(key).value=file.account[key];
+  const passedOver=[...(file.unreadable||[]),...(file.invalid||[])];
+  const note=$('settings-file-note');
+  note.textContent=t('SETTINGS_IMPORTED')+(passedOver.length?' '+fill('SETTINGS_IMPORT_PASSED_OVER',passedOver.join(', ')):'');
+  note.hidden=false;
+}
+function showFileError(what,e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi(what,e);}
 // Everything the dialog holds, as the app stores it.
 function collectSettings(){
   return {
     network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),
-    microphone:state.settings.microphone,speaker:state.settings.speaker,microphone_gain:state.settings.microphone_gain||100,speaker_gain:state.settings.speaker_gain||100,
-    auto_record:!!state.settings.auto_record,
+    microphone:state.settings.microphone,speaker:state.settings.speaker,
+    microphone_gain:carried.microphone_gain??(state.settings.microphone_gain||100),speaker_gain:carried.speaker_gain??(state.settings.speaker_gain||100),
+    auto_record:carried.auto_record??!!state.settings.auto_record,
     buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),
     auto_answer:$('auto_answer').checked,
     aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,
@@ -87,7 +125,7 @@ function collectSettings(){
 }
 export function init(){
   $('settings-button').addEventListener('click',openSettings);
-  $('close-settings').addEventListener('click',()=>{$('password').value='';$('configuration').close();});
+  $('close-settings').addEventListener('click',()=>{$('password').value='';carried={};$('configuration').close();});
   // A codec moves one row up or down; the rows' order is the order offered.
   $('codec-list').addEventListener('click',e=>{const button=e.target.closest('button[data-move]');if(!button)return;const row=button.closest('li'),list=row.parentElement;if(button.dataset.move==='-1'){if(row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);}else if(row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);});
   $('configuration').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});
@@ -105,6 +143,16 @@ export function init(){
   for(const button of document.querySelectorAll('[data-sound]'))button.addEventListener('click',async()=>{
     try{const chosen=await invoke('choose_sound_file');if(chosen)$('sound_'+button.dataset.sound).value=chosen;}
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi('choose sound file',e);}
+  });
+  $('import-settings').addEventListener('click',async()=>{
+    $('settings-error').hidden=true;
+    try{const file=await invoke('import_settings_file');if(file)applyImport(file);}
+    catch(e){showFileError('import settings',e);}
+  });
+  $('export-settings').addEventListener('click',async()=>{
+    $('settings-error').hidden=true;
+    try{const path=await invoke('export_settings_file');if(path){const note=$('settings-file-note');note.textContent=fill('SETTINGS_EXPORTED',path);note.hidden=false;}}
+    catch(e){showFileError('export settings',e);}
   });
   $('calibrate-aec').addEventListener('click',()=>calibrateAec(false));
   $('calibrate-aec-careful').addEventListener('click',()=>calibrateAec(true));

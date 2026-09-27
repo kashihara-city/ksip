@@ -162,6 +162,9 @@
           <p class="hint" data-i18n="SETTINGS_ADAPTER_HINT"></p>
           <div class="row"><label><span data-i18n="SETTINGS_SIP_PORT"></span><input id="sip_port" type="number" min="1024" max="65535" value="5060"></label><label><span data-i18n="SETTINGS_RTP_PORT"></span><input id="rtp_port" type="number" min="1024" max="65400" step="2" value="10000"></label></div>
         </details>
+        <div class="settings-file"><button id="import-settings" type="button" data-i18n="SETTINGS_IMPORT"></button><button id="export-settings" type="button" data-i18n="SETTINGS_EXPORT"></button></div>
+        <p class="hint" data-i18n="SETTINGS_FILE_HINT"></p>
+        <p id="settings-file-note" class="hint" role="status" hidden></p>
         <p class="hint" data-i18n="SETTINGS_SAVE_HINT"></p>
         <div id="settings-error" class="alert" role="alert" hidden></div><button id="save-settings" class="primary wide" data-i18n="SETTINGS_SAVE"></button>
       </form>

@@ -378,6 +378,12 @@ dialog input,dialog select {
   margin:0 8px 0 0;
   accent-color:#246650;
 }
+.settings-file {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
 .wide {
   width:100%;
 }

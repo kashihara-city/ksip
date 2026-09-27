@@ -84,6 +84,8 @@ pub fn run(state: AppState) {
             commands::open_recording,
             commands::open_recording_location,
             commands::choose_sound_file,
+            commands::export_settings_file,
+            commands::import_settings_file,
             commands::read_logs,
             commands::clear_call_history,
             commands::clear_logs,

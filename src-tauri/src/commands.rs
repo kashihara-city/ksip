@@ -140,6 +140,41 @@ pub async fn choose_sound_file(kind: Option<String>) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())
 }
+/// Writes the saved settings (what KSIP uses, not what the dialog holds
+/// unsaved) to a file the person chooses; the same document as
+/// `ksip.exe --export-settings`. The path written, or empty if cancelled.
+#[tauri::command]
+pub async fn export_settings_file(state: State<'_, AppState>) -> Result<String, String> {
+    let document = crate::settings::export_settings(&state.services.store);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = native::choose_save_file("ksip-settings.json") else {
+            return Ok(String::new());
+        };
+        let text = serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| crate::message::message_with("SETTINGS_EXPORT_FAILED", [e]))?;
+        Ok(path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+/// Reads a settings file the person chooses into what the dialog takes (see
+/// settings::import_settings), or null if cancelled. Nothing is saved here.
+#[tauri::command]
+pub async fn import_settings_file() -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Some(path) = native::choose_file("settings") else {
+            return Ok(None);
+        };
+        let bytes = std::fs::read(&path).map_err(|e| crate::message::message_with("SETTINGS_IMPORT_FAILED", [e]))?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(crate::message::message("SETTINGS_IMPORT_FORMAT"));
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        crate::settings::import_settings(text.trim_start_matches('\u{feff}')).map(Some)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 pub fn clear_call_history(state: State<AppState>) -> Result<(), String> {
     state.services.clear_call_history()
