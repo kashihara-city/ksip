@@ -44,19 +44,24 @@ std::unique_ptr<Recorder> prepare(const std::string &path, uint32_t rate) {
     return nullptr;
 }
 // A prepared recorder becomes the recording of `stream`: under the gate,
-// nothing but a few assignments.
+// nothing but a few assignments. The app hears that the file is being
+// written (a start it asked for answers the same; a reservation that came
+// true has only this to tell it).
 void install(std::unique_ptr<Recorder> r, const audio *stream) {
     current = std::move(r);
     recording_audio = stream;
     detached_audio = nullptr;
+    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "active");
 }
 // Finishing (joining the writer, closing the file) can wait on the disk, so
 // it happens outside the gate; the words are the ones the app reads.
 Recorder::Summary end(std::unique_ptr<Recorder> finished) {
     auto summary = finished->finish();
-    // For the log only; the app learns how the file ended from the stop
-    // command's answer.
     info("ksip_audio_filter: WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
+    // The app's word that the file is closed, whichever way that came
+    // about, and whether it is whole; the stop command answers the same.
+    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "closed %s %llu %llu", summary.failed || summary.dropped ? "incomplete" : "complete",
+                 summary.bytes, summary.dropped);
     return summary;
 }
 bool readable(const auframe *f) { return f->fmt == AUFMT_S16LE || f->fmt == AUFMT_FLOAT; }
@@ -106,7 +111,12 @@ void decoder_created(const audio *stream, uint32_t rate) {
     if (r) {
         install(std::move(r), stream);
         info("ksip_audio_filter: recording bound to the reserved call\n");
-    } else warning("ksip_audio_filter: cannot open the reserved WAV file\n");
+    } else {
+        // The app was told the recording was reserved; it has to hear that
+        // no file came of it.
+        warning("ksip_audio_filter: cannot open the reserved WAV file\n");
+        module_event("ksip_audio_filter", "recording", nullptr, nullptr, "failed reserved");
+    }
     reserved_call.clear();
     reserved_path.clear();
 }

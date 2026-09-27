@@ -6,10 +6,15 @@
 // Time: the file has one rate, chosen when it opens; what comes in at
 // another rate (a decoder remade for a codec change, an encoder at a
 // different rate than the decoder) is brought to it by linear
-// interpolation, so both channels stay on one time axis. The two sides pair
-// up frame by frame as they arrive; a side that goes quiet (a far end that
-// stops sending, this side before the microphone opens) is filled with
-// silence on its channel, so that neither is lost while the other continues.
+// interpolation. Both sides are placed on one clock, the one that started
+// with the file: a side whose samples fall short of the time that has
+// passed by more than the slack (a far end that stopped sending, this side
+// before the microphone opened) has the missing stretch put in as silence
+// before its next samples, so the two channels keep their places against
+// each other to within the slack, and a side that never comes back is
+// written as silence against the other. The clock is wall time at arrival,
+// not the packets' own stamps: a side that is late by a whole slack is
+// placed late by that much.
 //
 // Threads: push_far and push_near are each called from one audio thread;
 // the constructor, finish and the destructor from the thread that owns the
@@ -18,6 +23,7 @@
 // in the audio's way.
 #pragma once
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -58,6 +64,11 @@ private:
     struct Side {
         std::array<int16_t, 48000 * 10> ring{};
         size_t rd = 0, wr = 0, count = 0;
+        // Silence owed before the ring's samples: the stretch of the clock
+        // this side had nothing for. Written first, as zeros.
+        size_t silence = 0;
+        // Samples in hand, silence included: what the writer may take.
+        size_t available() const { return silence + count; }
         // The input rate seen last, the place of the next output sample
         // between the input samples (index -1 is `last`, the last sample of
         // the chunk before), and that sample.
@@ -69,6 +80,11 @@ private:
     };
     void push(Side &side, const int16_t *samples, size_t frames, uint32_t rate);
     void append(Side &side, const int16_t *samples, size_t frames);
+    // Frames the clock has counted since the file opened, at the file's rate.
+    uint64_t clock_frames() const;
+    // The next frame of a side, silence first; the caller has seen to it
+    // that there is one.
+    int16_t take(Side &side);
     // Something can go to the file: both sides have samples, or one side has
     // waited longer than the slack for the other.
     bool writable() const;
@@ -79,6 +95,9 @@ private:
     // ("far" and "near" are macros in the Windows headers.)
     Side remote, local;
     uint32_t rate = 0;
+    std::chrono::steady_clock::time_point started;
+    // Frames written to the file so far, both channels alike.
+    uint64_t written = 0;
     // How long one side waits for the other before it goes to the file with
     // silence on the other channel: the arrival jitter of the two sides is
     // well within it, a real gap well beyond it.

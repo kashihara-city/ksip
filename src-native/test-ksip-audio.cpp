@@ -413,6 +413,32 @@ void a_gap_in_the_far_end_leaves_this_side_in_place() {
     check(left[23600] == 0 && right[23600] == -700, "what this side still held at the end is written with silence");
     std::filesystem::remove_all(dir);
 }
+void a_side_that_starts_late_is_placed_where_the_clock_says() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-clock";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "clock.wav";
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
+        // This side speaks for 200 ms; the far end says nothing for 230 ms
+        // and then both go on. The far end's first sample belongs at about
+        // 230 ms into the file, not at its start.
+        std::vector<int16_t> near1(1600, -500), far2(1600, 1000), near2(1600, -600);
+        rp->push_near(near1.data(), near1.size(), 8000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(230));
+        rp->push_far(far2.data(), far2.size(), 8000);
+        rp->push_near(near2.data(), near2.size(), 8000);
+        auto summary = rp->finish();
+        check(!summary.failed && summary.dropped == 0, "nothing is lost while a side waits");
+    }
+    auto bytes = read_file(path);
+    auto left = channel(bytes, 0), right = channel(bytes, 1);
+    size_t first_far = 0;
+    while (first_far < left.size() && left[first_far] == 0) ++first_far;
+    check(first_far >= 1600 && first_far <= 2800, "the far end appears where the clock had got to when it started");
+    check(right[100] == -500 && left[100] == 0, "this side's first samples are at the start, against silence");
+    check(left.size() >= 3200 && left.size() <= 4400, "the file is as long as the time that passed");
+    std::filesystem::remove_all(dir);
+}
 void a_rate_change_in_the_middle_keeps_the_time_axis() {
     auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-change";
     std::filesystem::create_directories(dir);
@@ -487,6 +513,18 @@ void dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off() {
     auto other = read_dialog_info("<presence><tuple><status><basic>open</basic></status></tuple></presence>");
     check(!other.readable, "another format is not a report");
     check(!read_dialog_info("").readable, "an empty body is not a report");
+    // The whole body is checked before any of it counts.
+    check(!read_dialog_info("<dialog-info version=\"1\"><dialog id=\"a\"><state>confirmed</state></dialog></dialog-info>").readable,
+          "a report that does not say full or partial is not applied");
+    check(!read_dialog_info("<dialog-info state=\"whole\"/>").readable, "an unknown kind of report is not applied");
+    check(!read_dialog_info("<dialog-info state=\"full\"><dialog><state>confirmed</state></dialog></dialog-info>").readable, "a dialog without an id is not applied");
+    check(!read_dialog_info("<dialog-info state=\"full\"><dialog id=\"a\"><state>confirmed</dialog-info>").readable, "an element left open inside is not applied");
+    check(!read_dialog_info("<dialog-info state=\"full\"><dialog id=\"a\"><state>dancing</state></dialog></dialog-info>").readable, "an unknown dialog state is not applied");
+    check(!read_dialog_info("<dialog-info state=\"full\"><dialog id=\"a\"></dialog></dialog-info>").readable, "a dialog without a state is not applied");
+    check(!read_dialog_info("<dialog-info state=\"full\"></dialog-info><dialog-info state=\"full\"/>").readable, "two reports in one body are not applied");
+    auto rich = read_dialog_info("<dialog-info state=\"full\" entity=\"sip:701@pbx\"><dialog id=\"a\" direction=\"recipient\"><state>confirmed</state>"
+                                 "<local><identity>sip:701@pbx</identity></local><remote><identity display=\"x\">sip:1002@pbx</identity></remote></dialog></dialog-info>");
+    check(rich.readable && rich.dialogs.size() == 1 && rich.dialogs[0].second == "confirmed", "local and remote parts are passed over when they close in order");
 }
 void numbers_and_lists_are_checked() {
     check(ksip_text::sip_uri("sip:sales@pbx.example") && ksip_text::sip_uri("SIPS:a@b") && !ksip_text::sip_uri("701"), "a URI is told by its scheme");
@@ -526,6 +564,7 @@ int main() {
     samples_at_another_rate_are_brought_to_the_file_rate();
     a_gap_in_the_far_end_leaves_this_side_in_place();
     a_rate_change_in_the_middle_keeps_the_time_axis();
+    a_side_that_starts_late_is_placed_where_the_clock_says();
     std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

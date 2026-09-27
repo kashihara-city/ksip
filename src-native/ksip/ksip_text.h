@@ -33,8 +33,12 @@ std::vector<std::string> scrubbed_sip_lines(const uint8_t *packet, size_t length
 // it could be read as one, whether it is a full or a partial report, and the
 // (id, state) of each dialog. Attributes may use either quote and spaces
 // around `=`; a namespace prefix, a self-closing element or unusual spacing
-// does not change the reading. A body that is not dialog-info, or one that
-// is cut off before its closing tag, reads as nothing, not as "free".
+// does not change the reading. The body is checked as a whole before any
+// of it counts: every element must close in order, dialog-info must say
+// whether it is full or partial, every dialog must carry an id and one of
+// the states RFC 4235 names. Anything short of that, a body cut off before
+// its closing tag included, reads as nothing (readable=false), so that the
+// state kept from the last good report stays; it never reads as "free".
 struct DialogInfo {
     bool readable = false;
     bool partial = false;

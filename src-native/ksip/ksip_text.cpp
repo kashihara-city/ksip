@@ -115,19 +115,27 @@ DialogInfo read_dialog_info(const std::string &body) {
         }
         return std::string();
     };
+    // Nothing counts until the whole body has passed: what is gathered here
+    // becomes the reading only at the end.
+    auto nothing = [&] { return DialogInfo{}; };
+    auto known_state = [](const std::string &s) {
+        return s == "trying" || s == "proceeding" || s == "early" || s == "confirmed" || s == "terminated";
+    };
+    std::vector<std::string> open;
     std::string dialog_id;
-    int in_dialog = 0;
-    bool opened = false, closed = false;
+    bool dialog_has_state = false, seen_info = false, closed_info = false;
     for (size_t pos = body.find('<'); pos != std::string::npos; pos = body.find('<', pos)) {
         auto end = body.find('>', pos);
-        if (end == std::string::npos) break;
+        if (end == std::string::npos) return nothing();
         std::string tag = body.substr(pos + 1, end - pos - 1);
         pos = end + 1;
-        if (tag.empty() || tag[0] == '?' || tag[0] == '!') continue;
+        if (tag.empty()) return nothing();
+        if (tag[0] == '?' || tag[0] == '!') continue;
+        if (closed_info) return nothing(); // an element after the report's end
         bool closing = tag[0] == '/';
         if (closing) tag.erase(0, 1);
         tag = trim(tag);
-        bool self_closing = !tag.empty() && tag.back() == '/';
+        bool self_closing = !closing && !tag.empty() && tag.back() == '/';
         if (self_closing) {
             tag.pop_back();
             tag = trim(tag);
@@ -136,30 +144,51 @@ DialogInfo read_dialog_info(const std::string &body) {
         std::string name = lower(tag.substr(0, space)), attrs = space == std::string::npos ? std::string() : tag.substr(space);
         auto colon = name.find(':');
         if (colon != std::string::npos) name.erase(0, colon + 1);
-        if (name == "dialog-info") {
-            if (closing) closed = true;
-            else {
-                opened = true;
-                info.partial = lower(attribute(attrs, "state")) == "partial";
-                if (self_closing) closed = true;
-            }
-        } else if (name == "dialog") {
-            if (closing) {
-                if (in_dialog) --in_dialog;
-            } else if (!self_closing) {
-                ++in_dialog;
-                dialog_id = attribute(attrs, "id");
-            }
-        } else if (name == "state" && !closing && !self_closing && in_dialog) {
+        if (name.empty()) return nothing();
+        if (closing) {
+            // Every element closes in the order it opened.
+            if (open.empty() || open.back() != name) return nothing();
+            open.pop_back();
+            if (name == "dialog") {
+                if (!dialog_has_state) return nothing();
+            } else if (name == "dialog-info") closed_info = true;
+            continue;
+        }
+        if (open.empty()) {
+            // The root is dialog-info, once, and says whether it is full or partial.
+            if (name != "dialog-info" || seen_info) return nothing();
+            seen_info = true;
+            std::string state = lower(attribute(attrs, "state"));
+            if (state != "full" && state != "partial") return nothing();
+            info.partial = state == "partial";
+            if (self_closing) closed_info = true;
+            else open.push_back(name);
+            continue;
+        }
+        if (name == "dialog") {
+            // A dialog sits right under dialog-info, with an id and a state.
+            if (open.back() != "dialog-info" || self_closing) return nothing();
+            dialog_id = attribute(attrs, "id");
+            if (dialog_id.empty()) return nothing();
+            dialog_has_state = false;
+            open.push_back(name);
+        } else if (name == "state" && open.back() == "dialog") {
+            if (self_closing || dialog_has_state) return nothing();
             auto text_end = body.find('<', pos);
-            std::string text = lower(trim(body.substr(pos, text_end == std::string::npos ? std::string::npos : text_end - pos)));
+            if (text_end == std::string::npos) return nothing();
+            std::string text = lower(trim(body.substr(pos, text_end - pos)));
+            if (!known_state(text)) return nothing();
             info.dialogs.emplace_back(dialog_id, text);
+            dialog_has_state = true;
+            open.push_back(name);
+        } else if (!self_closing) {
+            // Other elements (local, remote, their children) are passed over,
+            // but they too must close in order.
+            open.push_back(name);
         }
     }
-    // A body cut off before its closing tag is not a report: the state stays
-    // what the last readable one said.
-    info.readable = opened && closed;
-    if (!info.readable) info.dialogs.clear();
+    if (!seen_info || !closed_info || !open.empty()) return nothing();
+    info.readable = true;
     return info;
 }
 std::string codec_list(const std::string &names) {

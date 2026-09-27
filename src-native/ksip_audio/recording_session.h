@@ -7,9 +7,17 @@
 // each) and take the gate for the length of a push; everything else comes
 // on baresip's main thread. Lifetime: module-static state for the one
 // module instance; close() finishes whatever is being recorded and is the
-// last call, after the filter is unregistered so no frame follows it. The
-// outcome of a recording (bytes, dropped samples, a write error) is the
-// stop command's answer; the log line beside it is for reading, not parsing.
+// last call, after the filter is unregistered so no frame follows it.
+//
+// What the app is told, and how: the commands answer at once (started,
+// reserved, switched, stopped; EIO from stop for a file that is incomplete),
+// and the moments the commands cannot answer for come as module events
+// (BEVENT_MODULE, param "ksip_audio_filter,recording,<what>"): "active"
+// when a reserved file is opened and being written, "failed reserved" when
+// that could not be done, and "closed complete|incomplete <bytes> <dropped>"
+// whenever a file is closed, by a stop, a switch or the module's end. The
+// event is the word that counts when a command's answer was lost; the log
+// lines are for reading, not parsing.
 #pragma once
 #include <cmath>
 #include <algorithm>
