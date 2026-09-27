@@ -279,6 +279,20 @@ async function checks(){
   check(stillEditing&&!buttons.editing&&editingWindow===false&&!$('dial').closest('[inert]'),'editing goes on while a call rings, and ends when one starts',[stillEditing,buttons.editing,editingWindow]);
   state.calls=[];render();
 
+  // The DTMF method: shown as stored (none stored is RTP), saved as chosen,
+  // and not a restart; a file brings it in the dialog's spelling.
+  await open({dtmf_mode:'info'});
+  const shownMode=$('dtmf_mode').value;
+  $('dtmf_mode').value='inband';$('dtmf_mode').dispatchEvent(new Event('change',{bubbles:true}));
+  const saveLabel=$('save-settings').textContent;
+  s=await save();
+  await open({});
+  const noneStored=$('dtmf_mode').value;
+  await importFile({settings:{dtmf_mode:'info'}});
+  const imported=$('dtmf_mode').value;
+  check(shownMode==='info'&&s&&s.settings.dtmf_mode==='inband'&&saveLabel==='保存'&&noneStored==='rtp'&&imported==='info','the DTMF method is shown, saved without a restart, RTP when none is stored, and taken from a file',[shownMode,s&&s.settings.dtmf_mode,saveLabel,noneStored,imported]);
+  $('configuration').close();
+
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring
   // it; a fixed button is not edited, moved or dropped on.

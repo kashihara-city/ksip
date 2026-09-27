@@ -41,7 +41,7 @@ A setting a policy decides cannot be changed in the KSIP settings dialog or the 
 The value is written to the value of the same name under HKCU\Software\Policies\KashiharaCity\ksip. KSIP reads it when it starts, so a change takes effect when KSIP starts again.</string>
       <string id="transport_0">UDP (not encrypted)</string>
       <string id="transport_1">TCP (not encrypted)</string>
-      <string id="transport_2">TLS</string>
+      <string id="transport_2">TLS (RFC 3261)</string>
       <string id="media_encryption">Media encryption</string>
       <string id="media_encryption_Help">How call audio is encrypted. SDES and OSRTP carry their keys in the signalling, so KSIP does not connect with them unless the SIP transport is TLS. SDES does not talk to a peer that cannot encrypt; OSRTP falls back to plain audio when the peer returns no key. Disabled deletes the value and, as not configured, returns to the user's own. (default: none)
 
@@ -51,7 +51,7 @@ The value is written to the value of the same name under HKCU\Software\Policies\
       <string id="media_encryption_0">None</string>
       <string id="media_encryption_1">SRTP required (SDES, RFC 4568)</string>
       <string id="media_encryption_2">Try SRTP (OSRTP, RFC 8643)</string>
-      <string id="media_encryption_3">SRTP (DTLS-SRTP)</string>
+      <string id="media_encryption_3">SRTP (DTLS-SRTP, RFC 5764)</string>
       <string id="ca_file">Trusted certificate authority</string>
       <string id="ca_file_Help">Path of the certificate authority (PEM) that TLS verifies the server against, up to 400 characters. Disabled deletes the value and, as not configured, returns to the user's own. (default: the Windows certificate store)
 
@@ -64,6 +64,15 @@ The value is written to the value of the same name under HKCU\Software\Policies\
 A setting a policy decides cannot be changed in the KSIP settings dialog or the button editing, and is shown as set by the administrator. Not configured returns to what the user saved.
 
 The value is written to the value of the same name under HKCU\Software\Policies\KashiharaCity\ksip. KSIP reads it when it starts, so a change takes effect when KSIP starts again.</string>
+      <string id="dtmf_mode">DTMF method</string>
+      <string id="dtmf_mode_Help">How key presses (DTMF) are sent. RTP (RFC 4733) is the usual way; choose SIP INFO or in-band when the PBX asks for it. In-band is sent as sound, so G.711 is the codec it works with most surely. In band, each digit is a 100 ms tone and a 100 ms pause, which meets the timing of Japan’s MIC Notice No. 357 of 2024, Appended Table 2 (push-button dial signals: tone 50 ms or more, pause 30 ms or more, period 120 ms or more). Disabled deletes the value and, as not configured, returns to the user's own. (default: RTP)
+
+A setting a policy decides cannot be changed in the KSIP settings dialog or the button editing, and is shown as set by the administrator. Not configured returns to what the user saved.
+
+The value is written to the value of the same name under HKCU\Software\Policies\KashiharaCity\ksip. KSIP reads it when it starts, so a change takes effect when KSIP starts again.</string>
+      <string id="dtmf_mode_0">RTP (RFC 4733)</string>
+      <string id="dtmf_mode_1">SIP INFO</string>
+      <string id="dtmf_mode_2">In band (as sound)</string>
       <string id="sip_port">Local SIP port</string>
       <string id="sip_port_Help">The port KSIP listens for SIP on, 1024 to 65535. KSIP does not connect when it falls within the RTP ports. Disabled deletes the value and, as not configured, returns to the user's own. (default: 5060)
 
@@ -1000,6 +1009,9 @@ The value is written to the value of the same name under HKCU\Software\Policies\
         <textBox refId="codecs">
           <label>Codecs</label>
         </textBox>
+      </presentation>
+      <presentation id="dtmf_mode">
+        <dropdownList refId="dtmf_mode" noSort="true" defaultItem="0">DTMF method</dropdownList>
       </presentation>
       <presentation id="sip_port">
         <decimalTextBox refId="sip_port" defaultValue="5060" spinStep="1">Port</decimalTextBox>

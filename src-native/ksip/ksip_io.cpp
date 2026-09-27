@@ -20,6 +20,7 @@ bool parse_action(const char *prm, ActionRequest &request) {
     request.op = odict_string(od, "op") ? odict_string(od, "op") : "";
     request.id = odict_string(od, "id") ? odict_string(od, "id") : "";
     request.value = odict_string(od, "value") ? odict_string(od, "value") : "";
+    request.mode = odict_string(od, "mode") ? odict_string(od, "mode") : "";
     mem_deref(od);
     return true;
 }

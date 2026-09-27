@@ -41,7 +41,7 @@
 値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
       <string id="transport_0">UDP（暗号化しない）</string>
       <string id="transport_1">TCP（暗号化しない）</string>
-      <string id="transport_2">TLS</string>
+      <string id="transport_2">TLS（RFC 3261）</string>
       <string id="media_encryption">音声の暗号化</string>
       <string id="media_encryption_Help">通話音声の暗号化。SDES と OSRTP は鍵を信号に載せるため、「SIPの信号の運び方」が TLS でないと KSIP は接続しません。SDES は暗号化できない相手とは通話せず、OSRTP は相手が鍵を返さなければ平文で通話します。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 暗号化しない）
 
@@ -51,7 +51,7 @@
       <string id="media_encryption_0">暗号化しない</string>
       <string id="media_encryption_1">SRTP必須（SDES、RFC 4568）</string>
       <string id="media_encryption_2">SRTPを試す（OSRTP、RFC 8643）</string>
-      <string id="media_encryption_3">SRTP（DTLS-SRTP）</string>
+      <string id="media_encryption_3">SRTP（DTLS-SRTP、RFC 5764）</string>
       <string id="ca_file">信頼する認証局の証明書</string>
       <string id="ca_file_Help">TLSでサーバーを検証する認証局の証明書（PEM）のパス。400文字以内。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: Windowsの証明書ストアで検証）
 
@@ -64,6 +64,15 @@
 ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
 
 値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
+      <string id="dtmf_mode">DTMFの送り方</string>
+      <string id="dtmf_mode_Help">プッシュ信号（DTMF）の送り方です。RTP（RFC 4733）が一般的です。SIP INFO と帯域内は、相手の PBX がそれを求めるときに選んでください。帯域内は音として送るため、コーデックは G.711 が確実です。帯域内の長さは1桁あたり音 100ms・無音 100ms で、令和6年総務省告示第357号 別表第二号（押しボタンダイヤル信号の条件）の時間の条件（送出 50ms 以上、休止 30ms 以上、周期 120ms 以上）を満たします。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: RTP）
+
+ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
+
+値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
+      <string id="dtmf_mode_0">RTP（RFC 4733）</string>
+      <string id="dtmf_mode_1">SIP INFO</string>
+      <string id="dtmf_mode_2">帯域内（音声として送る）</string>
       <string id="sip_port">ローカルSIPポート</string>
       <string id="sip_port_Help">KSIPがSIPを待ち受けるポート。1024〜65535。RTPのポート範囲と重なると接続しません。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 5060）
 
@@ -1000,6 +1009,9 @@
         <textBox refId="codecs">
           <label>コーデック</label>
         </textBox>
+      </presentation>
+      <presentation id="dtmf_mode">
+        <dropdownList refId="dtmf_mode" noSort="true" defaultItem="0">DTMFの送り方</dropdownList>
       </presentation>
       <presentation id="sip_port">
         <decimalTextBox refId="sip_port" defaultValue="5060" spinStep="1">ポート</decimalTextBox>

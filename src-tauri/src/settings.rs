@@ -26,6 +26,10 @@ pub struct Settings {
     pub media_encryption: String,
     /// The audio codecs to offer, by name, in order; empty offers all of them.
     pub codecs: String,
+    /// How a DTMF digit is sent: `rtp` (RFC 4733 events), `info` (SIP INFO)
+    /// or `inband` (the tones as sound). Read for each digit, so a change
+    /// needs no restart.
+    pub dtmf_mode: String,
     pub auto_answer: bool,
     pub aec: bool,
     pub aec_delay_ms: u16,
@@ -197,6 +201,7 @@ impl Default for Settings {
             ca_file: String::new(),
             media_encryption: String::new(),
             codecs: String::new(),
+            dtmf_mode: "rtp".into(),
         }
     }
 }
@@ -317,6 +322,7 @@ impl Settings {
             ("ca_file", text(&self.ca_file)),
             ("media_encryption", text(&self.media_encryption)),
             ("codecs", text(&self.codecs)),
+            ("dtmf_mode", text(&self.dtmf_mode)),
             ("auto_answer", flag(self.auto_answer)),
             ("aec", flag(self.aec)),
             ("aec_delay_ms", Number(self.aec_delay_ms.into())),
@@ -386,6 +392,8 @@ impl Settings {
         r.text("media_encryption", &mut s.media_encryption);
         s.media_encryption = s.media_encryption.to_ascii_lowercase();
         r.text("codecs", &mut s.codecs);
+        r.text("dtmf_mode", &mut s.dtmf_mode);
+        s.dtmf_mode = s.dtmf_mode.to_ascii_lowercase();
         r.flag("auto_answer", &mut s.auto_answer);
         r.flag("aec", &mut s.aec);
         r.number("aec_delay_ms", &mut s.aec_delay_ms);
@@ -494,6 +502,8 @@ impl Settings {
     /// The strengths the noise suppression setting can name.
     pub const NOISE_SUPPRESSION_LEVELS: [&'static str; 5] =
         ["off", "low", "moderate", "high", "very_high"];
+    /// The ways a DTMF digit can be sent.
+    pub const DTMF_MODES: [&'static str; 3] = ["rtp", "info", "inband"];
     /// The codecs to offer, in order: the setting's names, each once, or all
     /// of them when it names none. A PBX that answers one codec and sends
     /// another garbles what the far end hears; the order is how a site steers
@@ -764,6 +774,7 @@ fn offered_choice(name: &str, value: &serde_json::Value) -> Option<serde_json::V
         "transport" => Transport::parse(text).map(|t| t.name().to_string()),
         "media_encryption" => MediaEncryption::parse(text).map(|m| m.name().to_string()),
         "noise_suppression" => Settings::NOISE_SUPPRESSION_LEVELS.contains(&text).then(|| text.to_string()),
+        "dtmf_mode" => Settings::DTMF_MODES.contains(&text.to_ascii_lowercase().as_str()).then(|| text.to_ascii_lowercase()),
         "incoming_action" => matches!(text, "show" | "notify").then(|| text.to_string()),
         "codecs" => offered_codecs(text),
         _ => Some(text.to_string()),
@@ -919,6 +930,9 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     }
     if !Settings::NOISE_SUPPRESSION_LEVELS.contains(&s.noise_suppression.as_str()) {
         return Err(message("SETTINGS_NOISE_SUPPRESSION_INVALID"));
+    }
+    if !Settings::DTMF_MODES.contains(&s.dtmf_mode.as_str()) {
+        return Err(message("SETTINGS_DTMF_MODE_INVALID"));
     }
     if !(30..=3600).contains(&s.register_interval) {
         return Err(message("SETTINGS_REGISTER_INTERVAL_RANGE"));
@@ -1648,6 +1662,7 @@ mod tests {
             ca_file: r"C:\ca.pem".into(),
             media_encryption: "sdes".into(),
             codecs: "PCMU,opus".into(),
+            dtmf_mode: "inband".into(),
             auto_answer: true,
             aec: false,
             aec_delay_ms: 40,
@@ -1980,10 +1995,10 @@ mod tests {
         let read = |settings: serde_json::Value| import_settings(&serde_json::json!({"format": 1, "settings": settings}).to_string(), |_| false).unwrap();
         // Choices in another spelling come in the dialog's.
         let taken = read(serde_json::json!({
-            "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify",
+            "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "INFO",
             "buttons": [{"kind": "park"}, {"kind": ""}]
         }));
-        assert_eq!(taken["settings"], serde_json::json!({"transport": "tls", "media_encryption": "sdes", "codecs": "PCMU,opus,G722", "noise_suppression": "low", "incoming_action": "notify"}));
+        assert_eq!(taken["settings"], serde_json::json!({"transport": "tls", "media_encryption": "sdes", "codecs": "PCMU,opus,G722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "info"}));
         assert_eq!(taken["buttons"], serde_json::json!([{"n": 1, "kind": "park"}, {"n": 2, "kind": ""}]));
         assert!(taken["invalid"].as_array().unwrap().is_empty());
         // An empty transport, encryption or codec list means something, and
@@ -1994,14 +2009,14 @@ mod tests {
         // out of the field's reach: named, and not taken.
         let refused = read(serde_json::json!({
             "transport": "quic", "media_encryption": "future-encryption", "codecs": "PCMU,G729", "noise_suppression": "HIGH",
-            "incoming_action": "popup", "sip_port": 70000, "rtp_port": -2, "tray_after_call": 1.5,
+            "incoming_action": "popup", "sip_port": 70000, "rtp_port": -2, "tray_after_call": 1.5, "dtmf_mode": "tones",
             "buttons": [{"kind": "call", "number": "1001"}]
         }));
         assert_eq!(refused["settings"], serde_json::json!({}));
         assert_eq!(refused["buttons"], serde_json::json!([{"n": 1, "number": "1001"}]));
         assert_eq!(
             refused["invalid"],
-            serde_json::json!(["button_1_kind", "codecs", "incoming_action", "media_encryption", "noise_suppression", "rtp_port", "sip_port", "transport", "tray_after_call"])
+            serde_json::json!(["button_1_kind", "codecs", "dtmf_mode", "incoming_action", "media_encryption", "noise_suppression", "rtp_port", "sip_port", "transport", "tray_after_call"])
         );
         assert_eq!(read(serde_json::json!({"codecs": "PCMU,pcmu"}))["invalid"], serde_json::json!(["codecs"]));
     }

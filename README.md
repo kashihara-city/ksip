@@ -225,6 +225,7 @@ ksip.exe ksip:ANSWER
 | `transport`            | 文字列 | SIPの信号の運び方。`udp`・`tcp`（どちらも暗号化なし）か `tls`。設定画面では「SIPの暗号化」として選び、TLS以外ではSDESとOSRTPは選べません。切り替えると、ポートが既定値のときだけ5060と5061を入れ替えます。これ以外の値は保存も起動も拒否します                                                                                                                                                                                           | `udp`（暗号化しない）                                 | ○            | ○             |
 | `media_encryption`     | 文字列 | 音声の暗号化。`sdes`＝SRTP必須（RFC 4568。鍵を信号に載せ、RTP/SAVPで提示する。暗号化できない相手とは通話しない）、`osrtp`＝SRTPを試す（RFC 8643。同じ鍵をRTP/AVPで提示し、相手が鍵を返さなければ平文で通話する。平文から暗号化へ移行する間の設定で、平文になった通話は「暗号化なし」を赤で出す）、`dtls`＝SRTP（鍵をメディア経路で交換）。`sdes` と `osrtp` は `transport` が `tls` でないと保存も起動も拒否し、これ以外の値も拒否します | 暗号化しない                                          | ○            | ○             |
 | `codecs`               | 文字列 | 使う音声コーデックと順位。`opus`・`G722`・`PCMU`・`PCMA` を提示する順にカンマ区切りで並べる。書かないものは使わない。名前の重複と知らない名前は保存しない                                                                                                                                                                                                                                                                                | 4つ全部をこの順で提示                                 | ○            | ○             |
+| `dtmf_mode`            | 文字列 | DTMF（プッシュ信号）の送り方。`rtp`＝RTPの電話イベント（RFC 4733）、`info`＝SIP INFO、`inband`＝帯域内（音 100ms・無音 100ms。令和6年総務省告示第357号 別表第二号の時間の条件を満たす）。`rtp` で相手が電話イベントを受け付けていないときは、送らずにそう表示する                                                                                                                                                                        | `rtp`                                                 | ○            | ○             |
 | `ca_file`              | 文字列 | 信頼する認証局の証明書（PEM）のパス。400文字以内                                                                                                                                                                                                                                                                                                                                                                                         | Windowsの証明書ストアで検証                           | ○            | ○             |
 | `network_adapter`      | 文字列 | 使うネットワークアダプター。`GetAdaptersAddresses()` の `AdapterName`（`{GUID}` 形式）                                                                                                                                                                                                                                                                                                                                                   | 全インターフェイスで待ち受け、送信元はWindowsが選ぶ   | ○            | ×（端末固有） |
 | `sip_port`             | 整数   | ローカルSIP待受ポート。1024以上                                                                                                                                                                                                                                                                                                                                                                                                          | `5060`                                                | ○            | ○             |
@@ -462,6 +463,7 @@ python -X utf8 scripts/test/pbx-tls.py
 python -X utf8 scripts/test/pbx-osrtp.py
 python -X utf8 scripts/test/pbx-pai.py
 python -X utf8 scripts/test/pbx-blf-54.py
+python -X utf8 scripts/test/pbx-dtmf.py
 python -X utf8 scripts/test/pbx-record-switch.py
 python -X utf8 scripts/test/pbx-early-media.py
 python -X utf8 scripts/test/pbx-playback.py
@@ -549,7 +551,7 @@ python -X utf8 scripts/test/sandbox-admx.py
 
 サンドボックスを起動し、中で `docs/admx` を `PolicyDefinitions` に置いて gpedit（ローカル グループ ポリシー エディター）を UIAutomation で操作します（中の台本は `scripts/test/sandbox-admx.ps1`）。確かめるのは次のとおりです。
 
-- 読み込み時にエラーが出ず、KSIP の各カテゴリに84のポリシーがそろって並ぶこと
+- 読み込み時にエラーが出ず、KSIP の各カテゴリに85のポリシーがそろって並ぶこと
 - 真偽（`aec`）・数値（`sip_port`）・選択（`transport`）・文字列（`server`）・カスタムボタン（`button_1` の5値）を有効・無効・未構成にして `gpupdate` したとき、`HKCU\Software\Policies\KashiharaCity\ksip` に期待どおりの型と値が書かれる（未構成では消える。無効では、真偽は `0`、それ以外は消える）こと
 
 1回6分ほどかかります。サンドボックスは同時に1つしか動かないので、開いているときは閉じてから流してください。実行中はサンドボックスの画面を操作しないでください（キー入力で項目を選んでいます）。結果は `temp/reports/sandbox-admx.json` に残ります。

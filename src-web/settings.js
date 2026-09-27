@@ -147,7 +147,7 @@ export function openSettings(){
   const dropped=setCodecs(state.settings.codecs);
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;
   $('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';
-  setChoice($('incoming_action'),state.settings.incoming_action||'show');$('tray_after_call').value=state.settings.tray_after_call??-1;
+  setChoice($('incoming_action'),state.settings.incoming_action||'show');setChoice($('dtmf_mode'),state.settings.dtmf_mode||'rtp');$('tray_after_call').value=state.settings.tray_after_call??-1;
   setChoice($('language'),state.settings.language||'');$('program_integration').checked=!!state.settings.program_integration;$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
   // The app reads these two whatever their case and spaces; the list has them in lower case.
   $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();
@@ -201,7 +201,7 @@ async function calibrateAec(careful){
 // has it. Nothing is saved until the dialog is.
 const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
-const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language'];
+const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language','dtmf_mode'];
 const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
 const isChoice=key=>CHOICES.includes(key)||/^button_\d+_kind$/.test(key);
 // One value into the dialog, and whether the dialog shows it.
@@ -283,7 +283,7 @@ function heldSettings(){
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
     pbx_only:$('pbx_only').checked,program_integration:$('program_integration').checked,
     browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,
-    transport:$('transport').value,media_encryption:$('media_encryption').value,
+    transport:$('transport').value,media_encryption:$('media_encryption').value,dtmf_mode:$('dtmf_mode').value,
     // Every codec in the usual order is what an empty setting means: the
     // empty one is kept, so that a save that changed nothing changes nothing.
     codecs:tickedCodecs()===CODEC_NAMES.join(',')&&!state.settings.codecs?'':tickedCodecs(),

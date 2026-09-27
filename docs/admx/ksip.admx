@@ -114,6 +114,29 @@
         <text id="codecs" valueName="codecs" maxLength="100" />
       </elements>
     </policy>
+    <policy name="dtmf_mode" class="User" displayName="$(string.dtmf_mode)" explainText="$(string.dtmf_mode_Help)" presentation="$(presentation.dtmf_mode)" key="Software\Policies\KashiharaCity\ksip">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <enum id="dtmf_mode" valueName="dtmf_mode" required="true">
+          <item displayName="$(string.dtmf_mode_0)">
+            <value>
+              <string>rtp</string>
+            </value>
+          </item>
+          <item displayName="$(string.dtmf_mode_1)">
+            <value>
+              <string>info</string>
+            </value>
+          </item>
+          <item displayName="$(string.dtmf_mode_2)">
+            <value>
+              <string>inband</string>
+            </value>
+          </item>
+        </enum>
+      </elements>
+    </policy>
     <policy name="sip_port" class="User" displayName="$(string.sip_port)" explainText="$(string.sip_port_Help)" presentation="$(presentation.sip_port)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />

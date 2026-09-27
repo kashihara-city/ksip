@@ -2,6 +2,7 @@
 #include "calls.h"
 #include "sip_account.h"
 #include "transfer.h"
+#include "inband_dtmf.h"
 #include <cstring>
 #include <unordered_map>
 
@@ -179,6 +180,19 @@ int action(re_printf *pf, const ActionRequest &request) {
     if (op == "hold") return call_state(c) == CALL_STATE_ESTABLISHED ? call_hold(c, true) : EINVAL;
     if (op == "resume") return call_state(c) == CALL_STATE_ESTABLISHED ? uag_hold_resume(c) : EINVAL;
     if (op == "dtmf" && value.size() == 1 && strchr("0123456789*#", value[0])) {
+        if (!c || call_state(c) != CALL_STATE_ESTABLISHED) return EINVAL;
+        // In band: the tones go out as sound on this call (inband_dtmf.h).
+        if (request.mode == "inband") return inband_dtmf::queue(call_audio(c), value[0]) ? 0 : EOVERFLOW;
+        if (request.mode != "info" && request.mode != "rtp") return EINVAL;
+        // The account's mode is what baresip reads for each digit; it is set
+        // for each digit, so that a changed setting needs no restart.
+        account_set_dtmfmode(call_account(c), request.mode == "info" ? DTMFMODE_SIP_INFO : DTMFMODE_RTP_EVENT);
+        // An RFC 4733 event needs the peer to have taken telephone-event;
+        // without it baresip drops the digit without a word, so this says so.
+        if (request.mode == "rtp" && !sdp_media_rformat(stream_sdpmedia(audio_strm(call_audio(c))), telev_rtpfmt)) {
+            (void)re_hprintf(pf, "DTMF_RTP_NOT_OFFERED");
+            return ENOTSUP;
+        }
         err = call_send_digit(c, value[0]);
         if (!err) err = call_send_digit(c, KEYCODE_REL);
         return err;

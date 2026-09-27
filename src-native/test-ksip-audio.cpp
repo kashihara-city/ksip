@@ -5,9 +5,11 @@
 // Built and run by scripts/test/audio-module.ps1.
 #include "ksip_audio/recorder.h"
 #include "ksip_audio/session_core.h"
+#include "ksip_audio/inband_dtmf_tone.h"
 #include "ksip/ksip_text.h"
 #include "webrtc/callback_gate.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -638,6 +640,49 @@ void numbers_and_lists_are_checked() {
     check(ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk) && mic == "{mic}" && spk == "{spk}", "the two endpoint ids");
     check(!ksip_text::parse_audio_devices("{mic}", 160, mic, spk), "one id is not enough");
 }
+// The power of one frequency in a run of samples (Goertzel), as the square
+// of its amplitude.
+double tone_power(const std::vector<double> &samples, double frequency, unsigned srate) {
+    const double k = 2 * std::cos(2 * 3.14159265358979323846 * frequency / srate);
+    double s1 = 0, s2 = 0;
+    for (double x : samples) {
+        const double s0 = x + k * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    const double n = double(samples.size());
+    return (s1 * s1 + s2 * s2 - k * s1 * s2) * 4 / (n * n);
+}
+void an_inband_digit_is_its_two_tones_for_as_long_as_the_rules_ask() {
+    const double lows[] = {697, 770, 852, 941}, highs[] = {1209, 1336, 1477, 1633};
+    for (unsigned srate : {8000u, 16000u, 48000u}) {
+        // MIC Notice No. 357 of 2024, Appended Table 2: tone 50 ms or more,
+        // pause 30 ms or more, period 120 ms or more.
+        check(inband_dtmf::tone_samples(srate) * 1000 / srate >= 50, "the tone lasts at least 50 ms");
+        check((inband_dtmf::period_samples(srate) - inband_dtmf::tone_samples(srate)) * 1000 / srate >= 30, "the pause lasts at least 30 ms");
+        check(inband_dtmf::period_samples(srate) * 1000 / srate >= 120, "a digit's period is at least 120 ms");
+        for (char digit : std::string("0123456789*#")) {
+            double low = 0, high = 0;
+            check(inband_dtmf::frequencies(digit, low, high), "a key of the keypad is a digit");
+            std::vector<double> tone, pause;
+            for (uint64_t i = 0; i < inband_dtmf::period_samples(srate); ++i)
+                (i < inband_dtmf::tone_samples(srate) ? tone : pause).push_back(inband_dtmf::sample(digit, i, srate));
+            // Its own two frequencies and none of the other six.
+            const double lp = tone_power(tone, low, srate), hp = tone_power(tone, high, srate);
+            double stray = 0;
+            for (double f : lows) if (f != low) stray = std::max(stray, tone_power(tone, f, srate));
+            for (double f : highs) if (f != high) stray = std::max(stray, tone_power(tone, f, srate));
+            check(lp > 100 * stray && hp > 100 * stray, "a digit sounds its own two frequencies, not the others");
+            // The high group 2 dB over the low, within the table's 5 dB, the low never above.
+            const double twist = 10 * std::log10(hp / lp);
+            check(twist > 1.5 && twist < 2.5, "the high tone is 2 dB above the low one");
+            check(std::all_of(pause.begin(), pause.end(), [](double x) { return x == 0; }), "the pause is silence");
+            check(std::all_of(tone.begin(), tone.end(), [](double x) { return std::fabs(x) < 1; }), "the tone never clips");
+        }
+    }
+    double low = 0, high = 0;
+    check(!inband_dtmf::frequencies('E', low, high) && !inband_dtmf::frequencies(0, low, high), "anything else is not a digit");
+}
 } // namespace
 
 int main() {
@@ -645,6 +690,7 @@ int main() {
     a_header_is_found_however_it_is_spaced();
     dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off();
     numbers_and_lists_are_checked();
+    an_inband_digit_is_its_two_tones_for_as_long_as_the_rules_ask();
     the_newest_player_has_the_stream_and_the_one_before_gets_it_back();
     a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from();
     a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle();

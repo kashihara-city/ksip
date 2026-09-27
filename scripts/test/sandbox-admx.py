@@ -199,7 +199,7 @@ def report(result, plan):
         got = sorted(seen.get('items') or [])
         check(wanted == got, f"{' > '.join(p[lang] for p in entry['path']) if lang else entry['path']}: {len(got)}/{len(wanted)} policies listed")
     total = sum(len(e['policies']) for e in plan['listing'])
-    check(sum(len(s.get('items') or []) for s in shown) == total == 84, f'all {total} policies are listed')
+    check(sum(len(s.get('items') or []) for s in shown) == total == 85, f'all {total} policies are listed')
     for (policy, state, _, expect), step in zip(STEPS, result.get('steps') or []):
         if step.get('error'):
             check(False, f'{policy} {state}: {step["error"]}')

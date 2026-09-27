@@ -2157,8 +2157,15 @@ async fn action(s: &Shared, name: &str, id: &str, value: &str, line: u8) -> Resu
         }
         target
     };
-    let payload = serde_json::to_string(&json!({"op":name,"id":id,"value":target})).map_err(err)?;
-    let (_, result) = request(s, "ksip_action", &payload).await?;
+    // A digit goes the way the settings say (read for each one, so a saved
+    // change needs no restart); the engine says when the peer took no
+    // RFC 4733 events, which would otherwise drop the digit silently.
+    let mode = if name == "dtmf" { s.borrow().view.settings.dtmf_mode.clone() } else { String::new() };
+    let payload = serde_json::to_string(&json!({"op":name,"id":id,"value":target,"mode":mode})).map_err(err)?;
+    let (_, result) = match request(s, "ksip_action", &payload).await {
+        Err(RequestError::Remote { detail, .. }) if detail.trim() == "DTMF_RTP_NOT_OFFERED" => return Err(message("DTMF_RTP_NOT_OFFERED")),
+        other => other?,
+    };
     {
         let mut p = s.borrow_mut();
         if name == "dnd" {

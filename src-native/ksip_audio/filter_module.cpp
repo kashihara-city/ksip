@@ -1,5 +1,6 @@
 // The audio filter module: registers a filter on every call's send and
-// receive path (the software gain, and the samples the recording takes)
+// receive path (the software gain, in-band DTMF, and the samples the
+// recording takes)
 // and the commands that start, switch and stop a recording and set the
 // gain. What is recorded is the recording session's business.
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include "recording_session.h"
+#include "inband_dtmf.h"
 
 namespace {
 std::atomic<float> microphone_gain{1.f};
@@ -43,6 +45,7 @@ void destroy_decode(void *p) {
 void destroy_encode(void *p) {
     auto e = static_cast<Encode *>(p);
     list_unlink(&e->base.le);
+    inband_dtmf::forget(e->stream);
 }
 int update_encode(aufilt_enc_st **st, void **, const aufilt *, aufilt_prm *, const audio *stream) {
     if (*st) return 0;
@@ -53,8 +56,12 @@ int update_encode(aufilt_enc_st **st, void **, const aufilt *, aufilt_prm *, con
     return 0;
 }
 int process_encode(aufilt_enc_st *st, auframe *f) {
+    auto stream = reinterpret_cast<Encode *>(st)->stream;
     amplify(f, microphone_gain.load(std::memory_order_relaxed));
-    recording_session::near_frame(reinterpret_cast<Encode *>(st)->stream, f);
+    // After the gain, so that a tone goes at its own level; before the
+    // recording, which keeps what the other side heard.
+    inband_dtmf::fill(stream, f);
+    recording_session::near_frame(stream, f);
     return 0;
 }
 int update_decode(aufilt_dec_st **st, void **, const aufilt *, aufilt_prm *p, const audio *stream) {

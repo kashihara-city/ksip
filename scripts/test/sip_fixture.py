@@ -265,7 +265,9 @@ module ksip.dll
         """What the engine has logged so far."""
         self.log.flush()
         return (self.dir/'engine.log').read_bytes().decode('utf-8','replace').replace(chr(13),chr(10))
-    def action(self,op,id='',value=''):return self.command('ksip_action',json.dumps(dict(op=op,id=id,value=value))).strip()
+    def action(self,op,id='',value='',mode=''):
+        """mode: how a DTMF digit goes (rtp, info or inband), as the app sends it."""
+        return self.command('ksip_action',json.dumps(dict(op=op,id=id,value=value,mode=mode))).strip()
     def state(self):return json.loads(self.command('ksip_state'))
     def wait(self,predicate,timeout=12):
         end=time.monotonic()+timeout

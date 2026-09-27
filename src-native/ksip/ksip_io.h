@@ -30,8 +30,10 @@ std::string display_name(const pl &name);
 // Writes the scrubbed lines to the log, marked as sent or received.
 void log_sip_message(bool tx, const uint8_t *packet, size_t length);
 // What the app asks of a call: the JSON of ksip_action read into its parts.
+// An operation on a call; `mode` is how a DTMF digit is sent (rtp, info or
+// inband), the other operations leave it empty.
 struct ActionRequest {
-    std::string op, id, value;
+    std::string op, id, value, mode;
 };
 bool parse_action(const char *prm, ActionRequest &request);
 // The echo canceller's statistics as the state reply carries them.
