@@ -26,37 +26,65 @@ async function fillAdapters(selected){
   if(selected&&!adapters.some(adapter=>adapter.name===selected))add(selected,fill('ADAPTER_MISSING',selected));
   select.value=selected;
 }
-// The list shows the given order first, ticked, then the rest unticked in the usual order.
+// The list shows the given order first, ticked, then the rest unticked in the
+// usual order; none given ticks them all, as the app then offers them all. A
+// name is matched whatever its case, as the app reads it. The names the list
+// cannot show (ones this version does not have, or one given twice) are
+// returned, for the dialog to say that saving drops them.
+function codecNames(codecs){
+  const given=String(codecs??'').split(',').map(s=>s.trim()).filter(Boolean),order=[],dropped=[];
+  for(const name of given){const known=CODEC_NAMES.find(n=>n.toLowerCase()===name.toLowerCase());if(known&&!order.includes(known))order.push(known);else dropped.push(name);}
+  return {inUse:given.length?order:CODEC_NAMES,dropped};
+}
 function setCodecs(codecs){
-  const codecOrder=(codecs||'').split(',').map(s=>s.trim()).filter(Boolean),codecsInUse=codecOrder.length?codecOrder:CODEC_NAMES,codecList=$('codec-list');
-  for(const name of [...codecsInUse,...CODEC_NAMES.filter(n=>!codecsInUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=codecsInUse.includes(name);}}
+  const {inUse,dropped}=codecNames(codecs),codecList=$('codec-list');
+  for(const name of [...inUse,...CODEC_NAMES.filter(n=>!inUse.includes(n))]){const row=codecList.querySelector(`[data-codec="${name}"]`);if(row){codecList.appendChild(row);row.querySelector('input').checked=inUse.includes(name);}}
+  return dropped;
+}
+// The ticked codecs in their order, as the setting names them.
+const tickedCodecs=()=>[...$('codec-list').querySelectorAll('li')].filter(li=>li.querySelector('input').checked).map(li=>li.dataset.codec).join(',');
+// A choice of a list. A value the list does not have is shown as an option
+// of its own, marked as unknown, rather than as nothing: nothing means
+// something for some of these (no encryption, UDP), and the dialog would
+// save it. Saved as it is, the save's own check then refuses what this
+// version does not know.
+function setChoice(select,value){
+  const text=String(value??'');
+  for(const option of [...select.options])if('unknown' in option.dataset&&option.value!==text)option.remove();
+  if(![...select.options].some(option=>option.value===text)){const option=document.createElement('option');option.value=text;option.textContent=fill('SETTINGS_CHOICE_UNKNOWN',text);option.dataset.unknown='';select.append(option);}
+  select.value=text;
 }
 export function openSettings(){
   carried={};$('settings-file-note').hidden=true;
   for(const key of ['server','port','extension','auth_user'])$(key).value=state.account[key]??'';
   for(const key of ['sip_port','rtp_port'])$(key).value=state.settings[key];
-  for(const n of BUTTON_INDEXES){const b=(state.settings.buttons||[])[n-1]||{};$('button_'+n+'_title').value=b.title||'';$('button_'+n+'_kind').value=b.kind||'';$('button_'+n+'_number').value=b.number||'';$('button_'+n+'_transfer').value=b.transfer||'';$('button_'+n+'_pickup').value=b.pickup||'';syncButtonRow(n);}
+  for(const n of BUTTON_INDEXES){const b=(state.settings.buttons||[])[n-1]||{};$('button_'+n+'_title').value=b.title||'';setChoice($('button_'+n+'_kind'),b.kind||'');$('button_'+n+'_number').value=b.number||'';$('button_'+n+'_transfer').value=b.transfer||'';$('button_'+n+'_pickup').value=b.pickup||'';syncButtonRow(n);}
   fillAdapters(state.settings.network_adapter||'');
   for(const key of ['sound_ring', 'sound_ringback', 'sound_busy', 'sound_notfound', 'sound_error'])$(key).value=state.settings[key]||'';
-  setCodecs(state.settings.codecs);
+  const dropped=setCodecs(state.settings.codecs);
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;
   $('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';
-  $('incoming_action').value=state.settings.incoming_action==='notify'?'notify':'show';$('tray_after_call').value=state.settings.tray_after_call??-1;
-  $('language').value=state.settings.language||'';$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
-  $('transport').value=state.settings.transport||'udp';$('media_encryption').value=state.settings.media_encryption||'';syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
+  setChoice($('incoming_action'),state.settings.incoming_action||'show');$('tray_after_call').value=state.settings.tray_after_call??-1;
+  setChoice($('language'),state.settings.language||'');$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
+  // The app reads these two whatever their case and spaces; the list has them in lower case.
+  setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
-  $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;$('noise_suppression').value=state.settings.noise_suppression||'high';$('agc').checked=!!state.settings.agc;
+  $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;
   $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
+  if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
   $('settings-error').hidden=true;$('configuration').showModal();
 }
 // SDES and OSRTP carry their keys in the signalling, so they are offered only
-// while the signalling is TLS; the note under the choice says so.
+// while the signalling is TLS; the note under the choice says so. One already
+// chosen stays chosen when the transport changes: the note then says it needs
+// TLS and the save refuses it, so that the encryption is never turned off
+// without someone choosing that.
 function syncEncryptionChoices(){
   const tls=$('transport').value==='tls',media=$('media_encryption');
-  for(const option of media.options){if(option.value==='sdes'||option.value==='osrtp'){option.hidden=!tls;option.disabled=!tls;}}
-  if(!tls&&(media.value==='sdes'||media.value==='osrtp'))media.value='';
-  const note=$('media-encryption-note');note.textContent=tls?'':t('SETTINGS_MEDIA_TLS_ONLY');note.hidden=tls;
+  for(const option of media.options){if(option.value==='sdes'||option.value==='osrtp'){option.hidden=!tls&&!option.selected;option.disabled=!tls;}}
+  const stranded=!tls&&(media.value==='sdes'||media.value==='osrtp');
+  const note=$('media-encryption-note');note.textContent=tls?'':t(stranded?'SETTINGS_SDES_NEEDS_TLS':'SETTINGS_MEDIA_TLS_ONLY');note.hidden=tls;
 }
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that
@@ -75,28 +103,61 @@ async function calibrateAec(careful){
   catch(e){$('calibration-status').textContent=t(String(e));logUi('aec calibration',e);}
 }
 // A settings file's values (as import_settings_file hands them over) go
-// into the dialog; what the file leaves out stays as the dialog has it.
-// Nothing is saved until the dialog is.
+// into the dialog as they are; what the file leaves out stays as the dialog
+// has it. Nothing is saved until the dialog is.
 const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
+const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language'];
+const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
+const isChoice=key=>CHOICES.includes(key)||/^button_\d+_kind$/.test(key);
+// One value into the dialog, and whether the dialog shows it.
+function showSetting(key,value){
+  if(SWITCHES.includes(key))$(key).checked=value;
+  else if(CARRIED.includes(key))carried[key]=value;
+  else if(key==='codecs')setCodecs(value);
+  else if(isChoice(key))setChoice($(key),value);
+  else if($(key))$(key).value=value;
+}
+function shows(key,value){
+  if(SWITCHES.includes(key))return $(key).checked===value;
+  if(CARRIED.includes(key))return carried[key]===value;
+  // In the dialog's names; an empty list offers every codec, and the dialog ticks them all.
+  if(key==='codecs'){const {inUse,dropped}=codecNames(value);return !dropped.length&&tickedCodecs()===inUse.join(',');}
+  return !!$(key)&&$(key).value===String(value);
+}
+// What the dialog holds, to put back when a file is not taken after all.
+function snapshot(){
+  const fields=[...$('settings-form').querySelectorAll('input,select')].map(el=>({el,value:el.value,checked:el.checked,options:el.tagName==='SELECT'?[...el.options]:null}));
+  return {fields,codecs:[...$('codec-list').children],carried:{...carried}};
+}
+function restore(before){
+  for(const {el,options} of before.fields)if(options)el.replaceChildren(...options);
+  $('codec-list').replaceChildren(...before.codecs);
+  for(const {el,value,checked} of before.fields){el.value=value;el.checked=checked;}
+  carried=before.carried;
+  syncEncryptionChoices();for(const n of BUTTON_INDEXES)syncButtonRow(n);
+}
+// Every value the file gives is shown as it is, or none is taken: a file
+// that would change the dialog in a way it does not say (a choice the list
+// lacks read as nothing, SDES left on UDP) leaves the dialog as it was.
 function applyImport(file){
-  const settings=file.settings||{};
-  // The transport first: the media encryption offers SDES and OSRTP only under TLS.
-  if('transport' in settings){$('transport').value=settings.transport||'udp';syncEncryptionChoices();}
-  for(const [key,value] of Object.entries(settings)){
-    if(key==='transport'||key==='media_encryption')continue;
-    if(SWITCHES.includes(key))$(key).checked=!!value;
-    else if(CARRIED.includes(key))carried[key]=value;
-    else if(key==='codecs')setCodecs(value);
-    else if($(key))$(key).value=value;
+  const settings=file.settings||{},account=file.account||{},buttons=(file.buttons||[]).filter(b=>BUTTON_INDEXES.includes(b.n));
+  // The encryption as it would stand with the file in, from the file and
+  // what the dialog holds: keys in the signalling need TLS.
+  if('transport' in settings||'media_encryption' in settings){
+    const transport=settings.transport??$('transport').value,media=settings.media_encryption??$('media_encryption').value;
+    if(transport!=='tls'&&(media==='sdes'||media==='osrtp'))throw t('SETTINGS_IMPORT_NEEDS_TLS');
   }
-  if('media_encryption' in settings){$('media_encryption').value=settings.media_encryption;syncEncryptionChoices();}
-  for(const button of file.buttons||[]){
-    const n=button.n;if(!BUTTON_INDEXES.includes(n))continue;
-    for(const field of ['title','kind','number','transfer','pickup'])if(field in button)$('button_'+n+'_'+field).value=button[field];
-    syncButtonRow(n);
-  }
-  for(const key of ['server','port','extension'])if(key in (file.account||{}))$(key).value=file.account[key];
+  const given=[
+    ...Object.entries(settings),
+    ...buttons.flatMap(b=>BUTTON_FIELDS.filter(field=>field in b).map(field=>['button_'+b.n+'_'+field,b[field]])),
+    ...['server','port','extension'].filter(key=>key in account).map(key=>[key,account[key]]),
+  ];
+  const before=snapshot();
+  for(const [key,value] of given)showSetting(key,value);
+  syncEncryptionChoices();for(const b of buttons)syncButtonRow(b.n);
+  const notShown=given.filter(([key,value])=>!shows(key,value)).map(([key])=>key);
+  if(notShown.length){restore(before);throw fill('SETTINGS_IMPORT_NOT_SHOWN',notShown.join(', '));}
   const passedOver=[...(file.unreadable||[]),...(file.invalid||[])];
   const note=$('settings-file-note');
   note.textContent=t('SETTINGS_IMPORTED')+(passedOver.length?' '+fill('SETTINGS_IMPORT_PASSED_OVER',passedOver.join(', ')):'');
@@ -118,7 +179,7 @@ function collectSettings(){
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
     browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,
     transport:$('transport').value,media_encryption:$('media_encryption').value,
-    codecs:[...$('codec-list').querySelectorAll('li')].filter(li=>li.querySelector('input').checked).map(li=>li.dataset.codec).join(','),
+    codecs:tickedCodecs(),
     ca_file:$('ca_file').value.trim(),
     sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim(),
   };
@@ -135,6 +196,7 @@ export function init(){
     if(port.value.trim()===(tls?'5060':'5061'))port.value=tls?'5061':'5060';
     syncEncryptionChoices();
   });
+  $('media_encryption').addEventListener('change',syncEncryptionChoices);
   for(const n of BUTTON_INDEXES)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
   $('choose-ca').addEventListener('click',async()=>{
     try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen)$('ca_file').value=chosen;}
@@ -145,12 +207,12 @@ export function init(){
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi('choose sound file',e);}
   });
   $('import-settings').addEventListener('click',async()=>{
-    $('settings-error').hidden=true;
+    $('settings-error').hidden=true;$('settings-file-note').hidden=true;
     try{const file=await invoke('import_settings_file');if(file)applyImport(file);}
     catch(e){showFileError('import settings',e);}
   });
   $('export-settings').addEventListener('click',async()=>{
-    $('settings-error').hidden=true;
+    $('settings-error').hidden=true;$('settings-file-note').hidden=true;
     try{const path=await invoke('export_settings_file');if(path){const note=$('settings-file-note');note.textContent=fill('SETTINGS_EXPORTED',path);note.hidden=false;}}
     catch(e){showFileError('export settings',e);}
   });
@@ -159,6 +221,8 @@ export function init(){
   $('settings-form').addEventListener('submit',async e=>{
     e.preventDefault();$('settings-error').hidden=true;
     const settings=collectSettings();
+    // No codec ticked is not saved: an empty list would offer all of them.
+    if(!settings.codecs){$('settings-error').textContent=t('SETTINGS_CODECS_INVALID');$('settings-error').hidden=false;return;}
     const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
     try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}

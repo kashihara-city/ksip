@@ -220,6 +220,14 @@ impl Transport {
     pub fn encrypts_signalling(self) -> bool {
         self == Self::Tls
     }
+    /// The setting's text for it, as the dialog offers it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Udp => "udp",
+            Self::Tcp => "tcp",
+            Self::Tls => "tls",
+        }
+    }
 }
 /// How the media is encrypted, as the `media_encryption` setting names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +266,15 @@ impl MediaEncryption {
     /// encrypted to mean anything (RFC 4568; RFC 8643 section 4).
     pub fn keys_in_signalling(self) -> bool {
         matches!(self, Self::Sdes | Self::Osrtp)
+    }
+    /// The setting's text for it, as the dialog offers it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Sdes => "sdes",
+            Self::Osrtp => "osrtp",
+            Self::Dtls => "dtls",
+        }
     }
 }
 /// The registry value that stands while a save is under way or has failed to
@@ -556,11 +573,19 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
 /// - `account`: the server, port and extension the file gives;
 /// - `unreadable`: the names the file names but the machine it came from
 ///   could not read (their values there are defaults, not the machine's);
-/// - `invalid`: the names whose value is not of the field's type.
+/// - `invalid`: the names whose value is not of the field's type (a number
+///   out of the field's reach among them), or, for a setting that is one of
+///   a set of choices, not a choice this version has.
 ///
+/// A choice comes in the spelling the dialog offers (`TLS` as `tls`, `pcmu`
+/// as `PCMU`), so that the dialog shows it as it is instead of as nothing:
+/// an empty transport, encryption or codec list means something (UDP, none,
+/// all of them), and a value the dialog could not show would be saved as that.
 /// What a file leaves out is not there, so the dialog keeps what it has. The
 /// microphone, the speaker and the network adapter belong to the machine and
 /// are never taken. A file that is not a KSIP settings file (format 1) is refused.
+/// Whether the settings taken go together (SDES needs TLS, say) depends on
+/// what the dialog holds besides; the dialog checks that, and the save again.
 pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
     use serde_json::{json, Map, Value};
     let refused = || message("SETTINGS_IMPORT_FORMAT");
@@ -573,10 +598,12 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
         .map(|names| names.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
     let defaults = serde_json::to_value(Settings::default()).map_err(|e| e.to_string())?;
-    let same_type = |a: &Value, b: &Value| match (a, b) {
-        (Value::Bool(_), Value::Bool(_)) | (Value::String(_), Value::String(_)) => true,
-        (Value::Number(want), Value::Number(have)) => want.is_i64() == have.is_i64() || have.is_u64() || have.is_i64(),
-        _ => false,
+    // Of the field's type: the settings read with this one value in place of
+    // the default, so that a port of 70000 is as wrong as a port of "often".
+    let fits = |name: &str, value: &Value| {
+        let mut probe = defaults.clone();
+        probe[name] = value.clone();
+        serde_json::from_value::<Settings>(probe).is_ok()
     };
     let mut settings = Map::new();
     let mut buttons = Vec::new();
@@ -595,9 +622,11 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
                     if !Settings::BUTTON_FIELDS.contains(&field.as_str()) {
                         continue;
                     }
+                    let known = field != "kind"
+                        || field_value.as_str().is_some_and(|k| k.is_empty() || CustomButton::KINDS.contains(&k));
                     if skip.contains(&full) {
                         unreadable.push(full);
-                    } else if field_value.is_string() {
+                    } else if field_value.is_string() && known {
                         fields.insert(field.clone(), field_value.clone());
                     } else {
                         invalid.push(full);
@@ -609,14 +638,14 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
             }
             continue;
         }
-        let Some(default) = defaults.get(name) else {
+        if defaults.get(name).is_none() {
             // A name this version does not know is passed over.
             continue;
-        };
+        }
         if skip.contains(name) {
             unreadable.push(name.clone());
-        } else if same_type(default, value) && (!value.is_number() || value.as_i64().is_some()) {
-            settings.insert(name.clone(), value.clone());
+        } else if let Some(offered) = offered_choice(name, value).filter(|v| fits(name, v)) {
+            settings.insert(name.clone(), offered);
         } else {
             invalid.push(name.clone());
         }
@@ -639,6 +668,38 @@ pub fn import_settings(text: &str) -> Result<serde_json::Value, String> {
     unreadable.sort();
     invalid.sort();
     Ok(json!({"settings": settings, "buttons": buttons, "account": account, "unreadable": unreadable, "invalid": invalid}))
+}
+/// A setting's value as the dialog offers it: for one that is a choice of a
+/// set (the transport, the media encryption, the noise suppression, what an
+/// incoming call does, the codecs), the choice in the dialog's spelling, or
+/// None when this version has no such choice; any other value as it is.
+fn offered_choice(name: &str, value: &serde_json::Value) -> Option<serde_json::Value> {
+    let Some(text) = value.as_str() else {
+        return Some(value.clone());
+    };
+    let offered = match name {
+        "transport" => Transport::parse(text).map(|t| t.name().to_string()),
+        "media_encryption" => MediaEncryption::parse(text).map(|m| m.name().to_string()),
+        "noise_suppression" => Settings::NOISE_SUPPRESSION_LEVELS.contains(&text).then(|| text.to_string()),
+        "incoming_action" => matches!(text, "show" | "notify").then(|| text.to_string()),
+        "codecs" => offered_codecs(text),
+        _ => Some(text.to_string()),
+    };
+    offered.map(serde_json::Value::String)
+}
+/// The codec list in the names the dialog shows, each once; None when it
+/// names one this version does not have, or one twice. Empty stays empty,
+/// which offers all of them.
+fn offered_codecs(text: &str) -> Option<String> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for name in text.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        let known = *Settings::CODECS.iter().find(|c| c.eq_ignore_ascii_case(name))?;
+        if names.contains(&known) {
+            return None;
+        }
+        names.push(known);
+    }
+    Some(names.join(","))
 }
 /// `ksip.exe --export-settings <path>`: the export of the store this process
 /// would use (KSIP_TEST_PROFILE chooses a test profile), written to `path` as
@@ -1556,6 +1617,36 @@ mod tests {
         assert!(back["invalid"].as_array().unwrap().is_empty() && back["unreadable"].as_array().unwrap().is_empty());
         assert_eq!(back["settings"]["sip_port"], 5060);
         assert_eq!(back["buttons"].as_array().unwrap().len(), CustomButton::COUNT);
+    }
+    #[test]
+    fn a_settings_file_brings_each_choice_as_the_dialog_offers_it_or_not_at_all() {
+        let read = |settings: serde_json::Value| import_settings(&serde_json::json!({"format": 1, "settings": settings}).to_string()).unwrap();
+        // Choices in another spelling come in the dialog's.
+        let taken = read(serde_json::json!({
+            "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify",
+            "buttons": [{"kind": "park"}, {"kind": ""}]
+        }));
+        assert_eq!(taken["settings"], serde_json::json!({"transport": "tls", "media_encryption": "sdes", "codecs": "PCMU,opus,G722", "noise_suppression": "low", "incoming_action": "notify"}));
+        assert_eq!(taken["buttons"], serde_json::json!([{"n": 1, "kind": "park"}, {"n": 2, "kind": ""}]));
+        assert!(taken["invalid"].as_array().unwrap().is_empty());
+        // An empty transport, encryption or codec list means something, and
+        // comes as the dialog shows it.
+        let empty = read(serde_json::json!({"transport": "", "media_encryption": "", "codecs": ""}));
+        assert_eq!(empty["settings"], serde_json::json!({"transport": "udp", "media_encryption": "", "codecs": ""}));
+        // A choice this version does not have, a codec named twice, a number
+        // out of the field's reach: named, and not taken.
+        let refused = read(serde_json::json!({
+            "transport": "quic", "media_encryption": "future-encryption", "codecs": "PCMU,G729", "noise_suppression": "HIGH",
+            "incoming_action": "popup", "sip_port": 70000, "rtp_port": -2, "tray_after_call": 1.5,
+            "buttons": [{"kind": "call", "number": "1001"}]
+        }));
+        assert_eq!(refused["settings"], serde_json::json!({}));
+        assert_eq!(refused["buttons"], serde_json::json!([{"n": 1, "number": "1001"}]));
+        assert_eq!(
+            refused["invalid"],
+            serde_json::json!(["button_1_kind", "codecs", "incoming_action", "media_encryption", "noise_suppression", "rtp_port", "sip_port", "transport", "tray_after_call"])
+        );
+        assert_eq!(read(serde_json::json!({"codecs": "PCMU,pcmu"}))["invalid"], serde_json::json!(["codecs"]));
     }
     #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {

@@ -7,7 +7,7 @@ TESTS = ROOT / 'scripts/test'
 # extension the phones use, and the group is what --group selects.
 SUITE = [
     ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'audio-devices.py'),
-    ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'no-secrets.py'),
+    ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'settings-dialog.py'), ('offline', 'no-secrets.py'),
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'),
     ('loopback', 'loopback-control.py'), ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'),
     ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'),
