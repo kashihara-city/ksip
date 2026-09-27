@@ -154,6 +154,14 @@ pub fn run(state: AppState) {
             protocol::serve(move |link| {
                 let state = served.state::<AppState>();
                 state.services.log_protocol(&link);
+                // Operating the phone from outside is program integration's;
+                // the link process checks the stored setting first, and this
+                // checks the one the app runs with, for any other client of
+                // the pipe.
+                if protocol::operates_phone(&link) && !state.snapshot().settings.program_integration {
+                    state.services.log_app(message::message_with("PROGRAM_INTEGRATION_OFF", [&link]));
+                    return;
+                }
                 match protocol::parse(&link) {
                     Ok(protocol::Link::ShowWindow) => show(&served),
                     Ok(protocol::Link::Quit) => served.exit(0),

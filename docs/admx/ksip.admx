@@ -137,6 +137,16 @@
         <decimal id="rtp_port" valueName="rtp_port" required="true" minValue="1024" maxValue="65400" />
       </elements>
     </policy>
+    <policy name="pbx_only" class="User" displayName="$(string.pbx_only)" explainText="$(string.pbx_only_Help)" key="Software\KashiharaCity\ksip" valueName="pbx_only">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
     <policy name="register_interval" class="User" displayName="$(string.register_interval)" explainText="$(string.register_interval_Help)" presentation="$(presentation.register_interval)" key="Software\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
@@ -272,6 +282,16 @@
       <elements>
         <decimal id="tray_after_call" valueName="tray_after_call" required="true" minValue="0" maxValue="3600" />
       </elements>
+    </policy>
+    <policy name="program_integration" class="User" displayName="$(string.program_integration)" explainText="$(string.program_integration_Help)" key="Software\KashiharaCity\ksip" valueName="program_integration">
+      <parentCategory ref="Browser" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
     </policy>
     <policy name="browser_integration" class="User" displayName="$(string.browser_integration)" explainText="$(string.browser_integration_Help)" key="Software\KashiharaCity\ksip" valueName="browser_integration">
       <parentCategory ref="Browser" />

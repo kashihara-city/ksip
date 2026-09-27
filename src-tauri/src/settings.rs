@@ -35,7 +35,14 @@ pub struct Settings {
     pub noise_suppression: String,
     pub agc: bool,
     pub register_interval: u16,
+    /// Take SIP requests (a call, a subscription) only from the PBX this
+    /// phone registers with, and none before it has registered; baresip's
+    /// own `filter_registrar`. Requests within a dialog are not affected.
+    pub pbx_only: bool,
     pub detail_log: bool,
+    /// Let other programs operate the phone (`ksip.exe ksip:<number>`,
+    /// ANSWER, HANGUP). The browser is one of them: see `browser_links`.
+    pub program_integration: bool,
     pub browser_integration: bool,
     pub browser_dial_confirm: bool,
     pub shortcut_window: String,
@@ -169,7 +176,9 @@ impl Default for Settings {
             // noise alike, and the microphone volume is the person's own to set.
             agc: false,
             register_interval: 300,
+            pbx_only: true,
             detail_log: false,
+            program_integration: false,
             browser_integration: false,
             browser_dial_confirm: true,
             shortcut_window: String::new(),
@@ -313,7 +322,9 @@ impl Settings {
             ("noise_suppression", text(&self.noise_suppression)),
             ("agc", flag(self.agc)),
             ("register_interval", Number(self.register_interval.into())),
+            ("pbx_only", flag(self.pbx_only)),
             ("detail_log", flag(self.detail_log)),
+            ("program_integration", flag(self.program_integration)),
             ("browser_integration", flag(self.browser_integration)),
             ("browser_dial_confirm", flag(self.browser_dial_confirm)),
             ("shortcut_window", text(&self.shortcut_window)),
@@ -380,7 +391,9 @@ impl Settings {
         r.text("noise_suppression", &mut s.noise_suppression);
         r.flag("agc", &mut s.agc);
         r.number("register_interval", &mut s.register_interval);
+        r.flag("pbx_only", &mut s.pbx_only);
         r.flag("detail_log", &mut s.detail_log);
+        r.flag("program_integration", &mut s.program_integration);
         r.flag("browser_integration", &mut s.browser_integration);
         r.flag("browser_dial_confirm", &mut s.browser_dial_confirm);
         r.text("shortcut_window", &mut s.shortcut_window);
@@ -417,6 +430,13 @@ impl Settings {
     /// The transport the setting names. The setting is checked by `validate`
     /// before the engine is started, so an unknown value is never reached here;
     /// were it, UDP is what the historic empty value meant.
+    /// Whether `ksip:` is registered for the browser: only while other
+    /// programs may operate the phone at all, the browser being one of them.
+    /// The browser switch keeps its own value while program links are off;
+    /// it just has no effect then.
+    pub fn browser_links(&self) -> bool {
+        self.program_integration && self.browser_integration
+    }
     pub fn transport(&self) -> Transport {
         Transport::parse(&self.transport).unwrap_or(Transport::Udp)
     }
@@ -1029,7 +1049,7 @@ impl Services {
         // A test profile registers a scheme of its own, so that a test never
         // removes or redirects the registration the person's real KSIP has.
         let scheme = if self.store.target.starts_with("KSIP/Test/") { "ksip-test" } else { "ksip" };
-        if let Err(e) = crate::protocol::register(settings.browser_integration, scheme) {
+        if let Err(e) = crate::protocol::register(settings.browser_links(), scheme) {
             self.log(LOG_APP, format!("ksip: browser integration {e}"));
         }
     }
@@ -1216,6 +1236,18 @@ mod tests {
         assert!(validate(&s).is_err(), "a codec the app does not have is refused");
     }
     #[test]
+    fn browser_links_work_only_while_program_links_are_on() {
+        let defaults = Settings::default();
+        assert!(defaults.pbx_only && !defaults.program_integration && !defaults.browser_integration);
+        let with = |program: bool, browser: bool| Settings { program_integration: program, browser_integration: browser, ..Settings::default() };
+        assert!(with(true, true).browser_links());
+        assert!(!with(false, true).browser_links(), "the browser switch has no effect while program links are off");
+        assert!(!with(true, false).browser_links());
+        // Kept as stored either way: the switch is not turned off behind anyone's back.
+        let stored = with(false, true).stored_values();
+        assert!(stored.iter().any(|(name, value)| name == "browser_integration" && *value == StoredValue::Number(1)));
+    }
+    #[test]
     fn settings_absent_from_the_registry_keep_their_defaults_and_auto_record_selects_active_line() {
         // A store that holds a few values: the rest are their defaults.
         let (settings, unreadable) = Settings::read_stored(|key| {
@@ -1300,7 +1332,9 @@ mod tests {
             noise_suppression: "low".into(),
             agc: true,
             register_interval: 600,
+            pbx_only: false,
             detail_log: true,
+            program_integration: true,
             browser_integration: true,
             browser_dial_confirm: false,
             shortcut_window: "SHIFT+F2".into(),

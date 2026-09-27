@@ -65,8 +65,9 @@ export function openSettings(){
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;
   $('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';
   setChoice($('incoming_action'),state.settings.incoming_action||'show');$('tray_after_call').value=state.settings.tray_after_call??-1;
-  setChoice($('language'),state.settings.language||'');$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
+  setChoice($('language'),state.settings.language||'');$('program_integration').checked=!!state.settings.program_integration;$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
   // The app reads these two whatever their case and spaces; the list has them in lower case.
+  $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
   $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;
@@ -85,6 +86,14 @@ function syncEncryptionChoices(){
   for(const option of media.options){if(option.value==='sdes'||option.value==='osrtp'){option.hidden=!tls&&!option.selected;option.disabled=!tls;}}
   const stranded=!tls&&(media.value==='sdes'||media.value==='osrtp');
   const note=$('media-encryption-note');note.textContent=tls?'':t(stranded?'SETTINGS_SDES_NEEDS_TLS':'SETTINGS_MEDIA_TLS_ONLY');note.hidden=tls;
+}
+// The browser is one of the programs that operate the phone: its switches
+// can be turned only while program links are on. What they hold is kept
+// either way (it is saved as it is), and has no effect while program links
+// are off.
+function syncIntegration(){
+  const on=$('program_integration').checked;
+  for(const id of ['browser_integration','browser_dial_confirm'])$(id).disabled=!on;
 }
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that
@@ -105,7 +114,7 @@ async function calibrateAec(careful){
 // A settings file's values (as import_settings_file hands them over) go
 // into the dialog as they are; what the file leaves out stays as the dialog
 // has it. Nothing is saved until the dialog is.
-const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','browser_integration','browser_dial_confirm'];
+const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
 const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language'];
 const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
@@ -135,7 +144,7 @@ function restore(before){
   $('codec-list').replaceChildren(...before.codecs);
   for(const {el,value,checked} of before.fields){el.value=value;el.checked=checked;}
   carried=before.carried;
-  syncEncryptionChoices();for(const n of BUTTON_INDEXES)syncButtonRow(n);
+  syncEncryptionChoices();syncIntegration();for(const n of BUTTON_INDEXES)syncButtonRow(n);
 }
 // Every value the file gives is shown as it is, or none is taken: a file
 // that would change the dialog in a way it does not say (a choice the list
@@ -155,7 +164,7 @@ function applyImport(file){
   ];
   const before=snapshot();
   for(const [key,value] of given)showSetting(key,value);
-  syncEncryptionChoices();for(const b of buttons)syncButtonRow(b.n);
+  syncEncryptionChoices();syncIntegration();for(const b of buttons)syncButtonRow(b.n);
   const notShown=given.filter(([key,value])=>!shows(key,value)).map(([key])=>key);
   if(notShown.length){restore(before);throw fill('SETTINGS_IMPORT_NOT_SHOWN',notShown.join(', '));}
   const passedOver=[...(file.unreadable||[]),...(file.invalid||[])];
@@ -177,6 +186,7 @@ function collectSettings(){
     register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,
     shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
+    pbx_only:$('pbx_only').checked,program_integration:$('program_integration').checked,
     browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,
     transport:$('transport').value,media_encryption:$('media_encryption').value,
     codecs:tickedCodecs(),
@@ -197,6 +207,7 @@ export function init(){
     syncEncryptionChoices();
   });
   $('media_encryption').addEventListener('change',syncEncryptionChoices);
+  $('program_integration').addEventListener('change',syncIntegration);
   for(const n of BUTTON_INDEXES)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
   $('choose-ca').addEventListener('click',async()=>{
     try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen)$('ca_file').value=chosen;}

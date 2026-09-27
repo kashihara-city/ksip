@@ -10,7 +10,7 @@
       <string id="Category_Connection">Connection</string>
       <string id="Category_Audio">Audio processing</string>
       <string id="Category_Calls">Calls</string>
-      <string id="Category_Browser">Browser integration</string>
+      <string id="Category_Browser">Program integration</string>
       <string id="Category_Display">Display and keys</string>
       <string id="Category_Sounds">Sounds</string>
       <string id="Category_ButtonsPhone">Custom buttons (phone)</string>
@@ -75,6 +75,12 @@ Not configured leaves the value alone (what the user saved in the settings dialo
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
       <string id="rtp_port">First RTP port</string>
       <string id="rtp_port_Help">The first port for audio (RTP): an even number from 1024 to 65400; 20 ports from it are used. An odd number, or an overlap with the SIP port, is refused at connect. Disabled deletes the value, and KSIP uses its default. (default: 10000)
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="pbx_only">Take calls from the registrar PBX only</string>
+      <string id="pbx_only_Help">Whether calls and requests from anywhere but the PBX this phone registers with are refused. When enabled, nothing is taken before registering, and over TCP and TLS nothing is listened for (calls come over the registration's connection). Disable it where the PBX sends from more than one address. (default: refused)
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -158,8 +164,14 @@ The value is written to the value of the same name under HKCU\Software\Kashihara
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="program_integration">Accept operation from other programs</string>
+      <string id="program_integration_Help">Whether other programs may place, answer and end calls, as with ksip.exe ksip:&lt;number&gt;. When not, such a request is refused with exit code 4. Browser ksip: links too work only while this is enabled. (default: not accepted)
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
       <string id="browser_integration">Accept ksip: links</string>
-      <string id="browser_integration_Help">Whether ksip: links from the browser (dial, answer, hang up) are accepted. Enabled registers HKCU\Software\Classes\ksip at start; disabled removes it. (default: not accepted)
+      <string id="browser_integration_Help">Whether ksip: links from the browser (dial, answer, hang up) are accepted. It takes effect only while &quot;Accept operation from other programs&quot; is enabled too; then HKCU\Software\Classes\ksip is registered at start, and otherwise removed. (default: not accepted)
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 

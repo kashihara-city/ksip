@@ -50,6 +50,16 @@ fn main() {
             logs::append_log(&logs::data_dir(&storage::Store::new()), format!("protocol {link} {what}"));
             std::process::exit(3)
         };
+        // Operating the phone needs program integration, as saved. Refused
+        // here with its own exit code, so that the program that asked can
+        // tell, and without starting the app for nothing.
+        if protocol::operates_phone(&link) {
+            let allowed = settings::stored_settings(&storage::Store::new()).is_ok_and(|s| s.program_integration);
+            if !allowed {
+                logs::append_log(&logs::data_dir(&storage::Store::new()), format!("protocol {link} refused: program integration is off"));
+                std::process::exit(4);
+            }
+        }
         match protocol::send(&link) {
             Ok(true) => std::process::exit(0),
             Err(e) => failed(&format!("could not be handed over: {e}")),

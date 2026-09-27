@@ -1,4 +1,4 @@
-﻿# Drive the app through ksip: links: dial, answer, hang up, show and quit.
+﻿# Drive the app through ksip: links: dial, answer, hang up, show and quit; with program links off, only show and quit are taken.
 param([string]$Folder = "$PSScriptRoot/../../temp/build/gui-ksip")
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/app-fixture.ps1"
@@ -44,9 +44,24 @@ try {
     Set-Setting 'browser_dial_confirm' $true
     $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
+    $playback=(Get-KsipLab).numbers.playback
+
+    # With program links off (the default) the phone is not operated from
+    # outside: the link process refuses with exit code 4 and nothing is
+    # dialled. Showing the window is still taken.
+    $refused=Start-Process $exe -ArgumentList "ksip:$playback" -PassThru -WindowStyle Hidden
+    if(!$refused.WaitForExit(30000)){throw 'The refused link process did not exit'}
+    if($refused.ExitCode -ne 4){throw "A link with program links off ended with $($refused.ExitCode), not 4"}
+    Start-Sleep -Seconds 2
+    if(!(Test-Class 'line-1' 'call-idle')){throw 'A link dialled although program links are off'}
+    Send-Link 'SHOWWINDOW'
+    'PASS: プログラム連携がOFFなら、外からの発信は終了コード4で断り、窓を出す指示は受け付ける'
+    Set-Setting 'program_integration' $true
+    Stop-KsipApp $app; Stop-KsipEngine
+    $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"
+    Wait-Class 'registration' 'reg-register_ok'
 
     # A link dials, and asks first while the confirmation is on.
-    $playback=(Get-KsipLab).numbers.playback
     Send-Link $playback
     Wait-Text 'confirm' "$playback に発信しますか" | Out-Null
     Click-Id 'confirm-ok'
@@ -132,6 +147,14 @@ try {
     if($command -notlike "*$([IO.Path]::GetFullPath($exe))*"){throw "The protocol command is $command"}
     if((Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\ksip\shell\open\command' -ErrorAction SilentlyContinue).'(default)' -like "*$([IO.Path]::GetFullPath($exe))*"){throw 'The test build took over the real ksip: registration'}
     'PASS: 設定をONにすると登録する（テストのプロファイルでは ksip-test:）'
+    # The browser switch has no effect while program links are off.
+    Set-Setting 'program_integration' $false
+    Stop-KsipApp $app; Stop-KsipEngine
+    $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"
+    Wait-Class 'registration' 'reg-register_ok'
+    if(Test-Path 'HKCU:\Software\Classes\ksip-test'){throw 'ksip-test: is registered although program links are off'}
+    'PASS: プログラム連携がOFFなら、ブラウザ連携がONでも登録しない'
+    Set-Setting 'program_integration' $true
     Set-Policy 'browser_integration' 'false'
     Stop-KsipApp $app; Stop-KsipEngine
     $app=Start-KsipApp $exe "$root/temp/build/ui-failure.txt"

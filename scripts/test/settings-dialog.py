@@ -125,6 +125,23 @@ async function checks(){
   await importFile({settings:{agc:true},unreadable:['aec'],invalid:['codecs']});
   s=await save();
   check(text('settings-file-note').includes('aec')&&text('settings-file-note').includes('codecs')&&s&&s.settings.agc===true,'what a file could not bring is named',text('settings-file-note'));
+  await open({browser_integration:true});
+  const lockedWhileOff=$('browser_integration').disabled&&$('browser_dial_confirm').disabled;
+  s=await save();
+  check(lockedWhileOff&&s&&s.settings.program_integration===false&&s.settings.browser_integration===true,
+    'with program links off the browser switches cannot be changed, and what they hold is saved as it is',s&&[lockedWhileOff,s.settings.program_integration,s.settings.browser_integration]);
+  await open({program_integration:true,browser_integration:true});
+  const openWhileOn=!$('browser_integration').disabled&&!$('browser_dial_confirm').disabled;
+  $('program_integration').checked=false;$('program_integration').dispatchEvent(new Event('change'));
+  const lockedAfter=$('browser_integration').disabled&&$('browser_integration').checked;
+  check(openWhileOn&&lockedAfter,'program links on open the browser switches; turning them off locks the switches without clearing them',[openWhileOn,lockedAfter]);
+  await open();
+  s=await save();
+  check(s&&s.settings.pbx_only===true,'with nothing stored, requests are taken from the registrar only',s&&s.settings.pbx_only);
+  await open({pbx_only:false});
+  s=await save();
+  check(s&&s.settings.pbx_only===false,'a stored choice to take requests from anywhere is kept',s&&s.settings.pbx_only);
+
   await open();
   await importFile({settings:{microphone_gain:150,auto_record:true,tray_after_call:30,ca_file:'C:\\ca\\pbx.pem'},
     buttons:[{n:2,kind:'park',title:'P',number:'701',transfer:'*701'}],account:{server:'192.0.2.10',port:5060,extension:'1002'}});

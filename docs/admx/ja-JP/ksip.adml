@@ -10,7 +10,7 @@
       <string id="Category_Connection">接続</string>
       <string id="Category_Audio">音声処理</string>
       <string id="Category_Calls">通話</string>
-      <string id="Category_Browser">ブラウザ連携</string>
+      <string id="Category_Browser">プログラム連携</string>
       <string id="Category_Display">表示と操作</string>
       <string id="Category_Sounds">音</string>
       <string id="Category_ButtonsPhone">カスタムボタン（電話）</string>
@@ -75,6 +75,12 @@
 値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
       <string id="rtp_port">RTP開始ポート</string>
       <string id="rtp_port_Help">音声(RTP)に使う最初のポート。1024〜65400の偶数で、そこから20ポートを使います。奇数とSIPポートとの重なりは接続時に拒否します。無効にすると値を消し、KSIP の既定値に戻ります。（既定: 10000）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="pbx_only">登録先のPBX以外からの着信を受け付けない</string>
+      <string id="pbx_only_Help">登録先のPBX以外から届いた着信や要求を断るか。有効なら登録前は何も受け付けず、TCP と TLS では待ち受けもしません（通話は登録の接続で届きます）。PBXが複数のアドレスから送ってくる構成では無効にしてください。（既定: 断る）
 
 未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
 
@@ -158,8 +164,14 @@
 未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
 
 値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
+      <string id="program_integration">他のプログラムからの操作を受け付ける</string>
+      <string id="program_integration_Help">他のプログラムが ksip.exe ksip:&lt;番号&gt; などで発信・応答・切断するのを受け付けるか。受け付けないとき、その指示は終了コード 4 で断ります。ブラウザーの ksip: リンクも、これが有効なときだけ使えます。（既定: 受け付けない）
+
+未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
+
+値は HKCU\Software\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時と接続のたびにこの値を読みます。</string>
       <string id="browser_integration">ksip: リンクを受け付ける</string>
-      <string id="browser_integration_Help">ブラウザーの ksip: リンク（発信・応答・切断）を受け付けるか。有効にすると起動時に HKCU\Software\Classes\ksip へ登録し、無効にすると登録を消します。（既定: 受け付けない）
+      <string id="browser_integration_Help">ブラウザーの ksip: リンク（発信・応答・切断）を受け付けるか。「他のプログラムからの操作を受け付ける」も有効なときだけ効きます。そのとき起動時に HKCU\Software\Classes\ksip へ登録し、それ以外では登録を消します。（既定: 受け付けない）
 
 未構成にすると、この値には触れません（利用者が設定画面で保存した値、または前に適用した値が残ります）。
 

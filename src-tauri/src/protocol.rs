@@ -90,6 +90,13 @@ pub fn is_link(argument: &str) -> bool {
     argument.as_bytes().get(..SCHEME.len()).is_some_and(|head| head.eq_ignore_ascii_case(SCHEME.as_bytes()))
 }
 
+/// Whether a link operates the phone (dial, answer, hang up, or something not
+/// understood), which only program integration allows; showing the window
+/// and quitting do not, and are always taken.
+pub fn operates_phone(link: &str) -> bool {
+    !matches!(parse(link), Ok(Link::ShowWindow | Link::Quit))
+}
+
 /// What a link asks for.
 #[derive(Debug, PartialEq)]
 pub enum Link {
@@ -366,6 +373,17 @@ mod tests {
         assert!(parse("日本語").is_err());
     }
 
+    #[test]
+    fn only_showing_the_window_and_quitting_are_not_operating_the_phone() {
+        // The commands are matched as written, so a command in other letters
+        // is something to dial, and operates the phone.
+        for link in ["ksip:1001", "ksip:ANSWER", "ksip:HANGUP", "ksip:sip:1001@pbx.example", "ksip:", "ksip:%zz", "ksip:showwindow"] {
+            assert!(operates_phone(link), "{link}");
+        }
+        for link in ["ksip:SHOWWINDOW", "KSIP:SHOWWINDOW", "ksip:APP_QUIT"] {
+            assert!(!operates_phone(link), "{link}");
+        }
+    }
     #[test]
     fn links_are_read_as_the_browser_passes_them() {
         assert_eq!(parse("ksip:ANSWER"), Ok(Link::Answer));

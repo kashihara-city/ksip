@@ -174,6 +174,12 @@ impl Services {
         put(format!("ksip_extension {}", account.extension));
         put(format!("sip_listen {address}:{}", s.sip_port));
         put(format!("sip_transports {}", s.sip_transport()));
+        // Requests from anywhere but the registrar are refused (403), and none
+        // are taken before registering; over TCP and TLS nothing is listened
+        // for, the registration's own connection carrying the calls.
+        if s.pbx_only {
+            put("filter_registrar UDP,TCP,TLS".into());
+        }
         for line in [
             "sip_cuser_random no",
             "call_max_calls 2",
@@ -252,7 +258,7 @@ impl Services {
             let chosen = s.ca_file.trim();
             let trust = if chosen.is_empty() {
                 let store = crate::trust::windows_trust()?;
-                trust_note = Some((store.included, store.left_out));
+                trust_note = Some((store.included, store.left_out, store.distrusted));
                 let path = profile.join("windows-trust.pem");
                 std::fs::write(&path, store.pem).map_err(err)?;
                 path.to_string_lossy().replace('\\', "/")
@@ -274,8 +280,10 @@ impl Services {
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
         notes.extend(endpoint_notes(s, &endpoints, devices));
-        if let Some((included, left_out)) = trust_note {
-            notes.push(format!("ksip: windows trust store, {included} certificates, {left_out} left out"));
+        if let Some((included, left_out, distrusted)) = trust_note {
+            notes.push(format!(
+                "ksip: windows trust store, {included} certificates, {left_out} left out as unusable, {distrusted} left out as distrusted by Windows"
+            ));
         }
         Ok(Prepared {
             plan: StartPlan {
@@ -340,6 +348,7 @@ mod tests {
             assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
             assert!(config.contains("ksip_aec_enabled yes"));
+            assert!(config.contains("filter_registrar UDP,TCP,TLS"), "requests only from the registrar, by default");
             assert!(config.contains("ksip_high_pass yes"));
             assert!(config.contains("ksip_noise_suppression high"));
             assert!(config.contains("ksip_agc no"));
