@@ -254,9 +254,11 @@ impl EngineLink {
 /// Waits on the app's own listener for the engine to connect and name the
 /// secret in its first frame (`{"hello":"ksip_ctrl","secret":…}`), and
 /// returns that connection. The app says nothing on a connection before it
-/// has heard the secret, so the secret never goes to anyone; a connection
-/// that says anything else, or nothing within two seconds, is closed and the
-/// wait goes on. `exited` tells an engine that ended before connecting.
+/// has heard the secret, so the secret never goes to anyone. A connection has
+/// GREETING_TIME for its whole greeting, however it sends it (all at once,
+/// byte by byte, or not at all), and never past `deadline`; one that says
+/// anything else, or not in time, is closed and the wait goes on. `exited`
+/// tells an engine that ended before connecting.
 pub(crate) fn accept_engine(
     listener: &TcpListener,
     secret: &str,
@@ -266,12 +268,12 @@ pub(crate) fn accept_engine(
     listener.set_nonblocking(true).map_err(err)?;
     loop {
         match listener.accept() {
-            Ok((mut stream, peer)) if peer.ip().is_loopback() => {
+            Ok((stream, peer)) if peer.ip().is_loopback() => {
                 // An accepted socket takes the listener's mode; the greeting
-                // is read blocking, within its own time.
+                // is read blocking, within one deadline for all of it.
                 stream.set_nonblocking(false).map_err(err)?;
-                stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(err)?;
-                let greeted = read_netstring(&mut stream)
+                let until = deadline.min(Instant::now() + GREETING_TIME);
+                let greeted = read_greeting(&mut Deadline { stream: &stream, until })
                     .ok()
                     .and_then(|frame| serde_json::from_slice::<Value>(&frame).ok())
                     .is_some_and(|hello| hello["hello"] == "ksip_ctrl" && same_secret(hello["secret"].as_str().unwrap_or(""), secret));
@@ -293,6 +295,54 @@ pub(crate) fn accept_engine(
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+/// How long a connection has for its whole greeting.
+const GREETING_TIME: Duration = Duration::from_secs(2);
+/// The greeting is one short frame (about a hundred bytes); nothing longer is
+/// read from a connection that has not yet said who it is.
+const GREETING_LIMIT: usize = 512;
+/// Reads through a socket with one deadline for everything read, not one per
+/// read: each read is given only the time that is left, so a peer that sends
+/// a byte now and then cannot stretch the wait.
+struct Deadline<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the greeting took too long"));
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        (&*self.stream).read(buf)
+    }
+}
+/// One netstring frame of at most GREETING_LIMIT bytes.
+fn read_greeting(r: &mut impl Read) -> Result<Vec<u8>, String> {
+    let mut length = 0usize;
+    let mut digits = 0;
+    loop {
+        let mut b = [0];
+        r.read_exact(&mut b).map_err(err)?;
+        match b[0] {
+            b':' if digits > 0 => break,
+            d @ b'0'..=b'9' if digits < 3 => {
+                length = length * 10 + usize::from(d - b'0');
+                digits += 1;
+            }
+            _ => return Err("not a greeting".into()),
+        }
+    }
+    if length > GREETING_LIMIT {
+        return Err("greeting too long".into());
+    }
+    let mut body = vec![0; length + 1];
+    r.read_exact(&mut body).map_err(err)?;
+    if body.pop() != Some(b',') {
+        return Err("not a greeting".into());
+    }
+    Ok(body)
 }
 /// Compares the secret in time that does not depend on where it differs.
 fn same_secret(said: &str, secret: &str) -> bool {
@@ -444,6 +494,55 @@ mod accept_tests {
         write_netstring(&mut taken, b"{\"command\":\"help\"}").unwrap();
         engine.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         assert_eq!(read_netstring(&mut engine).unwrap(), b"{\"command\":\"help\"}");
+    }
+    #[test]
+    fn a_greeting_sent_a_byte_at_a_time_does_not_stretch_the_wait() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // A stranger that starts a frame and then drips a byte every 300 ms,
+        // in the length and then in the body, for far longer than any limit.
+        let drip = |head: &'static [u8]| {
+            std::thread::spawn(move || {
+                let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+                let _ = s.write_all(head);
+                for _ in 0..60 {
+                    std::thread::sleep(Duration::from_millis(300));
+                    if s.write_all(b"1").is_err() {
+                        break;
+                    }
+                }
+            })
+        };
+        let _in_length = drip(b"1");
+        std::thread::sleep(Duration::from_millis(100));
+        let _in_body = drip(b"100:{");
+        // The engine comes after both.
+        let engine = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            greet(port, json!({"hello":"ksip_ctrl","secret":"s3cret"}))
+        });
+        let started = Instant::now();
+        let taken = accept_engine(&listener, "s3cret", Instant::now() + Duration::from_secs(10), || Ok(None));
+        assert!(taken.is_ok(), "the engine is taken after the strangers' time is up");
+        assert!(started.elapsed() < GREETING_TIME * 2 + Duration::from_secs(2), "each stranger had its greeting time and no more: {:?}", started.elapsed());
+        drop(engine.join());
+        // With nothing but a dripping stranger, the start's own deadline holds.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _slow = std::thread::spawn(move || {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            let _ = s.write_all(b"100:");
+            for _ in 0..60 {
+                std::thread::sleep(Duration::from_millis(300));
+                if s.write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+        let started = Instant::now();
+        let late = accept_engine(&listener, "s3cret", Instant::now() + Duration::from_millis(800), || Ok(None));
+        assert_eq!(late.err(), Some(message("ENGINE_CONNECT_TIMEOUT")));
+        assert!(started.elapsed() < Duration::from_millis(1500), "the start deadline holds: {:?}", started.elapsed());
     }
     #[test]
     fn an_engine_that_ends_or_never_connects_is_reported() {

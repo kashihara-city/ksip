@@ -16,11 +16,20 @@ def listen(port=0):
     return listener, listener.getsockname()[1]
 
 
-def read_frame(sock):
-    """One netstring frame as JSON, or None when the peer closed first."""
+def read_frame(sock, until=None):
+    """One netstring frame as JSON, or None when the peer closed first. With
+    `until` (a time.monotonic() deadline) the whole frame has to arrive by then,
+    however slowly it is sent."""
+    def recv(n):
+        if until is not None:
+            left = until - time.monotonic()
+            if left <= 0:
+                raise socket.timeout('the frame took too long')
+            sock.settimeout(left)
+        return sock.recv(n)
     header = b''
     while True:
-        byte = sock.recv(1)
+        byte = recv(1)
         if not byte:
             return None
         if byte == b':':
@@ -31,7 +40,7 @@ def read_frame(sock):
     length = int(header)
     body = b''
     while len(body) < length + 1:
-        chunk = sock.recv(length + 1 - len(body))
+        chunk = recv(length + 1 - len(body))
         if not chunk:
             return None
         body += chunk
@@ -47,17 +56,19 @@ def accept(listener, process, secret, timeout=10):
     listener.settimeout(0.2)
     deadline = time.monotonic() + timeout
     while True:
+        # The overall deadline holds however many strangers come first.
+        if process.poll() is not None:
+            raise RuntimeError('the engine ended before it connected')
+        if time.monotonic() > deadline:
+            raise RuntimeError('the engine did not connect')
         try:
             conn, _ = listener.accept()
         except socket.timeout:
-            if process.poll() is not None:
-                raise RuntimeError('the engine ended before it connected')
-            if time.monotonic() > deadline:
-                raise RuntimeError('the engine did not connect')
             continue
-        conn.settimeout(2)
+        # Each connection has two seconds for its whole greeting, and never
+        # past the overall deadline.
         try:
-            hello = read_frame(conn)
+            hello = read_frame(conn, min(deadline, time.monotonic() + 2))
         except (OSError, ValueError):
             hello = None
         if isinstance(hello, dict) and hello.get('hello') == 'ksip_ctrl' and hello.get('secret') == secret:
