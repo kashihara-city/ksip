@@ -10,6 +10,7 @@ $key='HKCU:\Software\KashiharaCity\ksip\Test\test-ui-ksip'
 # The options are: follow Windows, 日本語, English, 繁體中文.
 function Set-Language([int]$index) {
     Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null
+    Click-Id 'tab-calls'
     Select-Index 'language' $index
     Click-Id 'save-settings'
     $end=[DateTime]::UtcNow.AddSeconds(20)

@@ -51,10 +51,13 @@ DialogInfo read_dialog_info(const std::string &body);
 std::string codec_list(const std::string &names);
 // A user part as it goes into a URI: `#` has to be escaped.
 std::string escape_user(const std::string &value);
-// The numbers the buttons watch, comma-separated, up to the array's size;
-// an empty one is a slot nobody watches. False for a number that is not a
+// How many numbers the buttons can watch: one for each custom button
+// (CustomButton::COUNT in the app's settings.rs).
+constexpr size_t WATCH_COUNT = 54;
+// The numbers the buttons watch, comma-separated, up to WATCH_COUNT; an
+// empty one is a slot nobody watches. False for a number that is not a
 // number or URI, for too many, or for one named twice.
-bool parse_watch_list(const char *prm, std::array<std::string, 30> &values);
+bool parse_watch_list(const char *prm, std::array<std::string, WATCH_COUNT> &values);
 // The audio devices command: microphone and speaker endpoint ids, comma-separated.
 bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone, std::string &speaker);
 } // namespace ksip_text

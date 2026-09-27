@@ -11,9 +11,9 @@
     </definitions>
   </supportedOn>
   <categories>
-    <category name="KSIP" displayName="$(string.Category_KSIP)" />
-    <category name="Account" displayName="$(string.Category_Account)">
-      <parentCategory ref="KSIP" />
+    <category name="KashiharaCity" displayName="$(string.Category_KashiharaCity)" />
+    <category name="KSIP" displayName="$(string.Category_KSIP)">
+      <parentCategory ref="KashiharaCity" />
     </category>
     <category name="Connection" displayName="$(string.Category_Connection)">
       <parentCategory ref="KSIP" />
@@ -24,35 +24,26 @@
     <category name="Calls" displayName="$(string.Category_Calls)">
       <parentCategory ref="KSIP" />
     </category>
-    <category name="Browser" displayName="$(string.Category_Browser)">
+    <category name="Links" displayName="$(string.Category_Links)">
       <parentCategory ref="KSIP" />
     </category>
-    <category name="Display" displayName="$(string.Category_Display)">
+    <category name="Buttons" displayName="$(string.Category_Buttons)">
       <parentCategory ref="KSIP" />
     </category>
-    <category name="Sounds" displayName="$(string.Category_Sounds)">
-      <parentCategory ref="KSIP" />
-    </category>
-    <category name="ButtonsPhone" displayName="$(string.Category_ButtonsPhone)">
-      <parentCategory ref="KSIP" />
-    </category>
-    <category name="ButtonsPanel" displayName="$(string.Category_ButtonsPanel)">
-      <parentCategory ref="KSIP" />
-    </category>
-    <category name="Diagnostics" displayName="$(string.Category_Diagnostics)">
+    <category name="Other" displayName="$(string.Category_Other)">
       <parentCategory ref="KSIP" />
     </category>
   </categories>
   <policies>
     <policy name="server" class="User" displayName="$(string.server)" explainText="$(string.server_Help)" presentation="$(presentation.server)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Account" />
+      <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="server" valueName="server" maxLength="253" />
       </elements>
     </policy>
     <policy name="port" class="User" displayName="$(string.port)" explainText="$(string.port_Help)" presentation="$(presentation.port)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Account" />
+      <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <decimal id="port" valueName="port" required="true" minValue="1" maxValue="65535" />
@@ -284,7 +275,7 @@
       </elements>
     </policy>
     <policy name="program_integration" class="User" displayName="$(string.program_integration)" explainText="$(string.program_integration_Help)" key="Software\KashiharaCity\ksip" valueName="program_integration">
-      <parentCategory ref="Browser" />
+      <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
         <decimal value="1" />
@@ -294,7 +285,7 @@
       </disabledValue>
     </policy>
     <policy name="browser_integration" class="User" displayName="$(string.browser_integration)" explainText="$(string.browser_integration_Help)" key="Software\KashiharaCity\ksip" valueName="browser_integration">
-      <parentCategory ref="Browser" />
+      <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
         <decimal value="1" />
@@ -304,7 +295,7 @@
       </disabledValue>
     </policy>
     <policy name="browser_dial_confirm" class="User" displayName="$(string.browser_dial_confirm)" explainText="$(string.browser_dial_confirm_Help)" key="Software\KashiharaCity\ksip" valueName="browser_dial_confirm">
-      <parentCategory ref="Browser" />
+      <parentCategory ref="Links" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
         <decimal value="1" />
@@ -314,7 +305,7 @@
       </disabledValue>
     </policy>
     <policy name="language" class="User" displayName="$(string.language)" explainText="$(string.language_Help)" presentation="$(presentation.language)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Display" />
+      <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <enum id="language" valueName="language" required="true">
@@ -342,56 +333,56 @@
       </elements>
     </policy>
     <policy name="shortcut_window" class="User" displayName="$(string.shortcut_window)" explainText="$(string.shortcut_window_Help)" presentation="$(presentation.shortcut_window)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Display" />
+      <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="shortcut_window" valueName="shortcut_window" maxLength="40" />
       </elements>
     </policy>
     <policy name="shortcut_call" class="User" displayName="$(string.shortcut_call)" explainText="$(string.shortcut_call_Help)" presentation="$(presentation.shortcut_call)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Display" />
+      <parentCategory ref="Calls" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="shortcut_call" valueName="shortcut_call" maxLength="40" />
       </elements>
     </policy>
     <policy name="sound_ring" class="User" displayName="$(string.sound_ring)" explainText="$(string.sound_ring_Help)" presentation="$(presentation.sound_ring)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Sounds" />
+      <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_ring" valueName="sound_ring" maxLength="400" />
       </elements>
     </policy>
     <policy name="sound_ringback" class="User" displayName="$(string.sound_ringback)" explainText="$(string.sound_ringback_Help)" presentation="$(presentation.sound_ringback)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Sounds" />
+      <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_ringback" valueName="sound_ringback" maxLength="400" />
       </elements>
     </policy>
     <policy name="sound_busy" class="User" displayName="$(string.sound_busy)" explainText="$(string.sound_busy_Help)" presentation="$(presentation.sound_busy)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Sounds" />
+      <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_busy" valueName="sound_busy" maxLength="400" />
       </elements>
     </policy>
     <policy name="sound_notfound" class="User" displayName="$(string.sound_notfound)" explainText="$(string.sound_notfound_Help)" presentation="$(presentation.sound_notfound)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Sounds" />
+      <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_notfound" valueName="sound_notfound" maxLength="400" />
       </elements>
     </policy>
     <policy name="sound_error" class="User" displayName="$(string.sound_error)" explainText="$(string.sound_error_Help)" presentation="$(presentation.sound_error)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="Sounds" />
+      <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="sound_error" valueName="sound_error" maxLength="400" />
       </elements>
     </policy>
     <policy name="detail_log" class="User" displayName="$(string.detail_log)" explainText="$(string.detail_log_Help)" key="Software\KashiharaCity\ksip" valueName="detail_log">
-      <parentCategory ref="Diagnostics" />
+      <parentCategory ref="Other" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <enabledValue>
         <decimal value="1" />
@@ -401,7 +392,7 @@
       </disabledValue>
     </policy>
     <policy name="button_1" class="User" displayName="$(string.button_1)" explainText="$(string.button_1_Help)" presentation="$(presentation.button_1)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_1_title" valueName="button_1_title" maxLength="40" />
@@ -453,7 +444,7 @@
       </elements>
     </policy>
     <policy name="button_2" class="User" displayName="$(string.button_2)" explainText="$(string.button_2_Help)" presentation="$(presentation.button_2)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_2_title" valueName="button_2_title" maxLength="40" />
@@ -505,7 +496,7 @@
       </elements>
     </policy>
     <policy name="button_3" class="User" displayName="$(string.button_3)" explainText="$(string.button_3_Help)" presentation="$(presentation.button_3)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_3_title" valueName="button_3_title" maxLength="40" />
@@ -557,7 +548,7 @@
       </elements>
     </policy>
     <policy name="button_4" class="User" displayName="$(string.button_4)" explainText="$(string.button_4_Help)" presentation="$(presentation.button_4)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_4_title" valueName="button_4_title" maxLength="40" />
@@ -609,7 +600,7 @@
       </elements>
     </policy>
     <policy name="button_5" class="User" displayName="$(string.button_5)" explainText="$(string.button_5_Help)" presentation="$(presentation.button_5)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_5_title" valueName="button_5_title" maxLength="40" />
@@ -661,7 +652,7 @@
       </elements>
     </policy>
     <policy name="button_6" class="User" displayName="$(string.button_6)" explainText="$(string.button_6_Help)" presentation="$(presentation.button_6)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPhone" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_6_title" valueName="button_6_title" maxLength="40" />
@@ -713,7 +704,7 @@
       </elements>
     </policy>
     <policy name="button_7" class="User" displayName="$(string.button_7)" explainText="$(string.button_7_Help)" presentation="$(presentation.button_7)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_7_title" valueName="button_7_title" maxLength="40" />
@@ -765,7 +756,7 @@
       </elements>
     </policy>
     <policy name="button_8" class="User" displayName="$(string.button_8)" explainText="$(string.button_8_Help)" presentation="$(presentation.button_8)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_8_title" valueName="button_8_title" maxLength="40" />
@@ -817,7 +808,7 @@
       </elements>
     </policy>
     <policy name="button_9" class="User" displayName="$(string.button_9)" explainText="$(string.button_9_Help)" presentation="$(presentation.button_9)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_9_title" valueName="button_9_title" maxLength="40" />
@@ -869,7 +860,7 @@
       </elements>
     </policy>
     <policy name="button_10" class="User" displayName="$(string.button_10)" explainText="$(string.button_10_Help)" presentation="$(presentation.button_10)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_10_title" valueName="button_10_title" maxLength="40" />
@@ -921,7 +912,7 @@
       </elements>
     </policy>
     <policy name="button_11" class="User" displayName="$(string.button_11)" explainText="$(string.button_11_Help)" presentation="$(presentation.button_11)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_11_title" valueName="button_11_title" maxLength="40" />
@@ -973,7 +964,7 @@
       </elements>
     </policy>
     <policy name="button_12" class="User" displayName="$(string.button_12)" explainText="$(string.button_12_Help)" presentation="$(presentation.button_12)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_12_title" valueName="button_12_title" maxLength="40" />
@@ -1025,7 +1016,7 @@
       </elements>
     </policy>
     <policy name="button_13" class="User" displayName="$(string.button_13)" explainText="$(string.button_13_Help)" presentation="$(presentation.button_13)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_13_title" valueName="button_13_title" maxLength="40" />
@@ -1077,7 +1068,7 @@
       </elements>
     </policy>
     <policy name="button_14" class="User" displayName="$(string.button_14)" explainText="$(string.button_14_Help)" presentation="$(presentation.button_14)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_14_title" valueName="button_14_title" maxLength="40" />
@@ -1129,7 +1120,7 @@
       </elements>
     </policy>
     <policy name="button_15" class="User" displayName="$(string.button_15)" explainText="$(string.button_15_Help)" presentation="$(presentation.button_15)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_15_title" valueName="button_15_title" maxLength="40" />
@@ -1181,7 +1172,7 @@
       </elements>
     </policy>
     <policy name="button_16" class="User" displayName="$(string.button_16)" explainText="$(string.button_16_Help)" presentation="$(presentation.button_16)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_16_title" valueName="button_16_title" maxLength="40" />
@@ -1233,7 +1224,7 @@
       </elements>
     </policy>
     <policy name="button_17" class="User" displayName="$(string.button_17)" explainText="$(string.button_17_Help)" presentation="$(presentation.button_17)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_17_title" valueName="button_17_title" maxLength="40" />
@@ -1285,7 +1276,7 @@
       </elements>
     </policy>
     <policy name="button_18" class="User" displayName="$(string.button_18)" explainText="$(string.button_18_Help)" presentation="$(presentation.button_18)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_18_title" valueName="button_18_title" maxLength="40" />
@@ -1337,7 +1328,7 @@
       </elements>
     </policy>
     <policy name="button_19" class="User" displayName="$(string.button_19)" explainText="$(string.button_19_Help)" presentation="$(presentation.button_19)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_19_title" valueName="button_19_title" maxLength="40" />
@@ -1389,7 +1380,7 @@
       </elements>
     </policy>
     <policy name="button_20" class="User" displayName="$(string.button_20)" explainText="$(string.button_20_Help)" presentation="$(presentation.button_20)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_20_title" valueName="button_20_title" maxLength="40" />
@@ -1441,7 +1432,7 @@
       </elements>
     </policy>
     <policy name="button_21" class="User" displayName="$(string.button_21)" explainText="$(string.button_21_Help)" presentation="$(presentation.button_21)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_21_title" valueName="button_21_title" maxLength="40" />
@@ -1493,7 +1484,7 @@
       </elements>
     </policy>
     <policy name="button_22" class="User" displayName="$(string.button_22)" explainText="$(string.button_22_Help)" presentation="$(presentation.button_22)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_22_title" valueName="button_22_title" maxLength="40" />
@@ -1545,7 +1536,7 @@
       </elements>
     </policy>
     <policy name="button_23" class="User" displayName="$(string.button_23)" explainText="$(string.button_23_Help)" presentation="$(presentation.button_23)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_23_title" valueName="button_23_title" maxLength="40" />
@@ -1597,7 +1588,7 @@
       </elements>
     </policy>
     <policy name="button_24" class="User" displayName="$(string.button_24)" explainText="$(string.button_24_Help)" presentation="$(presentation.button_24)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_24_title" valueName="button_24_title" maxLength="40" />
@@ -1649,7 +1640,7 @@
       </elements>
     </policy>
     <policy name="button_25" class="User" displayName="$(string.button_25)" explainText="$(string.button_25_Help)" presentation="$(presentation.button_25)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_25_title" valueName="button_25_title" maxLength="40" />
@@ -1701,7 +1692,7 @@
       </elements>
     </policy>
     <policy name="button_26" class="User" displayName="$(string.button_26)" explainText="$(string.button_26_Help)" presentation="$(presentation.button_26)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_26_title" valueName="button_26_title" maxLength="40" />
@@ -1753,7 +1744,7 @@
       </elements>
     </policy>
     <policy name="button_27" class="User" displayName="$(string.button_27)" explainText="$(string.button_27_Help)" presentation="$(presentation.button_27)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_27_title" valueName="button_27_title" maxLength="40" />
@@ -1805,7 +1796,7 @@
       </elements>
     </policy>
     <policy name="button_28" class="User" displayName="$(string.button_28)" explainText="$(string.button_28_Help)" presentation="$(presentation.button_28)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_28_title" valueName="button_28_title" maxLength="40" />
@@ -1857,7 +1848,7 @@
       </elements>
     </policy>
     <policy name="button_29" class="User" displayName="$(string.button_29)" explainText="$(string.button_29_Help)" presentation="$(presentation.button_29)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_29_title" valueName="button_29_title" maxLength="40" />
@@ -1909,7 +1900,7 @@
       </elements>
     </policy>
     <policy name="button_30" class="User" displayName="$(string.button_30)" explainText="$(string.button_30_Help)" presentation="$(presentation.button_30)" key="Software\KashiharaCity\ksip">
-      <parentCategory ref="ButtonsPanel" />
+      <parentCategory ref="Buttons" />
       <supportedOn ref="SUPPORTED_KSIP" />
       <elements>
         <text id="button_30_title" valueName="button_30_title" maxLength="40" />
@@ -1958,6 +1949,1254 @@
         <text id="button_30_number" valueName="button_30_number" maxLength="500" />
         <text id="button_30_transfer" valueName="button_30_transfer" maxLength="200" />
         <text id="button_30_pickup" valueName="button_30_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_31" class="User" displayName="$(string.button_31)" explainText="$(string.button_31_Help)" presentation="$(presentation.button_31)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_31_title" valueName="button_31_title" maxLength="40" />
+        <enum id="button_31_kind" valueName="button_31_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_31_number" valueName="button_31_number" maxLength="500" />
+        <text id="button_31_transfer" valueName="button_31_transfer" maxLength="200" />
+        <text id="button_31_pickup" valueName="button_31_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_32" class="User" displayName="$(string.button_32)" explainText="$(string.button_32_Help)" presentation="$(presentation.button_32)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_32_title" valueName="button_32_title" maxLength="40" />
+        <enum id="button_32_kind" valueName="button_32_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_32_number" valueName="button_32_number" maxLength="500" />
+        <text id="button_32_transfer" valueName="button_32_transfer" maxLength="200" />
+        <text id="button_32_pickup" valueName="button_32_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_33" class="User" displayName="$(string.button_33)" explainText="$(string.button_33_Help)" presentation="$(presentation.button_33)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_33_title" valueName="button_33_title" maxLength="40" />
+        <enum id="button_33_kind" valueName="button_33_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_33_number" valueName="button_33_number" maxLength="500" />
+        <text id="button_33_transfer" valueName="button_33_transfer" maxLength="200" />
+        <text id="button_33_pickup" valueName="button_33_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_34" class="User" displayName="$(string.button_34)" explainText="$(string.button_34_Help)" presentation="$(presentation.button_34)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_34_title" valueName="button_34_title" maxLength="40" />
+        <enum id="button_34_kind" valueName="button_34_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_34_number" valueName="button_34_number" maxLength="500" />
+        <text id="button_34_transfer" valueName="button_34_transfer" maxLength="200" />
+        <text id="button_34_pickup" valueName="button_34_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_35" class="User" displayName="$(string.button_35)" explainText="$(string.button_35_Help)" presentation="$(presentation.button_35)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_35_title" valueName="button_35_title" maxLength="40" />
+        <enum id="button_35_kind" valueName="button_35_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_35_number" valueName="button_35_number" maxLength="500" />
+        <text id="button_35_transfer" valueName="button_35_transfer" maxLength="200" />
+        <text id="button_35_pickup" valueName="button_35_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_36" class="User" displayName="$(string.button_36)" explainText="$(string.button_36_Help)" presentation="$(presentation.button_36)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_36_title" valueName="button_36_title" maxLength="40" />
+        <enum id="button_36_kind" valueName="button_36_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_36_number" valueName="button_36_number" maxLength="500" />
+        <text id="button_36_transfer" valueName="button_36_transfer" maxLength="200" />
+        <text id="button_36_pickup" valueName="button_36_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_37" class="User" displayName="$(string.button_37)" explainText="$(string.button_37_Help)" presentation="$(presentation.button_37)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_37_title" valueName="button_37_title" maxLength="40" />
+        <enum id="button_37_kind" valueName="button_37_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_37_number" valueName="button_37_number" maxLength="500" />
+        <text id="button_37_transfer" valueName="button_37_transfer" maxLength="200" />
+        <text id="button_37_pickup" valueName="button_37_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_38" class="User" displayName="$(string.button_38)" explainText="$(string.button_38_Help)" presentation="$(presentation.button_38)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_38_title" valueName="button_38_title" maxLength="40" />
+        <enum id="button_38_kind" valueName="button_38_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_38_number" valueName="button_38_number" maxLength="500" />
+        <text id="button_38_transfer" valueName="button_38_transfer" maxLength="200" />
+        <text id="button_38_pickup" valueName="button_38_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_39" class="User" displayName="$(string.button_39)" explainText="$(string.button_39_Help)" presentation="$(presentation.button_39)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_39_title" valueName="button_39_title" maxLength="40" />
+        <enum id="button_39_kind" valueName="button_39_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_39_number" valueName="button_39_number" maxLength="500" />
+        <text id="button_39_transfer" valueName="button_39_transfer" maxLength="200" />
+        <text id="button_39_pickup" valueName="button_39_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_40" class="User" displayName="$(string.button_40)" explainText="$(string.button_40_Help)" presentation="$(presentation.button_40)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_40_title" valueName="button_40_title" maxLength="40" />
+        <enum id="button_40_kind" valueName="button_40_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_40_number" valueName="button_40_number" maxLength="500" />
+        <text id="button_40_transfer" valueName="button_40_transfer" maxLength="200" />
+        <text id="button_40_pickup" valueName="button_40_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_41" class="User" displayName="$(string.button_41)" explainText="$(string.button_41_Help)" presentation="$(presentation.button_41)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_41_title" valueName="button_41_title" maxLength="40" />
+        <enum id="button_41_kind" valueName="button_41_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_41_number" valueName="button_41_number" maxLength="500" />
+        <text id="button_41_transfer" valueName="button_41_transfer" maxLength="200" />
+        <text id="button_41_pickup" valueName="button_41_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_42" class="User" displayName="$(string.button_42)" explainText="$(string.button_42_Help)" presentation="$(presentation.button_42)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_42_title" valueName="button_42_title" maxLength="40" />
+        <enum id="button_42_kind" valueName="button_42_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_42_number" valueName="button_42_number" maxLength="500" />
+        <text id="button_42_transfer" valueName="button_42_transfer" maxLength="200" />
+        <text id="button_42_pickup" valueName="button_42_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_43" class="User" displayName="$(string.button_43)" explainText="$(string.button_43_Help)" presentation="$(presentation.button_43)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_43_title" valueName="button_43_title" maxLength="40" />
+        <enum id="button_43_kind" valueName="button_43_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_43_number" valueName="button_43_number" maxLength="500" />
+        <text id="button_43_transfer" valueName="button_43_transfer" maxLength="200" />
+        <text id="button_43_pickup" valueName="button_43_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_44" class="User" displayName="$(string.button_44)" explainText="$(string.button_44_Help)" presentation="$(presentation.button_44)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_44_title" valueName="button_44_title" maxLength="40" />
+        <enum id="button_44_kind" valueName="button_44_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_44_number" valueName="button_44_number" maxLength="500" />
+        <text id="button_44_transfer" valueName="button_44_transfer" maxLength="200" />
+        <text id="button_44_pickup" valueName="button_44_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_45" class="User" displayName="$(string.button_45)" explainText="$(string.button_45_Help)" presentation="$(presentation.button_45)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_45_title" valueName="button_45_title" maxLength="40" />
+        <enum id="button_45_kind" valueName="button_45_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_45_number" valueName="button_45_number" maxLength="500" />
+        <text id="button_45_transfer" valueName="button_45_transfer" maxLength="200" />
+        <text id="button_45_pickup" valueName="button_45_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_46" class="User" displayName="$(string.button_46)" explainText="$(string.button_46_Help)" presentation="$(presentation.button_46)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_46_title" valueName="button_46_title" maxLength="40" />
+        <enum id="button_46_kind" valueName="button_46_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_46_number" valueName="button_46_number" maxLength="500" />
+        <text id="button_46_transfer" valueName="button_46_transfer" maxLength="200" />
+        <text id="button_46_pickup" valueName="button_46_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_47" class="User" displayName="$(string.button_47)" explainText="$(string.button_47_Help)" presentation="$(presentation.button_47)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_47_title" valueName="button_47_title" maxLength="40" />
+        <enum id="button_47_kind" valueName="button_47_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_47_number" valueName="button_47_number" maxLength="500" />
+        <text id="button_47_transfer" valueName="button_47_transfer" maxLength="200" />
+        <text id="button_47_pickup" valueName="button_47_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_48" class="User" displayName="$(string.button_48)" explainText="$(string.button_48_Help)" presentation="$(presentation.button_48)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_48_title" valueName="button_48_title" maxLength="40" />
+        <enum id="button_48_kind" valueName="button_48_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_48_number" valueName="button_48_number" maxLength="500" />
+        <text id="button_48_transfer" valueName="button_48_transfer" maxLength="200" />
+        <text id="button_48_pickup" valueName="button_48_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_49" class="User" displayName="$(string.button_49)" explainText="$(string.button_49_Help)" presentation="$(presentation.button_49)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_49_title" valueName="button_49_title" maxLength="40" />
+        <enum id="button_49_kind" valueName="button_49_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_49_number" valueName="button_49_number" maxLength="500" />
+        <text id="button_49_transfer" valueName="button_49_transfer" maxLength="200" />
+        <text id="button_49_pickup" valueName="button_49_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_50" class="User" displayName="$(string.button_50)" explainText="$(string.button_50_Help)" presentation="$(presentation.button_50)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_50_title" valueName="button_50_title" maxLength="40" />
+        <enum id="button_50_kind" valueName="button_50_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_50_number" valueName="button_50_number" maxLength="500" />
+        <text id="button_50_transfer" valueName="button_50_transfer" maxLength="200" />
+        <text id="button_50_pickup" valueName="button_50_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_51" class="User" displayName="$(string.button_51)" explainText="$(string.button_51_Help)" presentation="$(presentation.button_51)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_51_title" valueName="button_51_title" maxLength="40" />
+        <enum id="button_51_kind" valueName="button_51_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_51_number" valueName="button_51_number" maxLength="500" />
+        <text id="button_51_transfer" valueName="button_51_transfer" maxLength="200" />
+        <text id="button_51_pickup" valueName="button_51_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_52" class="User" displayName="$(string.button_52)" explainText="$(string.button_52_Help)" presentation="$(presentation.button_52)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_52_title" valueName="button_52_title" maxLength="40" />
+        <enum id="button_52_kind" valueName="button_52_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_52_number" valueName="button_52_number" maxLength="500" />
+        <text id="button_52_transfer" valueName="button_52_transfer" maxLength="200" />
+        <text id="button_52_pickup" valueName="button_52_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_53" class="User" displayName="$(string.button_53)" explainText="$(string.button_53_Help)" presentation="$(presentation.button_53)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_53_title" valueName="button_53_title" maxLength="40" />
+        <enum id="button_53_kind" valueName="button_53_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_53_number" valueName="button_53_number" maxLength="500" />
+        <text id="button_53_transfer" valueName="button_53_transfer" maxLength="200" />
+        <text id="button_53_pickup" valueName="button_53_pickup" maxLength="200" />
+      </elements>
+    </policy>
+    <policy name="button_54" class="User" displayName="$(string.button_54)" explainText="$(string.button_54_Help)" presentation="$(presentation.button_54)" key="Software\KashiharaCity\ksip">
+      <parentCategory ref="Buttons" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <text id="button_54_title" valueName="button_54_title" maxLength="40" />
+        <enum id="button_54_kind" valueName="button_54_kind" required="true">
+          <item displayName="$(string.ButtonKind_0)">
+            <value>
+              <string></string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_1)">
+            <value>
+              <string>transfer</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_2)">
+            <value>
+              <string>dial</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_3)">
+            <value>
+              <string>speed</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_4)">
+            <value>
+              <string>park</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_5)">
+            <value>
+              <string>open</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_6)">
+            <value>
+              <string>dnd</string>
+            </value>
+          </item>
+          <item displayName="$(string.ButtonKind_7)">
+            <value>
+              <string>mwi</string>
+            </value>
+          </item>
+        </enum>
+        <text id="button_54_number" valueName="button_54_number" maxLength="500" />
+        <text id="button_54_transfer" valueName="button_54_transfer" maxLength="200" />
+        <text id="button_54_pickup" valueName="button_54_pickup" maxLength="200" />
       </elements>
     </policy>
   </policies>

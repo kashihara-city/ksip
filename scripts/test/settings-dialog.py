@@ -174,6 +174,18 @@ async function checks(){
 
   // The dialog trimmed to one button: only its row is there, and saving saves the buttons alone.
   const visible=id=>{const e=$(id);return !!e&&e.getClientRects().length>0;};
+  // One tab at a time, opening on the account; the save is outside the tabs.
+  await open();
+  const onOpen=[visible('server'),visible('aec'),visible('save-settings'),$('tab-account').getAttribute('aria-selected')];
+  $('tab-audio').click();
+  const onAudio=[visible('server'),visible('aec'),visible('save-settings'),$('tab-audio').getAttribute('aria-selected')];
+  $('tab-audio').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
+  const onNext=[visible('auto_answer'),visible('aec')];
+  check(JSON.stringify(onOpen)==='[true,false,true,"true"]'&&JSON.stringify(onAudio)==='[false,true,true,"true"]'&&JSON.stringify(onNext)==='[true,false]',
+    'the dialog opens on the account tab, shows one tab at a time, moves by arrow key, and keeps the save in sight',[onOpen,onAudio,onNext]);
+  $('configuration').close();await settle();
+  await open();
+  check(visible('server'),'opened again, it starts on the account tab',visible('server'));
   if($('configuration').open)$('configuration').close();
   state.settings={...base,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{title:'B',kind:'dial',number:'1002',transfer:'',pickup:''}]};state.account={...account};
   openButtonSettings(2);await settle();
@@ -181,7 +193,7 @@ async function checks(){
     'trimmed to one button, the dialog shows that row, its close and "save and go on", and nothing else',[visible('button_2_kind'),visible('button_1_kind'),visible('server'),label()]);
   $('button_2_title').value='Bee';
   saved=null;savedButtons=null;$('settings-form').requestSubmit();await settle();
-  check(saved===null&&savedButtons&&savedButtons.length===30&&savedButtons[1].title==='Bee'&&savedButtons[0].title==='A','the trimmed dialog saves the buttons alone',[saved,savedButtons&&savedButtons.slice(0,2)]);
+  check(saved===null&&savedButtons&&savedButtons.length===54&&savedButtons[1].title==='Bee'&&savedButtons[0].title==='A','the trimmed dialog saves the buttons alone',[saved,savedButtons&&savedButtons.slice(0,2)]);
   $('configuration').close();await settle();
   check(!$('configuration').classList.contains('trimmed')&&visible('button_1_kind')===false,'closed, the dialog is whole again for the next opening',$('configuration').className);
 
@@ -222,6 +234,16 @@ async function checks(){
   const panel=[{},{},{},{},{},{},{title:'P',kind:'dial',number:'1007',transfer:'',pickup:''},{},{},{},{},{},{title:'Q',kind:'dial',number:'1013',transfer:'',pickup:''}];
   state.settings={...state.settings,buttons:panel};render();
   const panelPlaces=places('extended-actions');
+  // Beside the panel the phone keeps its own width, and the panel has two buttons to a row.
+  const phoneWidth=document.querySelector('main').getBoundingClientRect().width,columns=getComputedStyle($('extended-actions')).gridTemplateColumns.split(' ').length;
+  check(Math.round(phoneWidth)===Math.min(520,innerWidth)&&columns===2&&$('extended-actions-2').hidden,'beside the first panel the phone keeps its width, two to a row, no second panel',[phoneWidth,innerWidth,columns,$('extended-actions-2').hidden]);
+  // A button from 31 on is in the second panel, beside the first, which stays
+  // though it has none; each panel has as many columns.
+  state.settings={...state.settings,buttons:[...Array(30).fill({}),{title:'R',kind:'dial',number:'1031',transfer:'',pickup:''}]};render();
+  const secondPlaces=places('extended-actions-2'),firstShown=!$('extended-actions').hidden&&getComputedStyle($('extended-actions')).display==='grid',secondColumns=getComputedStyle($('extended-actions-2')).gridTemplateColumns.split(' ').length;
+  check(JSON.stringify(secondPlaces)===JSON.stringify(['custom-31','gap'])&&firstShown&&$('extended-actions').children.length===0&&secondColumns===2&&document.body.classList.contains('extended-2'),
+    'a button from 31 on is in the second panel, the first stays beside the phone, empty',[secondPlaces,firstShown,secondColumns]);
+  state.settings={...state.settings,buttons:panel};render();
   // An empty slot is as tall as a button, so that a row of them does not close up.
   const gapHeight=$('extended-actions').querySelector('.button-gap').getBoundingClientRect().height,buttonHeight=$('custom-7').getBoundingClientRect().height;
   const thirteenTop=$('custom-13').getBoundingClientRect().top-$('custom-7').getBoundingClientRect().top;
@@ -236,8 +258,8 @@ async function checks(){
   check(JSON.stringify(before)===JSON.stringify(after)&&second==='1001'&&$('custom-1').textContent.includes('#1'),
     'a slot while editing has the height and font of the button itself, shows the number without the BLF state, and its place by the icons',[before,after,second]);
   const slots=document.querySelectorAll('.button-slot').length;
-  check(slots===30&&editingWindow===true&&!!$('custom-2-delete')&&!$('custom-3-delete')&&!!$('custom-3-edit')&&!!$('dial').closest('[inert]')&&!$('custom-actions').closest('[inert]')&&$('edit-buttons').textContent==='ボタン編集終了',
-    'editing shows all thirty slots with their tools, widens the window, and makes the rest of the phone inert',[slots,editingWindow,!!$('dial').closest('[inert]')]);
+  check(slots===54&&editingWindow===true&&!!$('custom-2-delete')&&!$('custom-3-delete')&&!!$('custom-3-edit')&&!!$('dial').closest('[inert]')&&!$('custom-actions').closest('[inert]')&&$('edit-buttons').textContent==='ボタン編集終了',
+    'editing shows all fifty-four slots with their tools, widens the window, and makes the rest of the phone inert',[slots,editingWindow,!!$('dial').closest('[inert]')]);
   // Deleting asks first, then saves the buttons without it.
   savedButtons=null;$('custom-2-delete').click();await settle();
   const asked=$('confirm').open;$('confirm-ok').click();await settle();

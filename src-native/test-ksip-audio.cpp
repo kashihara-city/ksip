@@ -626,10 +626,14 @@ void numbers_and_lists_are_checked() {
     check(ksip_text::escape_user("#31#") == "%2331%23", "the hash is escaped in a user part");
     check(ksip_text::codec_list("PCMU,opus,bogus,PCMU") == "PCMU/8000/1,opus/48000/1", "the codecs keep the app's order, once each, known ones only");
     check(ksip_text::codec_list("") == "opus/48000/1,G722/16000/1,PCMU/8000/1,PCMA/8000/1", "no choice means every codec");
-    std::array<std::string, 30> values;
+    std::array<std::string, ksip_text::WATCH_COUNT> values;
     check(ksip_text::parse_watch_list("701,,sip:park@pbx", values) && values[0] == "701" && values[1].empty() && values[2] == "sip:park@pbx", "a watch list with an empty slot");
     check(!ksip_text::parse_watch_list("701,701", values), "a number named twice is refused");
     check(!ksip_text::parse_watch_list("70 1", values), "a number with a space is refused");
+    std::string full;
+    for (size_t n = 0; n < ksip_text::WATCH_COUNT; n++) full += (n ? ",7" : "7") + std::to_string(100 + n);
+    check(ksip_text::parse_watch_list(full.c_str(), values) && values[ksip_text::WATCH_COUNT - 1] == "7153", "a number for every button is taken");
+    check(!ksip_text::parse_watch_list((full + ",7999").c_str(), values), "one more than the buttons is refused");
     std::string mic, spk;
     check(ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk) && mic == "{mic}" && spk == "{spk}", "the two endpoint ids");
     check(!ksip_text::parse_audio_devices("{mic}", 160, mic, spk), "one id is not enough");

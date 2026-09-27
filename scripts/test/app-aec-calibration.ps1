@@ -7,7 +7,8 @@ $version=Get-KsipVersion
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
 Start-KsipProfile
 $app=$null
-function Delay-Edit { Value-Id 'aec_delay_ms' }
+# The delay and the calibration are on the dialog's audio tab.
+function Delay-Edit { Click-Id 'tab-audio'; Value-Id 'aec_delay_ms' }
 function Wait-Recommendation {
     $end=[DateTime]::UtcNow.AddSeconds(15)
     do {

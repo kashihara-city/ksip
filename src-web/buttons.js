@@ -7,12 +7,15 @@ import {render} from './phone.js';
 import {openButtonSettings} from './settings.js';
 
 // The button rows of the settings are one template stamped out: six for the
-// phone, the rest for the panel beside it.
-export const BUTTON_MAIN=6,BUTTON_COUNT=30,BUTTON_INDEXES=Array.from({length:BUTTON_COUNT},(_,i)=>i+1);
+// phone, then twenty-four for each of the two panels beside it (7 to 30, and
+// 31 to 54), as two expansion units put side by side.
+export const BUTTON_MAIN=6,BUTTON_PANEL=30,BUTTON_COUNT=54,BUTTON_INDEXES=Array.from({length:BUTTON_COUNT},(_,i)=>i+1);
+// Where each run of buttons is drawn, and how many to a row.
+const BOXES=[['custom-actions',1,BUTTON_MAIN,3],['extended-actions',BUTTON_MAIN+1,BUTTON_PANEL,2],['extended-actions-2',BUTTON_PANEL+1,BUTTON_COUNT,2]];
 // Stamped before the wording is applied, so that it reaches them too.
 export function buildButtonSets(){
   const html=$('button-set-template').innerHTML;
-  for(const n of BUTTON_INDEXES)$(n<=BUTTON_MAIN?'button-sets':'extended-sets').insertAdjacentHTML('beforeend',html.replaceAll('button_N_','button_'+n+'_').replace('>N<','>'+n+'<'));
+  for(const n of BUTTON_INDEXES)$(n<=BUTTON_MAIN?'button-sets':n<=BUTTON_PANEL?'extended-sets':'extended-sets-2').insertAdjacentHTML('beforeend',html.replaceAll('button_N_','button_'+n+'_').replace('>N<','>'+n+'<'));
 }
 // A switch on the phone itself has a name of its own in the window's language,
 // used while the title is left empty; the other kinds fall back to the number.
@@ -20,8 +23,8 @@ export const defaultTitle=kind=>kind==='dnd'?t('BUTTON_TITLE_DND'):kind==='mwi'?
 export const buttonTitle=b=>b.title||defaultTitle(b.kind)||b.number;
 
 // Button editing: while it is on, a click on the phone does nothing (what is
-// not a button is made inert, and dimmed), every one of the thirty slots is
-// shown, the panel's too, with an edit and (for a set one) a delete icon,
+// not a button is made inert, and dimmed), every one of the fifty-four slots is
+// shown, both panels' too, with an edit and (for a set one) a delete icon,
 // and a button is moved by dragging it onto another slot. It stays on
 // through a call ringing; a call that starts ends it (see phone.js).
 export let editing=false;
@@ -38,7 +41,7 @@ export function setEditing(on){
   invoke('set_button_editing',{editing:on}).catch(e=>logUi('button editing',e));
   render();
 }
-// The thirty buttons as the settings hold them, every field there.
+// Every button as the settings hold them, every field there.
 function allButtons(){
   return BUTTON_INDEXES.map(n=>({title:'',kind:'',number:'',transfer:'',pickup:'',...((state.settings.buttons||[])[n-1]||{})}));
 }
@@ -105,8 +108,9 @@ function editSlot(n,b){
 }
 function renderEditing(){
   const buttons=allButtons();
-  document.body.classList.add('extended');
-  for(const [box,from,to] of [[$('custom-actions'),1,BUTTON_MAIN],[$('extended-actions'),BUTTON_MAIN+1,BUTTON_COUNT]]){
+  document.body.classList.add('extended','extended-2');
+  for(const [id,from,to] of BOXES){
+    const box=$(id);
     box.hidden=false;
     const key='edit:'+JSON.stringify(buttons.slice(from-1,to))+':'+t('BUTTON_SLOT_EMPTY');
     if(box.dataset.key===key)continue;
@@ -119,15 +123,17 @@ function renderEditing(){
 // that a button is where the editing put it: an empty slot before the last
 // set one keeps its place, empty; the rows after the last set one are left
 // out. Each button keeps its own id so that a test can find it by position.
-// The phone's six buttons (three to a row) and the panel's (two to a row)
-// are drawn the same way; the panel and the wider window only exist while a
-// panel button is set.
+// The phone's six buttons (three to a row) and each panel's twenty-four (two
+// to a row) are drawn the same way. A panel and the wider window only exist
+// while one of its buttons is set; the first panel stays, empty, while the
+// second has one, so that the second is always in its own place.
 export function renderButtons(c){
   if(editing){renderEditing();return;}
-  const all=configuredButtons(),extended=all.filter(b=>b.index>BUTTON_MAIN);
-  document.body.classList.toggle('extended',extended.length>0);
-  renderButtonBox($('custom-actions'),1,3,all.filter(b=>b.index<=BUTTON_MAIN),c);
-  renderButtonBox($('extended-actions'),BUTTON_MAIN+1,2,extended,c);
+  const all=configuredButtons(),second=all.some(b=>b.index>BUTTON_PANEL);
+  document.body.classList.toggle('extended',all.some(b=>b.index>BUTTON_MAIN));
+  document.body.classList.toggle('extended-2',second);
+  for(const [id,from,to,columns] of BOXES)renderButtonBox($(id),from,columns,all.filter(b=>b.index>=from&&b.index<=to),c);
+  if(second)$('extended-actions').hidden=false;
 }
 function renderButtonBox(box,first,columns,configured,c){
   box.hidden=!configured.length;

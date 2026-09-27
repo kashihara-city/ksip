@@ -123,7 +123,7 @@ const cmd commands[] = {
     {"ksip_login", 0, 0, "Load Windows SIP credential and register", sip_account::login},
     {"ksip_state", 0, 0, "Get account and per-call state", state},
     {"ksip_action", 0, CMD_PRM, "Operate a specific call", action},
-    {"ksip_parking", 0, CMD_PRM, "Watch up to thirty numbers through dialog-state subscriptions", subscriptions::configure},
+    {"ksip_parking", 0, CMD_PRM, "Watch up to fifty-four numbers through dialog-state subscriptions", subscriptions::configure},
     {"ksip_shutdown", 0, 0, "Release KSIP subscriptions before quit", subscriptions::shutdown},
     {"ksip_audio_devices", 0, CMD_PRM, "Use these microphone and speaker endpoint ids from the next call on", audio_devices},
     {"ksip_detail_log", 0, CMD_PRM, "Turn the detail log on or off while running", detail_log},

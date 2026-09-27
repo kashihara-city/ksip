@@ -618,23 +618,27 @@ button {
   color:#a84035;
   font-weight:600;
 }
-#extended-actions {
+#extended-actions,#extended-actions-2 {
   display:none;
 }
 body.extended {
   display:flex;
   align-items:stretch;
 }
+/* With the panels, the phone keeps its own width (as far as the window
+   allows) and the panels share the rest, two buttons to a row: as wide as
+   the phone each, in the window fitted for them (desktop.rs). */
 body.extended main {
-  flex:0 0 50%;
+  flex:0 1 520px;
+  min-width:0;
   max-width:none;
   margin:0;
 }
-body.extended #extended-actions {
+body.extended #extended-actions,body.extended-2 #extended-actions-2 {
   display:grid;
-  flex:1;
+  flex:1 1 0;
   min-width:0;
-  grid-template-columns:repeat(2,1fr);
+  grid-template-columns:repeat(2,minmax(0,1fr));
   grid-auto-rows:max-content;
   align-content:start;
   gap:8px;
@@ -675,15 +679,49 @@ dialog input,dialog select {
 .button-set .field:nth-of-type(2) {
   grid-column:4;
 }
-.button-fold summary {
-  font-size:13px;
-  color:inherit;
-  border-bottom:1px solid #e1e8e3;
-  padding-bottom:8px;
-  margin:18px 0 12px;
+/* The settings dialog's tabs: one at a time, the row of tabs kept in sight
+   while the dialog scrolls. */
+.settings-tabs {
+  position:sticky;
+  top:-24px;
+  z-index:1;
+  display:flex;
+  flex-wrap:wrap;
+  gap:2px;
+  margin:0 -24px 14px;
+  padding:6px 24px 0;
+  background:#fff;
+  border-bottom:1px solid #d4dfdb;
 }
-.button-fold summary .hint {
+.settings-tabs [role="tab"] {
+  border:0;
+  border-bottom:2px solid transparent;
+  border-radius:0;
+  background:none;
+  padding:7px 10px;
+  font-size:12px;
+  color:#5d6f68;
+}
+.settings-tabs [role="tab"]:hover:enabled {
+  background:none;
+  color:#264a42;
+}
+.settings-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color:#246650;
+  color:#246650;
+  font-weight:600;
+}
+.settings-tab > h3:first-child {
+  margin-top:4px;
+}
+#settings-buttons h4 {
+  margin:14px 0 8px;
+  font-size:12px;
+  color:#5d6f68;
+}
+#settings-buttons h3 .hint {
   font-size:11px;
+  font-weight:normal;
 }
 .button-set .field span {
   display:block;
@@ -1097,11 +1135,10 @@ body.editing-buttons .aec-status {
   text-align:center;
 }
 /* The settings dialog trimmed to one button (settings.js): its title with the
-   close, that button's row, the error and the save. */
-#configuration.trimmed #settings-form > :not(.dialog-title):not(.button-fold):not(#settings-error):not(#save-settings),
-#configuration.trimmed .button-fold:not(:has(.kept)),
-#configuration.trimmed .button-fold > summary,
-#configuration.trimmed .button-fold > .hint,
-#configuration.trimmed .button-set:not(.kept) {
+   close, that button's row, the error and the save; no tabs. */
+#configuration.trimmed .settings-tabs,
+#configuration.trimmed #settings-buttons > :not(.button-sets),
+#configuration.trimmed .button-set:not(.kept),
+#configuration.trimmed .settings-footer > .hint {
   display:none;
 }

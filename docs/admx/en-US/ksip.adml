@@ -5,17 +5,14 @@
   <resources>
     <stringTable>
       <string id="SUPPORTED_KSIP">KSIP (the versions that keep each setting in a registry value of its own)</string>
+      <string id="Category_KashiharaCity">Kashihara City</string>
       <string id="Category_KSIP">KSIP</string>
-      <string id="Category_Account">Account</string>
-      <string id="Category_Connection">Connection</string>
-      <string id="Category_Audio">Audio processing</string>
-      <string id="Category_Calls">Calls</string>
-      <string id="Category_Browser">Program integration</string>
-      <string id="Category_Display">Display and keys</string>
-      <string id="Category_Sounds">Sounds</string>
-      <string id="Category_ButtonsPhone">Custom buttons (phone)</string>
-      <string id="Category_ButtonsPanel">Custom buttons (panel)</string>
-      <string id="Category_Diagnostics">Diagnostics</string>
+      <string id="Category_Connection">Account and connection</string>
+      <string id="Category_Audio">Audio</string>
+      <string id="Category_Calls">Calls and display</string>
+      <string id="Category_Links">Links</string>
+      <string id="Category_Buttons">Buttons</string>
+      <string id="Category_Other">Other</string>
       <string id="ButtonKind_0">Unused (no button)</string>
       <string id="ButtonKind_1">Transfer</string>
       <string id="ButtonKind_2">Dial (with BLF)</string>
@@ -240,7 +237,7 @@ The value is written to the value of the same name under HKCU\Software\Kashihara
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_1">Button 1</string>
+      <string id="button_1">Button 01</string>
       <string id="button_1_Help">Custom button 1. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -249,12 +246,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_2">Button 2</string>
+      <string id="button_2">Button 02</string>
       <string id="button_2_Help">Custom button 2. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -263,12 +260,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_3">Button 3</string>
+      <string id="button_3">Button 03</string>
       <string id="button_3_Help">Custom button 3. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -277,12 +274,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_4">Button 4</string>
+      <string id="button_4">Button 04</string>
       <string id="button_4_Help">Custom button 4. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -291,12 +288,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_5">Button 5</string>
+      <string id="button_5">Button 05</string>
       <string id="button_5_Help">Custom button 5. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -305,12 +302,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_6">Button 6</string>
+      <string id="button_6">Button 06</string>
       <string id="button_6_Help">Custom button 6. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -319,12 +316,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_7">Button 7</string>
+      <string id="button_7">Button 07</string>
       <string id="button_7_Help">Custom button 7. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -333,12 +330,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_8">Button 8</string>
+      <string id="button_8">Button 08</string>
       <string id="button_8_Help">Custom button 8. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -347,12 +344,12 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
 The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
-      <string id="button_9">Button 9</string>
+      <string id="button_9">Button 09</string>
       <string id="button_9_Help">Custom button 9. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
 
 Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
@@ -361,7 +358,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -375,7 +372,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -389,7 +386,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -403,7 +400,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -417,7 +414,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -431,7 +428,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -445,7 +442,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -459,7 +456,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -473,7 +470,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -487,7 +484,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -501,7 +498,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -515,7 +512,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -529,7 +526,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -543,7 +540,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -557,7 +554,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -571,7 +568,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -585,7 +582,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -599,7 +596,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -613,7 +610,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -627,7 +624,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -641,7 +638,7 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -655,7 +652,343 @@ Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with 
 Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
 Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
 
-Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in the panel beside it.
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_31">Button 31</string>
+      <string id="button_31_Help">Custom button 31. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_32">Button 32</string>
+      <string id="button_32_Help">Custom button 32. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_33">Button 33</string>
+      <string id="button_33_Help">Custom button 33. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_34">Button 34</string>
+      <string id="button_34_Help">Custom button 34. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_35">Button 35</string>
+      <string id="button_35_Help">Custom button 35. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_36">Button 36</string>
+      <string id="button_36_Help">Custom button 36. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_37">Button 37</string>
+      <string id="button_37_Help">Custom button 37. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_38">Button 38</string>
+      <string id="button_38_Help">Custom button 38. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_39">Button 39</string>
+      <string id="button_39_Help">Custom button 39. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_40">Button 40</string>
+      <string id="button_40_Help">Custom button 40. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_41">Button 41</string>
+      <string id="button_41_Help">Custom button 41. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_42">Button 42</string>
+      <string id="button_42_Help">Custom button 42. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_43">Button 43</string>
+      <string id="button_43_Help">Custom button 43. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_44">Button 44</string>
+      <string id="button_44_Help">Custom button 44. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_45">Button 45</string>
+      <string id="button_45_Help">Custom button 45. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_46">Button 46</string>
+      <string id="button_46_Help">Custom button 46. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_47">Button 47</string>
+      <string id="button_47_Help">Custom button 47. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_48">Button 48</string>
+      <string id="button_48_Help">Custom button 48. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_49">Button 49</string>
+      <string id="button_49_Help">Custom button 49. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_50">Button 50</string>
+      <string id="button_50_Help">Custom button 50. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_51">Button 51</string>
+      <string id="button_51_Help">Custom button 51. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_52">Button 52</string>
+      <string id="button_52_Help">Custom button 52. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_53">Button 53</string>
+      <string id="button_53_Help">Custom button 53. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
+
+Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
+
+The value is written to the value of the same name under HKCU\Software\KashiharaCity\ksip. KSIP reads it at start and at every connect.</string>
+      <string id="button_54">Button 54</string>
+      <string id="button_54_Help">Custom button 54. Enabled writes its five values (title, function, number, transfer target, number while in use); disabled deletes all five and no button is shown.
+
+Title: up to 40 characters; empty shows the number (do not disturb and voicemail show their names in the display language).
+Function: transfer, dial with BLF, dial without BLF, park with BLF, open a link, do not disturb, voicemail.
+Number: digits, * and # (a leading + too), up to 30, or a SIP URI starting with sip:. Dial without BLF also takes the separators - . ( ) and spaces, and tel:. Open a link takes an http:// or https:// URL. Do not disturb takes none.
+Transfer target: for park, where the call in progress goes while the number is free; empty means the number.
+Number while in use: for dial and park, what is called while the number is in use (a pickup code, say); empty means the number.
+
+Two buttons cannot watch the same number. KSIP does not connect with a value that is not valid. Buttons 1 to 6 sit under the phone; 7 to 30 in expansion unit 1 beside it, 31 to 54 in expansion unit 2 beyond.
 
 Not configured leaves the value alone (what the user saved in the settings dialog, or what was applied before, stays).
 
@@ -1198,6 +1531,366 @@ The value is written to the value of the same name under HKCU\Software\Kashihara
           <label>Transfer target (park)</label>
         </textBox>
         <textBox refId="button_30_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_31">
+        <textBox refId="button_31_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_31_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_31_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_31_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_31_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_32">
+        <textBox refId="button_32_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_32_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_32_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_32_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_32_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_33">
+        <textBox refId="button_33_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_33_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_33_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_33_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_33_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_34">
+        <textBox refId="button_34_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_34_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_34_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_34_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_34_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_35">
+        <textBox refId="button_35_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_35_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_35_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_35_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_35_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_36">
+        <textBox refId="button_36_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_36_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_36_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_36_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_36_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_37">
+        <textBox refId="button_37_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_37_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_37_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_37_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_37_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_38">
+        <textBox refId="button_38_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_38_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_38_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_38_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_38_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_39">
+        <textBox refId="button_39_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_39_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_39_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_39_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_39_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_40">
+        <textBox refId="button_40_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_40_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_40_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_40_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_40_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_41">
+        <textBox refId="button_41_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_41_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_41_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_41_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_41_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_42">
+        <textBox refId="button_42_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_42_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_42_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_42_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_42_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_43">
+        <textBox refId="button_43_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_43_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_43_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_43_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_43_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_44">
+        <textBox refId="button_44_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_44_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_44_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_44_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_44_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_45">
+        <textBox refId="button_45_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_45_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_45_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_45_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_45_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_46">
+        <textBox refId="button_46_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_46_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_46_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_46_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_46_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_47">
+        <textBox refId="button_47_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_47_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_47_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_47_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_47_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_48">
+        <textBox refId="button_48_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_48_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_48_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_48_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_48_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_49">
+        <textBox refId="button_49_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_49_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_49_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_49_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_49_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_50">
+        <textBox refId="button_50_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_50_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_50_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_50_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_50_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_51">
+        <textBox refId="button_51_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_51_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_51_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_51_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_51_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_52">
+        <textBox refId="button_52_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_52_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_52_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_52_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_52_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_53">
+        <textBox refId="button_53_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_53_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_53_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_53_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_53_pickup">
+          <label>Number while in use (dial, park)</label>
+        </textBox>
+      </presentation>
+      <presentation id="button_54">
+        <textBox refId="button_54_title">
+          <label>Title</label>
+        </textBox>
+        <dropdownList refId="button_54_kind" noSort="true" defaultItem="0">Function</dropdownList>
+        <textBox refId="button_54_number">
+          <label>Number</label>
+        </textBox>
+        <textBox refId="button_54_transfer">
+          <label>Transfer target (park)</label>
+        </textBox>
+        <textBox refId="button_54_pickup">
           <label>Number while in use (dial, park)</label>
         </textBox>
       </presentation>

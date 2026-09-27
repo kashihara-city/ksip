@@ -211,7 +211,7 @@ std::string escape_user(const std::string &value) {
     for (char ch : value) user += ch == '#' ? "%23" : std::string(1, ch);
     return user;
 }
-bool parse_watch_list(const char *prm, std::array<std::string, 30> &values) {
+bool parse_watch_list(const char *prm, std::array<std::string, WATCH_COUNT> &values) {
     if (!prm || !*prm) return false;
     std::string text = prm;
     size_t start = 0, count = 0;

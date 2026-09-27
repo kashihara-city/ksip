@@ -58,6 +58,16 @@ function setChoice(select,value){
   if(![...select.options].some(option=>option.value===text)){const option=document.createElement('option');option.value=text;option.textContent=fill('SETTINGS_CHOICE_UNKNOWN',text);option.dataset.unknown='';select.append(option);}
   select.value=text;
 }
+// The dialog shows one tab at a time; it opens on the account, where a first
+// setup begins. The footer (the error and the save) is outside the tabs, so
+// a refusal is seen whichever tab is open.
+export function selectTab(name){
+  for(const tab of document.querySelectorAll('.settings-tabs [role="tab"]')){
+    const on=tab.dataset.tab===name;
+    tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;
+    $('settings-'+tab.dataset.tab).hidden=!on;
+  }
+}
 // The dialog trimmed to one button, from the button editing: the title with
 // its close, that button's row, and a save that keeps the phone as it is.
 // Saving it saves the buttons alone.
@@ -65,9 +75,8 @@ export function openButtonSettings(n){
   openSettings();
   trimmedTo=n;
   const dialog=$('configuration'),row=$('button_'+n+'_kind').closest('.button-set');
-  dialog.classList.add('trimmed');
+  dialog.classList.add('trimmed');selectTab('buttons');
   for(const set of dialog.querySelectorAll('.button-set'))set.classList.toggle('kept',set===row);
-  for(const fold of dialog.querySelectorAll('.button-fold'))fold.open=fold.contains(row);
   updateSaveLabel();
 }
 // Back to the whole dialog, whenever it closes.
@@ -120,7 +129,7 @@ export function openSettings(){
   $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
-  $('settings-error').hidden=true;$('configuration').showModal();
+  $('settings-error').hidden=true;selectTab('account');$('configuration').showModal();
   updateSaveLabel();
 }
 // SDES and OSRTP carry their keys in the signalling, so they are offered only
@@ -249,6 +258,18 @@ export function init(){
   // The close event comes a moment after the dialog closed: one that opened
   // again meanwhile (trimmed, from the button editing) is left as it is.
   $('configuration').addEventListener('close',()=>{if(!$('configuration').open)untrim();});
+  // A tab by click, and the next or previous by the arrow keys, as a tab list does.
+  const tabs=[...document.querySelectorAll('.settings-tabs [role="tab"]')];
+  for(const tab of tabs){
+    tab.addEventListener('click',()=>selectTab(tab.dataset.tab));
+    tab.addEventListener('keydown',e=>{
+      const step=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
+      if(!step)return;
+      e.preventDefault();
+      const next=tabs[(tabs.indexOf(tab)+step+tabs.length)%tabs.length];
+      selectTab(next.dataset.tab);next.focus();
+    });
+  }
   // The save says whether it reconnects, as the dialog is changed.
   for(const type of ['input','change'])$('settings-form').addEventListener(type,()=>{if($('configuration').open)updateSaveLabel();});
   invoke('restart_settings').then(names=>{restartNames=names;}).catch(e=>logUi('restart settings',e));

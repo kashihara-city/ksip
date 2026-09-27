@@ -16,9 +16,9 @@ struct ParkSlot {
     // partial report (RFC 4235) changes only the dialogs it names.
     std::unordered_map<std::string, std::string> dialogs;
 };
-// The numbers the buttons watch: up to thirty dialog subscriptions, six
+// The numbers the buttons watch: up to WATCH_COUNT dialog subscriptions, six
 // for the phone and the rest for the panel beside it.
-std::array<ParkSlot, 30> parking;
+std::array<ParkSlot, ksip_text::WATCH_COUNT> parking;
 // Retries the subscriptions a while after one closes.
 tmr parking_timer;
 // The voicemail box's message-summary subscription, and the last summary
@@ -158,8 +158,8 @@ void subscribe_all() {
 }
 int configure(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
-    // Up to thirty comma-separated numbers; an empty one is a slot nobody watches.
-    std::array<std::string, 30> values;
+    // Up to WATCH_COUNT comma-separated numbers; an empty one is a slot nobody watches.
+    std::array<std::string, ksip_text::WATCH_COUNT> values;
     if (!a || !ksip_io::parse_watch_list(a->prm, values)) return EINVAL;
     // Only the parking subscriptions change hands here; the message summary
     // stays subscribed, whichever order the registration and this command

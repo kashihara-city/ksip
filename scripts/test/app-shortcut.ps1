@@ -82,6 +82,7 @@ try {
 
     # What the settings dialog refuses, and what it accepts.
     Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null
+    Click-Id 'tab-calls'
     $field=Value-Id 'shortcut_window'
     $field.SetValue('SHIFT F2')
     Click-Id 'save-settings';Wait-Text 'settings-error' '記法が正しくありません' | Out-Null

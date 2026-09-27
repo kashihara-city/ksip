@@ -11,6 +11,8 @@ New-Item -ItemType Directory -Force $base | Out-Null
 Start-KsipProfile
 $app=$null;$caller=$null
 function Get-AutoAnswerToggle(){
+    # The switch is on the dialog's calls tab.
+    Click-Id 'tab-calls'
     $node=Wait-Id 'auto_answer'
     $pattern=$null
     if(!$node.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)){throw 'Auto answer control is not a toggle'}

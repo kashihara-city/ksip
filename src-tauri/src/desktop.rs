@@ -40,26 +40,35 @@ static BUTTON_EDITING: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 pub fn set_button_editing(editing: bool) {
     BUTTON_EDITING.store(editing, std::sync::atomic::Ordering::Relaxed);
 }
+/// The width the window was last fitted to, as a multiple of the phone's
+/// width: 1 the phone alone, 2 with the first panel, 3 with the second panel
+/// or while editing. 0 before the first fit.
+static FITTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// The phone's own width; the panel beside it takes what the window has more.
+const PHONE_WIDTH: f64 = 520.0;
+/// The window is widened for the panels when the buttons ask for it: twice
+/// the phone's width for a button in the first panel (7 to 30), three times
+/// for one in the second (31 to 54) or while the buttons are being edited. It is
+/// fitted when that changes, and only then, so that a width the person chose
+/// stays; the smallest width is the phone's with a narrow panel.
 pub fn fit_window(app: &tauri::AppHandle, settings: &Settings) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let extended = BUTTON_EDITING.load(std::sync::atomic::Ordering::Relaxed)
-        || settings
-            .buttons
-            .iter()
-            .skip(settings::CustomButton::MAIN)
-            .any(|b| b.configured());
+    let set = |n: usize| settings.buttons.get(n - 1).is_some_and(|b| b.configured());
+    let wide = BUTTON_EDITING.load(std::sync::atomic::Ordering::Relaxed) || (31..=settings::CustomButton::COUNT).any(set);
+    let panel = wide || (settings::CustomButton::MAIN + 1..=30).any(set);
+    let level: u8 = if wide { 3 } else if panel { 2 } else { 1 };
+    if FITTED.swap(level, std::sync::atomic::Ordering::Relaxed) == level {
+        return;
+    }
     let scale = window.scale_factor().unwrap_or(1.0);
     let Ok(size) = window.inner_size() else {
         return;
     };
-    let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
-    let wanted = if extended { 1040.0 } else { 520.0 };
-    if (extended && width < 840.0) || (!extended && width > 800.0) {
-        let _ = window.set_min_size(Some(tauri::LogicalSize::new(if extended { 840.0 } else { 420.0 }, 620.0)));
-        let _ = window.set_size(tauri::LogicalSize::new(wanted, height));
-    }
+    let height = size.height as f64 / scale;
+    let _ = window.set_min_size(Some(tauri::LogicalSize::new(if panel { 840.0 } else { 420.0 }, 620.0)));
+    let _ = window.set_size(tauri::LogicalSize::new(PHONE_WIDTH * level as f64, height));
 }
 fn is_visible(app: &tauri::AppHandle) -> bool {
     app.get_webview_window("main")

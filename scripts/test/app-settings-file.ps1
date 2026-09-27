@@ -42,7 +42,8 @@ function Use-FileDialog([string]$title, [string]$path) {
     }
     throw "The file dialog '$title' did not take the path"
 }
-function Open-Settings { Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null }
+# The file buttons are on the dialog's "other" tab; the dialog opens on the account tab.
+function Open-Settings { Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null;Click-Id 'tab-other' }
 function Export-Saved {
     # What KSIP has saved, from the exe's own export of this test profile.
     $out="$work/saved.json"
@@ -80,10 +81,13 @@ try {
     Click-Id 'import-settings'
     Use-FileDialog '読み込む設定ファイル' "$work/other-server.json"
     Wait-Text 'settings-file-note' '画面に読み込みました' | Out-Null
+    Click-Id 'tab-account'
     if((Value-Id 'server').Current.Value -ne 'pbx.example'){throw 'The imported server is not in the dialog'}
     Click-Id 'close-settings'
     Open-Settings
+    Click-Id 'tab-account'
     if((Value-Id 'server').Current.Value -ne $address){throw 'Closing without saving kept the imported server'}
+    Click-Id 'tab-other'
     'PASS: 読み込みは画面に入れるだけで、保存せずに閉じれば元のまま'
 
     # Import and save: what the file names changes, what it leaves out stays,

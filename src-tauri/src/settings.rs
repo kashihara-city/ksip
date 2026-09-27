@@ -82,7 +82,9 @@ impl CustomButton {
     /// The first six sit on the phone; the rest fill the panel beside it,
     /// which appears while any of them is set.
     pub const MAIN: usize = 6;
-    pub const COUNT: usize = 30;
+    /// Six on the phone and forty-eight in the panel (sixteen rows of three).
+    /// The engine watches as many numbers (WATCH_COUNT in ksip_text.h).
+    pub const COUNT: usize = 54;
     pub const KINDS: [&'static str; 7] = ["transfer", "dial", "speed", "park", "open", "dnd", "mwi"];
     pub fn empty_set() -> Vec<Self> {
         vec![Self::default(); Self::COUNT]
@@ -291,7 +293,7 @@ impl MediaEncryption {
 pub const SAVE_MARK: &str = "SaveInProgress";
 impl Settings {
     /// The five values of each custom button: `button_1_title` to
-    /// `button_30_pickup`. 1 to 6 sit on the phone, 7 to 30 in the panel
+    /// `button_54_pickup`. 1 to 6 sit on the phone, 7 to 54 in the panel
     /// beside it.
     pub const BUTTON_FIELDS: [&'static str; 5] = ["title", "kind", "number", "transfer", "pickup"];
     /// Every setting as the registry holds it: its value name (the field's
@@ -627,7 +629,7 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
 /// dialog, as the dialog takes them:
 /// - `settings`: the settings fields the file names, each of the type the
 ///   field has; the custom buttons as `buttons`, a list of the buttons the
-///   file names (`n`, 1 to 30, and the fields it gives);
+///   file names (`n`, 1 to 54, and the fields it gives);
 /// - `account`: the server, port and extension the file gives;
 /// - `unreadable`: the names the file names but the machine it came from
 ///   could not read (their values there are defaults, not the machine's);
@@ -1363,7 +1365,7 @@ mod tests {
             // A write that fails (the last button's, after the rest have
             // landed) puts back what was there: here nothing, so every button
             // value written is taken away again.
-            crate::storage::fail_next_write_of("button_30_pickup");
+            crate::storage::fail_next_write_of("button_54_pickup");
             assert!(app.save_buttons(&buttons).is_err());
             crate::storage::fail_next_write_of("");
             assert!(app.store.read_raw("button_3_kind")?.is_none(), "what landed before the failure is taken back");

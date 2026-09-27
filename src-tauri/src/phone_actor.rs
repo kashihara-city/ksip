@@ -1890,7 +1890,7 @@ async fn apply_live(s: &Shared, old: &Settings, new: &Settings) -> Result<(), St
     }
     Ok(())
 }
-/// The numbers the engine watches, as ksip_parking takes them: thirty,
+/// The numbers the engine watches, as ksip_parking takes them: one for each button,
 /// comma-separated, empty ones included.
 fn watch_list(settings: &Settings) -> String {
     let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
