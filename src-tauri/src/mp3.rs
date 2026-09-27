@@ -14,6 +14,7 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READER_FIRST_AUDIO_STREAM,
     MF_VERSION,
 };
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
 /// Call audio at 64 kbit/s: a twelfth of the WAV, and every word intact. The
@@ -25,16 +26,27 @@ const STEREO_BITRATE: u32 = 128_000;
 
 /// Writes `mp3` from `wav`. The caller decides what happens to the WAV.
 pub fn transcode(wav: &Path, mp3: &Path) -> Result<(), String> {
-    // SAFETY: Media Foundation is used on this thread alone, started and
-    // stopped here, and every object it hands out is released by its wrapper.
-    unsafe {
-        let com = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let result = with_media_foundation(wav, mp3);
-        if com.is_ok() {
-            CoUninitialize();
-        }
-        result
+    // COM for the conversion, on this thread: initialised here (S_OK, or
+    // S_FALSE when it already was in this apartment), and balanced below; or,
+    // on a thread that already has COM in another apartment
+    // (RPC_E_CHANGED_MODE), that one, which is there all the same and not
+    // this function's to end. Any other failure (out of memory, unexpected)
+    // means there is no COM to work in, and nothing is converted.
+    // SAFETY: no pointer is passed; the result is checked below.
+    let com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let initialised_here = com.is_ok();
+    if !initialised_here && com != RPC_E_CHANGED_MODE {
+        return Err(message_with("RECORDING_CONVERT_FAILED", [format!("com: {}", windows::core::Error::from_hresult(com))]));
     }
+    // SAFETY: COM is initialised on this thread (checked above) and stays so
+    // until the call returns, which is what with_media_foundation asks.
+    let result = unsafe { with_media_foundation(wav, mp3) };
+    if initialised_here {
+        // SAFETY: balances the successful CoInitializeEx above, on the same
+        // thread, after every Media Foundation object is gone.
+        unsafe { CoUninitialize() };
+    }
+    result
 }
 
 /// Media Foundation, started for the one conversion and shut down after it.
