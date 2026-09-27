@@ -94,7 +94,8 @@ try {
     # One box narrows both panels: the history by number, the log by tag and
     # words, and says so while it does.
     Focus-Id 'panel-filter'
-    [System.Windows.Forms.SendKeys]::SendWait('zzz')
+    # Not z: Set-KsipForeground taps Alt, and Alt+Z opens the GeForce overlay.
+    [System.Windows.Forms.SendKeys]::SendWait('qqq')
     Wait-Text 'call-history' 'フィルターに一致する通話はありません' | Out-Null
     Wait-Id 'filter-active' | Out-Null
     [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}'+$extension)
