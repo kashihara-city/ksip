@@ -133,5 +133,6 @@ pub enum Work {
 pub enum Message {
     Command(Command),
     Link(LinkMessage),
-    Work(Work),
+    /// A worker's report, numbered by the order the work was started in.
+    Work(u64, Work),
 }

@@ -31,7 +31,7 @@ use crate::recordings::recording_name;
 use crate::settings::{dial_target, validate, CustomButton, Settings};
 use crate::storage::Account;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -109,7 +109,9 @@ type Flow = Pin<Box<dyn Future<Output = ()>>>;
 /// What the running flow waits for.
 enum Waiting {
     Response { token: String, generation: u64, deadline: Instant },
-    Work,
+    /// A worker's report, expected within its deadline; the number tells the
+    /// report of a worker that was given up on from the one waited for.
+    Work { serial: u64, deadline: Instant },
 }
 /// What arrived for it.
 enum Delivered {
@@ -219,10 +221,15 @@ struct Phone {
     /// The engine refused or did not answer the end of maintenance: told
     /// again at the next look, so that it does not go on refusing calls.
     maintenance_off_owed: bool,
+    /// The WAV an engine being stopped was recording: converted once the
+    /// process has ended and closed it.
+    pending_conversion: Option<PathBuf>,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
     /// A look at the adapter's address is under way.
     probing: bool,
+    /// The number of the last work started; each report carries its own.
+    work_serial: Cell<u64>,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
     closing: bool,
@@ -257,8 +264,10 @@ impl Actor {
             starting_lost: false,
             lost: None,
             maintenance_off_owed: false,
+            pending_conversion: None,
             bound: String::new(),
             probing: false,
+            work_serial: Cell::new(0),
             polling_error: String::new(),
             closing: false,
             waiting: None,
@@ -340,15 +349,18 @@ impl Actor {
                     self.queue.push_front((Instant::now(), Job::Recover));
                 }
             }
-            Message::Work(Work::Address { adapter, address }) => {
+            Message::Work(_, Work::Address { adapter, address }) => {
                 let reconnect = self.shared.borrow_mut().follow_network(&adapter, address);
                 if reconnect && !self.queue.iter().any(|(_, job)| matches!(job, Job::Reconnect)) {
                     self.queue.push_back((Instant::now(), Job::Reconnect));
                 }
             }
-            Message::Work(work) => {
+            Message::Work(serial, work) => {
                 let mut p = self.shared.borrow_mut();
-                if matches!(p.waiting, Some(Waiting::Work)) && p.delivered.is_none() {
+                // Only the report the flow waits for; one from a worker that
+                // was given up on, arriving late, is not the answer to the
+                // next wait.
+                if matches!(p.waiting, Some(Waiting::Work { serial: wanted, .. }) if wanted == serial) && p.delivered.is_none() {
                     p.delivered = Some(Delivered::Work(work));
                 } else {
                     p.stray(work);
@@ -420,19 +432,25 @@ impl Actor {
                 engine.close();
                 p.services.log(LOG_APP, notice);
             }
-            if let Some(Waiting::Response { deadline, .. }) = &p.waiting {
-                if Instant::now() >= *deadline && p.delivered.is_none() {
+            match &p.waiting {
+                Some(Waiting::Response { deadline, .. }) if Instant::now() >= *deadline && p.delivered.is_none() => {
                     p.delivered = Some(Delivered::Response(Err(message("ENGINE_RESPONSE_TIMEOUT"))));
                 }
+                Some(Waiting::Work { deadline, .. }) if Instant::now() >= *deadline && p.delivered.is_none() => {
+                    // The worker's report, if it comes later, finds nobody waiting.
+                    p.delivered = Some(Delivered::Response(Err(message("WORK_TIMEOUT"))));
+                }
+                _ => {}
             }
             p.probe_network();
         }
         if self.shared.borrow().maintenance_off_owed && !self.queue.iter().any(|(_, job)| matches!(job, Job::MaintenanceOff)) {
             self.queue.push_front((Instant::now(), Job::MaintenanceOff));
         }
-        // One look at the engine per interval, after whatever runs now: a long
-        // flow (a calibration) does not leave the window behind for its whole
-        // duration.
+        // One look at the engine per interval, queued behind whatever runs
+        // now. A long flow (a calibration, a restart) holds the phone in
+        // maintenance, so no call is up meanwhile and the registration events
+        // still reach the window at once; the look itself waits its turn.
         if !self.shared.borrow().closing && !self.queue.iter().any(|(_, job)| matches!(job, Job::Poll)) {
             self.queue.push_back((Instant::now(), Job::Poll));
         }
@@ -485,6 +503,17 @@ impl Actor {
                 s.borrow().answer(reply, result);
             }),
             Job::Reconnect => Box::pin(async move {
+                // Queued when the adapter's address moved; by its turn the
+                // person may have unregistered, a call may be up, or the
+                // adapter may no longer be chosen. Then it is not done.
+                let still_wanted = {
+                    let p = s.borrow();
+                    !p.closing && !p.view.unregistered_by_choice && p.link.is_some() && p.phone.calls().is_empty()
+                        && !p.view.settings.network_adapter.trim().is_empty()
+                };
+                if !still_wanted {
+                    return;
+                }
                 if let Err(e) = connect(&s).await {
                     s.borrow_mut().report_error(e);
                 }
@@ -515,8 +544,10 @@ impl Phone {
     /// Hands a worker a job whose result comes back on the queue.
     fn work(&self, job: impl FnOnce() -> Work + Send + 'static) {
         let tx = self.tx.clone();
+        let serial = self.work_serial.get() + 1;
+        self.work_serial.set(serial);
         thread::spawn(move || {
-            let _ = tx.send(Message::Work(job()));
+            let _ = tx.send(Message::Work(serial, job()));
         });
     }
     /// What the link delivered. Only the engine the actor holds, or the one
@@ -777,6 +808,9 @@ impl Phone {
         let rows = self.phone.engine_gone(self.view.dnd, now_secs());
         self.services.add_history(rows);
         let v = &mut self.view;
+        if v.recording {
+            self.pending_conversion = Some(PathBuf::from(v.recording_path.clone()));
+        }
         v.running = false;
         v.recording = false;
         v.aec_active = false;
@@ -786,7 +820,6 @@ impl Phone {
         v.parking.clear();
         v.registration = "DISCONNECTED".into();
         v.recording_call.clear();
-        let _ = self.services.logs.lock().unwrap().sync(&self.services.data);
         Some(engine)
     }
     /// How the engine went is part of the record: one that had to be ended
@@ -802,6 +835,11 @@ impl Phone {
                 self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
             }
             Err(e) => self.services.log(LOG_APP, format!("ksip: the engine could not be stopped cleanly ({e})")),
+        }
+        // The process is gone, so the WAV it was writing is closed: turned
+        // into an MP3 as one that ended with its call would be.
+        if let Some(wav) = self.pending_conversion.take() {
+            self.services.convert_recording(wav);
         }
     }
     /// Writes down which endpoints the engine got; the window shows the same.
@@ -912,20 +950,30 @@ async fn request(s: &Shared, command: &str, params: &str) -> Result<(u64, String
     }
     Ok((seq, response["data"].as_str().unwrap_or("").into()))
 }
-/// Waits for the report of the worker the flow has just started.
-async fn await_work(s: &Shared) -> Result<Work, String> {
+/// Waits for the report of the worker the flow has just started, for at
+/// most `timeout`: a worker that does not report in time is given up on, and
+/// its report, should it come, finds nobody waiting.
+async fn await_work(s: &Shared, timeout: Duration) -> Result<Work, String> {
     {
         let mut p = s.borrow_mut();
-        p.waiting = Some(Waiting::Work);
+        p.waiting = Some(Waiting::Work { serial: p.work_serial.get(), deadline: Instant::now() + timeout });
         p.delivered = None;
     }
     let delivered = Await(s.clone()).await;
     s.borrow_mut().waiting = None;
     match delivered {
         Delivered::Work(work) => Ok(work),
-        Delivered::Response(_) => Err(message("APP_CLOSING")),
+        Delivered::Response(Err(e)) => Err(e),
+        Delivered::Response(Ok(_)) => Err(message("APP_CLOSING")),
     }
 }
+/// How long each kind of work may take: the engine start has its own twelve
+/// seconds and the stop before it three; the calibration plays and measures
+/// for up to a minute; the rest is a few Windows calls.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
+const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const DEVICES_TIMEOUT: Duration = Duration::from_secs(15);
+const CALIBRATION_TIMEOUT: Duration = Duration::from_secs(120);
 /// Asks the engine for its state and applies the report.
 async fn poll(s: &Shared) -> Result<(), String> {
     if s.borrow().link.is_none() {
@@ -992,9 +1040,10 @@ async fn recover(s: Shared) {
         return;
     };
     s.borrow().work(move || Work::Stopped(engine.stop()));
-    let report = match await_work(&s).await {
+    let report = match await_work(&s, STOP_TIMEOUT).await {
         Ok(Work::Stopped(report)) => report,
-        _ => Err(message("APP_CLOSING")),
+        Ok(_) => Err(message("APP_CLOSING")),
+        Err(e) => Err(e),
     };
     let mut p = s.borrow_mut();
     let code = match &report {
@@ -1043,7 +1092,7 @@ async fn restart(s: &Shared) -> Result<(), String> {
             Work::Started { stopped, result }
         });
     }
-    let started = await_work(s).await;
+    let started = await_work(s, START_TIMEOUT).await;
     let ready = {
         let mut p = s.borrow_mut();
         p.starting = None;
@@ -1091,8 +1140,10 @@ async fn release_link(s: &Shared) -> Option<EngineLink> {
 /// waits for it to be gone.
 async fn stop_and_wait(s: &Shared, engine: EngineLink) {
     s.borrow().work(move || Work::Stopped(engine.stop()));
-    if let Ok(Work::Stopped(report)) = await_work(s).await {
-        s.borrow_mut().log_stop(report);
+    match await_work(s, STOP_TIMEOUT).await {
+        Ok(Work::Stopped(report)) => s.borrow_mut().log_stop(report),
+        Ok(_) => {}
+        Err(e) => s.borrow_mut().log_stop(Err(e)),
     }
 }
 /// Stops the engine, if one runs.
@@ -1108,8 +1159,10 @@ async fn stop_engine(s: &Shared) {
 /// default; the engine is only restarted when it does not take the change.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
     s.borrow().work(|| Work::Devices(crate::audio::devices()));
-    let Ok(Work::Devices(devices)) = await_work(s).await else {
-        return Err(message("APP_CLOSING"));
+    let devices = match await_work(s, DEVICES_TIMEOUT).await {
+        Ok(Work::Devices(devices)) => devices,
+        Ok(_) => return Err(message("APP_CLOSING")),
+        Err(e) => return Err(e),
     };
     s.borrow_mut().view.devices = devices?;
     if s.borrow().link.is_none() {
@@ -1216,9 +1269,10 @@ async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(
 async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful: bool) -> Result<Calibration, String> {
     enter_maintenance(s).await?;
     s.borrow().work(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
-    let result = match await_work(s).await {
+    let result = match await_work(s, CALIBRATION_TIMEOUT).await {
         Ok(Work::Calibrated(result)) => result,
-        _ => Err(message("APP_CLOSING")),
+        Ok(_) => Err(message("APP_CLOSING")),
+        Err(e) => Err(e),
     };
     leave_maintenance(s).await;
     result
@@ -1316,7 +1370,13 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         let wanted = recording_name(&stamp(), &peer);
         let mut name = wanted.clone();
         let mut count = 1;
-        while folder.join(&name).exists() {
+        // The name is taken if any form of it is there: the WAV, the MP3 it
+        // became, or the MP3 still being made from it.
+        let taken = |name: &str| {
+            let wav = folder.join(name);
+            wav.exists() || wav.with_extension("mp3").exists() || wav.with_extension("converting.mp3").exists()
+        };
+        while taken(&name) {
             count += 1;
             name = wanted.replace(".wav", &format!("-{count}.wav"));
         }

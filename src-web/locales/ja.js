@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'音声エンジンを起動してください',
       ENGINE_PROFILE_PATH_INVALID:'プロファイルのパスが不正です',
       ENGINE_RESPONSE_TIMEOUT:'コマンド応答がタイムアウトしました',
+      WORK_TIMEOUT:'処理が時間内に終わりませんでした',
       OPERATION_WAIT_TIMEOUT:'他の処理が終わらないため操作を取り消しました',
       ENGINE_START_FAILED:'音声エンジンの起動失敗: {0}。ログを確認してください',
       FILE_NOT_FOUND:'ファイルが見つかりません',

@@ -48,7 +48,7 @@ pub struct LogLine {
     pub args: Vec<String>,
 }
 impl LogLine {
-    fn new(time: String, src: &str, body: String) -> Self {
+    pub(crate) fn new(time: String, src: &str, body: String) -> Self {
         let (code, args) = if crate::message::is_code(&body) {
             crate::message::split(&body)
         } else {
@@ -106,7 +106,7 @@ impl Logs {
     pub fn set_detail(&mut self, detail: bool) {
         self.file_limit = if detail { DETAIL_LOG_FILE_LIMIT } else { LOG_LIMIT };
     }
-    fn push(&mut self, line: LogLine) {
+    pub(crate) fn push(&mut self, line: LogLine) {
         self.entries.push_back(line);
         self.sequence += 1;
         self.unwritten += 1;
@@ -343,9 +343,11 @@ impl Services {
     /// One line into the tab and, once a second, into the file. What a line
     /// from the engine says about the phone is the actor's to read.
     pub fn log(&self, source: &str, s: String) {
+        // Into the tab only; the file thread writes the file once a second,
+        // so that no caller waits on the disk.
         let mut logs = self.logs.lock().unwrap();
         logs.push(LogLine::new(stamp(), source, s));
-        let _ = logs.sync_if_due(&self.data);
+        self.log_sequence.store(logs.sequence(), std::sync::atomic::Ordering::Relaxed);
     }
     /// What the window and the shortcuts do belongs in the same log.
     pub fn log_app(&self, text: String) {
@@ -375,11 +377,13 @@ impl Services {
         };
         let line = text.replace(['\r', '\n'], " ");
         logs.push(LogLine::new(stamp(), LOG_APP, line));
-        // A write that fails is kept and said by the periodic sync in snapshot().
+        // A write that fails is kept and said by the file thread's next sync.
         let _ = logs.sync(&self.data);
     }
     pub fn clear_logs(&self) {
-        self.logs.lock().unwrap().clear(&self.data);
+        let mut logs = self.logs.lock().unwrap();
+        logs.clear(&self.data);
+        self.log_sequence.store(logs.sequence(), std::sync::atomic::Ordering::Relaxed);
     }
     pub fn read_logs(&self, after: u64) -> LogPage {
         let logs = self.logs.lock().unwrap();

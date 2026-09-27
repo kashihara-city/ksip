@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'Start the audio engine first',
       ENGINE_PROFILE_PATH_INVALID:'The profile path is not valid',
       ENGINE_RESPONSE_TIMEOUT:'The command timed out',
+      WORK_TIMEOUT:'The operation did not finish in time',
       OPERATION_WAIT_TIMEOUT:'The operation was dropped because another one did not finish',
       ENGINE_START_FAILED:'The audio engine failed to start: {0}. Check the log',
       FILE_NOT_FOUND:'The file was not found',

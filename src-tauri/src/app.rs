@@ -3,8 +3,8 @@
 //! the window side is given, which only connects: a way to send commands to
 //! the phone actor and a way to read the snapshot it publishes.
 use crate::history::{CallHistory, History};
-use crate::logs::{data_dir, Logs, LOG_APP};
-use crate::message::message_with;
+use crate::logs::{data_dir, stamp, LogLine, Logs, LOG_APP};
+use crate::message::{message, message_with};
 use crate::phone_actor::{PhoneHandle, Published};
 use crate::phone_message::Command;
 use std::sync::OnceLock;
@@ -16,7 +16,7 @@ use std::{
     process::Command as Process,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Sender},
+        mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
     thread,
@@ -38,6 +38,11 @@ pub struct Services {
     pub history: Arc<Mutex<History>>,
     /// Recordings being turned into MP3 at the moment.
     pub converting: Arc<AtomicU64>,
+    /// How far the log and the history have moved, readable without their
+    /// locks: the window's snapshot reads these while the file thread may be
+    /// on the disk.
+    pub log_sequence: Arc<AtomicU64>,
+    pub history_sequence: Arc<AtomicU64>,
     /// The thread that writes the files that must keep their order (the
     /// history) and keeps the log and the history files moving, so that
     /// neither the phone nor the window waits on the disk.
@@ -46,9 +51,95 @@ pub struct Services {
     /// say to the window goes through it.
     phone: Arc<OnceLock<PhoneHandle>>,
 }
-/// What the file thread is asked to write.
+/// What the file thread is asked to do, in the order asked.
 enum FileJob {
     History(Vec<CallHistory>),
+    /// The history is emptied, on disk first; answered once done.
+    Clear(Sender<Result<(), String>>),
+    /// The last lines and rows are written and the thread ends; answered once done.
+    Stop(Sender<()>),
+}
+/// What the file thread holds: the files and the way to the window, not the
+/// whole of the services (which would hold its own queue open).
+struct FileWorker {
+    data: PathBuf,
+    logs: Arc<Mutex<Logs>>,
+    history: Arc<Mutex<History>>,
+    log_sequence: Arc<AtomicU64>,
+    history_sequence: Arc<AtomicU64>,
+    phone: Arc<OnceLock<PhoneHandle>>,
+}
+impl FileWorker {
+    fn log(&self, text: String) {
+        let mut logs = self.logs.lock().unwrap();
+        logs.push(LogLine::new(stamp(), LOG_APP, text));
+        self.log_sequence.store(logs.sequence(), Ordering::Relaxed);
+    }
+    fn show_error(&self, error: String) {
+        match self.phone.get() {
+            Some(phone) => phone.send(Command::ShowError(error)),
+            None => self.log(error),
+        }
+    }
+    /// Once a second, and at the end: the log is written from log(), so a
+    /// quiet moment would leave the last lines only in memory, and what
+    /// another process appended unseen; rows the history could not write
+    /// earlier get another try. The first failure of either file is said
+    /// once, in the log and the window.
+    fn move_files_along(&self, force: bool) {
+        let journal = {
+            let mut logs = self.logs.lock().unwrap();
+            let result = if force { logs.sync(&self.data) } else { logs.sync_if_due(&self.data) };
+            self.log_sequence.store(logs.sequence(), Ordering::Relaxed);
+            result
+        };
+        let history = {
+            let mut history = self.history.lock().unwrap();
+            let result = history.flush(&self.data);
+            self.history_sequence.store(history.sequence(), Ordering::Relaxed);
+            result
+        };
+        for e in [journal, history].into_iter().filter_map(Result::err) {
+            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
+        }
+    }
+    fn run(self, jobs: Receiver<FileJob>) {
+        loop {
+            match jobs.recv_timeout(Duration::from_secs(1)) {
+                Ok(FileJob::History(rows)) => {
+                    // A row that cannot be written waits in the history for the
+                    // next try; the failure is on record here, and the window
+                    // hears of it from the next flush.
+                    let result = {
+                        let mut history = self.history.lock().unwrap();
+                        let result = history.add(&self.data, rows);
+                        self.history_sequence.store(history.sequence(), Ordering::Relaxed);
+                        result
+                    };
+                    if let Err(e) = result {
+                        self.log(e);
+                    }
+                }
+                Ok(FileJob::Clear(reply)) => {
+                    let result = {
+                        let mut history = self.history.lock().unwrap();
+                        let result = history.clear(&self.data);
+                        self.history_sequence.store(history.sequence(), Ordering::Relaxed);
+                        result
+                    };
+                    let _ = reply.send(result);
+                }
+                Ok(FileJob::Stop(reply)) => {
+                    self.move_files_along(true);
+                    let _ = reply.send(());
+                    return;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            self.move_files_along(false);
+        }
+    }
 }
 impl Services {
     /// Opens the store, the log and the history, and makes the snapshot the
@@ -111,36 +202,22 @@ impl Services {
             logs: Arc::new(Mutex::new(logs)),
             history: Arc::new(Mutex::new(history)),
             converting: Arc::new(AtomicU64::new(0)),
+            log_sequence: Arc::new(AtomicU64::new(0)),
+            history_sequence: Arc::new(AtomicU64::new(0)),
             files,
             phone: Arc::new(OnceLock::new()),
         };
-        let writer = services.clone();
+        let worker = FileWorker {
+            data: services.data.clone(),
+            logs: services.logs.clone(),
+            history: services.history.clone(),
+            log_sequence: services.log_sequence.clone(),
+            history_sequence: services.history_sequence.clone(),
+            phone: services.phone.clone(),
+        };
         thread::Builder::new()
             .name("files".into())
-            .spawn(move || loop {
-                match jobs.recv_timeout(Duration::from_secs(1)) {
-                    Ok(FileJob::History(rows)) => {
-                        // A row that cannot be written waits in the history
-                        // for the next try; the failure is on record here,
-                        // and the window hears of it from the next flush.
-                        if let Err(e) = writer.history.lock().unwrap().add(&writer.data, rows) {
-                            writer.log(LOG_APP, e);
-                        }
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-                // Once a second the files move along: the log is written from
-                // log(), so a quiet moment would leave the last lines only in
-                // memory, and what another process appended unseen; rows the
-                // history could not write earlier get another try. The first
-                // failure of either file is said once, in the log and the window.
-                let journal = writer.logs.lock().unwrap().sync_if_due(&writer.data);
-                let history = writer.history.lock().unwrap().flush(&writer.data);
-                for e in [journal, history].into_iter().filter_map(Result::err) {
-                    writer.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
-                }
-            })
+            .spawn(move || worker.run(jobs))
             .expect("the file thread starts");
         if !view.error.is_empty() {
             services.log(LOG_APP, view.error.clone());
@@ -154,18 +231,27 @@ impl Services {
             let _ = self.files.send(FileJob::History(rows));
         }
     }
+    /// Throws the call history away, through the same queue as the rows that
+    /// are added, so that a row still on its way cannot come back after the
+    /// clearing; answered once the file is empty.
+    pub fn clear_call_history(&self) -> Result<(), String> {
+        let (reply, done) = mpsc::channel();
+        self.files.send(FileJob::Clear(reply)).map_err(|_| message("APP_CLOSING"))?;
+        done.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| Err(message_with("JOURNAL_WRITE_FAILED", ["timeout"])))
+    }
+    /// The app is leaving: the last lines and rows are written and the file
+    /// thread ends. Waited for, within reason; a disk that does not answer
+    /// does not hold the exit forever.
+    pub fn stop_files(&self) {
+        let (reply, done) = mpsc::channel();
+        if self.files.send(FileJob::Stop(reply)).is_ok() {
+            let _ = done.recv_timeout(Duration::from_secs(3));
+        }
+    }
     /// Told once the phone actor exists, so that the services can reach the
     /// window through it.
     pub fn attach_phone(&self, phone: PhoneHandle) {
         let _ = self.phone.set(phone);
-    }
-    /// Something the window should show. Before the phone exists, or after
-    /// it is gone, the log alone keeps it.
-    pub fn show_error(&self, error: String) {
-        match self.phone.get() {
-            Some(phone) => phone.send(Command::ShowError(error)),
-            None => self.log(LOG_APP, error),
-        }
     }
     /// The folder everything the app writes goes into.
     pub fn data(&self) -> &Path {
@@ -215,8 +301,8 @@ impl AppState {
     pub fn snapshot(&self) -> Snapshot {
         let mut view = self.published.read();
         view.converting = self.services.converting.load(Ordering::Relaxed) as u32;
-        view.log_sequence = self.services.logs.lock().unwrap().sequence();
-        view.history_sequence = self.services.history.lock().unwrap().sequence();
+        view.log_sequence = self.services.log_sequence.load(Ordering::Relaxed);
+        view.history_sequence = self.services.history_sequence.load(Ordering::Relaxed);
         view
     }
     pub fn is_closing(&self) -> bool {
@@ -229,6 +315,9 @@ impl AppState {
     pub fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
         let _ = self.phone.call(Command::Shutdown);
+        // The engine is stopped; the rows of its last calls are on the queue
+        // by now, and the file thread writes them before it ends.
+        self.services.stop_files();
         let end = Instant::now() + Duration::from_secs(5);
         while self.services.converting.load(Ordering::Relaxed) > 0 && Instant::now() < end {
             thread::sleep(Duration::from_millis(100));

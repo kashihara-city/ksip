@@ -19,11 +19,18 @@ pub fn snapshot(state: State<AppState>) -> Snapshot {
 }
 /// Link events for the page, held until it says it listens. Windows starts
 /// the app for a link before the page has loaded, and an event emitted into
-/// a page without listeners reaches nobody; `ui_ready` lets them go, in order.
-pub struct LinkQueue(std::sync::Mutex<Option<Vec<(&'static str, serde_json::Value)>>>);
+/// a page without listeners reaches nobody; `ui_ready` lets them go, in the
+/// order they came. An event that arrives while the held ones are being let
+/// go joins the end of the line rather than overtaking them.
+pub struct LinkQueue(std::sync::Mutex<LinkGate>);
+struct LinkGate {
+    /// The page listens; events go straight through.
+    ready: bool,
+    pending: Vec<(&'static str, serde_json::Value)>,
+}
 impl LinkQueue {
     pub fn new() -> Self {
-        Self(std::sync::Mutex::new(Some(Vec::new())))
+        Self(std::sync::Mutex::new(LinkGate { ready: false, pending: Vec::new() }))
     }
 }
 impl Default for LinkQueue {
@@ -33,9 +40,9 @@ impl Default for LinkQueue {
 }
 pub fn emit_link(app: &tauri::AppHandle, event: &'static str, payload: serde_json::Value) {
     if let Some(queue) = app.try_state::<LinkQueue>() {
-        let mut held = queue.0.lock().unwrap();
-        if let Some(pending) = held.as_mut() {
-            pending.push((event, payload));
+        let mut gate = queue.0.lock().unwrap();
+        if !gate.ready {
+            gate.pending.push((event, payload));
             return;
         }
     }
@@ -43,9 +50,23 @@ pub fn emit_link(app: &tauri::AppHandle, event: &'static str, payload: serde_jso
 }
 #[tauri::command]
 pub fn ui_ready(app: tauri::AppHandle) {
-    let pending = app.try_state::<LinkQueue>().and_then(|queue| queue.0.lock().unwrap().take());
-    for (event, payload) in pending.unwrap_or_default() {
-        let _ = app.emit(event, payload);
+    let Some(queue) = app.try_state::<LinkQueue>() else {
+        return;
+    };
+    // Let go in rounds: what arrives while a round is emitted is held, and
+    // goes in the next round; the gate opens only once nothing is held.
+    loop {
+        let round = {
+            let mut gate = queue.0.lock().unwrap();
+            if gate.pending.is_empty() {
+                gate.ready = true;
+                return;
+            }
+            std::mem::take(&mut gate.pending)
+        };
+        for (event, payload) in round {
+            let _ = app.emit(event, payload);
+        }
     }
 }
 /// Runs a call to the phone off the async runtime, since it waits for the answer.

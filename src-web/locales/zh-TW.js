@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'請先啟動語音引擎',
       ENGINE_PROFILE_PATH_INVALID:'設定檔路徑不正確',
       ENGINE_RESPONSE_TIMEOUT:'指令回應逾時',
+      WORK_TIMEOUT:'處理未在時間內完成',
       OPERATION_WAIT_TIMEOUT:'因其他處理尚未結束，已取消操作',
       ENGINE_START_FAILED:'語音引擎啟動失敗：{0}。請查看記錄',
       FILE_NOT_FOUND:'找不到檔案',

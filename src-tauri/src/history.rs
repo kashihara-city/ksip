@@ -95,13 +95,17 @@ impl History {
         }
         Ok(())
     }
-    fn clear(&mut self, data: &Path) -> Result<(), String> {
+    /// Empties the history: the file first, and only when that went through
+    /// the rows and the ones still waiting to be written, so that a failure
+    /// loses nothing that was not already on disk.
+    pub fn clear(&mut self, data: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(data).map_err(err)?;
+        std::fs::write(data.join(HISTORY_FILE), b"").map_err(err)?;
         self.rows.clear();
         self.pending.clear();
         self.sequence += 1;
         self.file_lines = 0;
-        std::fs::create_dir_all(data).map_err(err)?;
-        std::fs::write(data.join(HISTORY_FILE), b"").map_err(err)
+        Ok(())
     }
     /// How many rows have been added this run: the tab reloads when it moves.
     pub fn sequence(&self) -> u64 {
@@ -109,10 +113,6 @@ impl History {
     }
 }
 impl Services {
-    /// Throws the call history away, here and in its file.
-    pub fn clear_call_history(&self) -> Result<(), String> {
-        self.history.lock().unwrap().clear(&self.data)
-    }
     /// The rows as the tab shows them: a recording is named only while its
     /// file is still there to be played.
     pub fn read_call_history(&self) -> Vec<CallHistory> {
