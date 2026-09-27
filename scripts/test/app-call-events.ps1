@@ -55,20 +55,28 @@ try {
 
     # Refused under do not disturb, each followed at once by a device refresh,
     # which asks the engine for its state outside the polling. The refusal
-    # must not be consumed by that query.
+    # must not be consumed by that query. As above, what is counted is what
+    # reached this phone: a PBX may not hand every call over (3CX has let one
+    # of three go elsewhere after the phone refused the ones before), and a
+    # call that never came here is not this phone's to record.
     Click-Id 'custom-8';Wait-Class 'custom-8' 'dnd'
     $refusedBefore=Count-History '着信拒否'
+    $incomingBefore=& $events 'CALL_INCOMING'
     for($i=0;$i -lt 3;$i++){
         $one=Start-QuickCalls 0.3 1
         Start-Sleep -Milliseconds 700
         Click-Id 'refresh-devices'
         if(!$one.WaitForExit(30000)){Stop-Process -Id $one.Id -Force;throw 'the refused caller did not finish'}
     }
+    Start-Sleep -Seconds 1
+    $refusedArrived=(& $events 'CALL_INCOMING')-$incomingBefore
+    if($refusedArrived -lt 1){throw 'none of the three calls under do not disturb reached this phone; the PBX swallowed them all'}
     $end=[DateTime]::UtcNow.AddSeconds(5)
-    while((Count-History '着信拒否') -lt $refusedBefore+3 -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    while((Count-History '着信拒否') -lt $refusedBefore+$refusedArrived -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
     $refusedAfter=Count-History '着信拒否'
-    if($refusedAfter -lt $refusedBefore+3){throw "refused rows went $refusedBefore -> $refusedAfter for three refused calls"}
-    'PASS: 拒否着信は状態照会に消費されず全部履歴に残る'
+    if($refusedAfter -lt $refusedBefore+$refusedArrived){throw "refused rows went $refusedBefore -> $refusedAfter although $refusedArrived calls reached this phone and were refused"}
+    "PASS: 拒否着信は状態照会に消費されず全部履歴に残る（届いた $refusedArrived 件すべて）"
+    if($refusedArrived -lt 3){"NOTE: $(3-$refusedArrived) 件は PBX がこの電話に届けなかった（3CX の振る舞い）"}
     Click-Id 'custom-8';Wait-NoClass 'custom-8' 'dnd'
 
     @{version=$version;missedWithinPoll=$true;refusedNotConsumed=$true} |
