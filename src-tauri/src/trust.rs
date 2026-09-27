@@ -9,6 +9,8 @@ use windows_sys::Win32::Security::Cryptography::{
     CERT_CONTEXT, X509_ASN_ENCODING,
 };
 
+// Declared as src-native/trust.c defines it:
+// `int ksip_x509_parses(const unsigned char *der, long length)`.
 unsafe extern "C" {
     /// Whether the engine's TLS library can read this certificate. It reads a
     /// PEM bundle as all or nothing, so one it cannot read would empty the list.
@@ -50,6 +52,8 @@ pub fn windows_trust() -> Result<Trust, String> {
         if context.is_null() {
             break;
         }
+        // SAFETY: `context` is the non-null certificate the store just handed
+        // out, alive until it is passed to the next enumeration.
         let (encoding, encoded, length, info) = unsafe {
             (
                 (*context).dwCertEncodingType,
@@ -61,9 +65,21 @@ pub fn windows_trust() -> Result<Trust, String> {
         if encoding & X509_ASN_ENCODING == 0 || encoded.is_null() || length == 0 {
             continue;
         }
+        // SAFETY: the encoded certificate is `length` bytes (checked non-null
+        // and non-empty above), owned by the context, which is alive until
+        // the next enumeration; the slice is not kept past this iteration.
         let der = unsafe { std::slice::from_raw_parts(encoded, length) };
+        // SAFETY: a null time means now; `info` is the context's own certificate info.
         let in_date = unsafe { CertVerifyTimeValidity(std::ptr::null(), info) } == 0;
-        let readable = unsafe { ksip_x509_parses(der.as_ptr(), length as std::ffi::c_long) } != 0;
+        // The C function takes a long, 32 bits on Windows; cbCertEncoded is a
+        // DWORD, so a length that does not fit is left out, not cut short.
+        let Ok(long_length) = std::ffi::c_long::try_from(length) else {
+            trust.left_out += 1;
+            continue;
+        };
+        // SAFETY: the C function only reads `long_length` bytes from `der`,
+        // which is exactly that long (checked to fit above), and does not keep it.
+        let readable = unsafe { ksip_x509_parses(der.as_ptr(), long_length) } != 0;
         if !in_date || !readable {
             trust.left_out += 1;
             continue;
@@ -77,6 +93,8 @@ pub fn windows_trust() -> Result<Trust, String> {
         trust.pem.push_str("-----END CERTIFICATE-----\n");
         trust.included += 1;
     }
+    // SAFETY: the store is open and closed once, here; the enumeration ended
+    // with a null context, so no certificate context is still held.
     unsafe { CertCloseStore(handle, 0) };
     if trust.included == 0 {
         return Err(message("TRUST_STORE_EMPTY"));
@@ -129,6 +147,7 @@ mod tests {
     #[test]
     fn the_engine_library_refuses_what_is_not_a_certificate() {
         let junk = b"not a certificate";
+        // SAFETY: the C function reads the given bytes only.
         assert_eq!(unsafe { ksip_x509_parses(junk.as_ptr(), junk.len() as _) }, 0);
     }
 }

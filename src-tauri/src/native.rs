@@ -1,18 +1,30 @@
 use crate::message::{message, message_with};
-use std::{
-    ffi::{c_char, CString},
-    path::PathBuf,
-};
+use std::{ffi::c_char, path::PathBuf};
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
     System::Threading::{
         CreateMutexW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
     },
 };
+// Declared as the C side defines them: ksip_engine_main is baresip's
+// `int main(int argc, char *argv[])` renamed (src-native/embedded.cmake), and
+// ksip_stdio_init is `extern "C" void ksip_stdio_init()` in src-native/stdio.cpp.
 unsafe extern "C" {
     fn ksip_engine_main(argc: i32, argv: *mut *mut c_char) -> i32;
     fn ksip_stdio_init();
 
+}
+/// A filter list as the file dialogs read it: pairs of description and
+/// pattern, each ended by a null, and the list by a second null. The texts
+/// carry their own nulls; the end is made sure of here, whatever the text,
+/// so that a missing translation (the code in place of the text) cannot let
+/// the dialog read past the buffer.
+fn filter_list(text: &str) -> Vec<u16> {
+    let mut list: Vec<u16> = text.encode_utf16().collect();
+    while !list.ends_with(&[0, 0]) {
+        list.push(0);
+    }
+    list
 }
 include!(concat!(env!("OUT_DIR"), "/sounds.rs"));
 /// Writes the built-in sounds to TEMP and returns that folder. A failure here only
@@ -40,7 +52,7 @@ pub fn choose_file(kind: &str) -> Option<String> {
     } else {
         (text("DIALOG_SOUND_FILTER"), text("DIALOG_SOUND_FILE"))
     };
-    let filter: Vec<u16> = format!("{pattern}\0").encode_utf16().collect();
+    let filter = filter_list(pattern);
     let title: Vec<u16> = format!("{caption}\0").encode_utf16().collect();
     let mut file = vec![0u16; 1024];
     let mut options = OPENFILENAMEW {
@@ -50,8 +62,13 @@ pub fn choose_file(kind: &str) -> Option<String> {
         nMaxFile: file.len() as u32,
         lpstrTitle: title.as_ptr(),
         Flags: OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST,
+        // SAFETY: OPENFILENAMEW is plain data, and all zero is a valid value of
+        // every other field: null pointers, no hook, no flags.
         ..unsafe { std::mem::zeroed() }
     };
+    // SAFETY: every pointer in `options` points into a buffer that outlives the
+    // call: the filter ends with two nulls, the title with one, and the file
+    // buffer is `nMaxFile` units long; the dialog writes only within it.
     if unsafe { GetOpenFileNameW(&mut options) } == 0 {
         return None;
     }
@@ -64,7 +81,7 @@ pub fn choose_file(kind: &str) -> Option<String> {
 pub fn choose_save_file(suggested: &str) -> Option<String> {
     use windows_sys::Win32::UI::Controls::Dialogs::{GetSaveFileNameW, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW};
     let text = crate::message::windows_text;
-    let filter: Vec<u16> = format!("{}\0", text("DIALOG_SETTINGS_FILTER")).encode_utf16().collect();
+    let filter = filter_list(text("DIALOG_SETTINGS_FILTER"));
     let title: Vec<u16> = format!("{}\0", text("DIALOG_SETTINGS_EXPORT")).encode_utf16().collect();
     let extension: Vec<u16> = "json\0".encode_utf16().collect();
     let mut file = vec![0u16; 1024];
@@ -79,8 +96,11 @@ pub fn choose_save_file(suggested: &str) -> Option<String> {
         lpstrTitle: title.as_ptr(),
         lpstrDefExt: extension.as_ptr(),
         Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+        // SAFETY: as in choose_file: all zero is a valid value of the other fields.
         ..unsafe { std::mem::zeroed() }
     };
+    // SAFETY: as in choose_file; the suggested name was copied in with room to
+    // spare, so the file buffer holds a null-terminated string going in.
     if unsafe { GetSaveFileNameW(&mut options) } == 0 {
         return None;
     }
@@ -106,6 +126,7 @@ pub fn run_engine(args: &[String]) -> i32 {
         Ok(p) if p != 0 && p != std::process::id() => p,
         _ => return 2,
     };
+    // SAFETY: no pointer is passed; the handle is checked and closed below.
     let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, parent) };
     if handle.is_null() {
         return 3;
@@ -114,6 +135,8 @@ pub fn run_engine(args: &[String]) -> i32 {
     let raw = handle as usize;
     std::thread::spawn(move || {
         let handle = raw as _;
+        // SAFETY: the handle is open and belongs to this thread alone from
+        // here: it is waited on and then closed, once.
         unsafe {
             WaitForSingleObject(handle, INFINITE);
             CloseHandle(handle);
@@ -128,30 +151,41 @@ pub fn run_engine(args: &[String]) -> i32 {
         .encode_utf16()
         .chain(Some(0))
         .collect();
+    // SAFETY: the name is null-terminated and outlives the call; no security
+    // attributes are passed. The handle is checked and closed below.
     let singleton = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if singleton.is_null() {
         return 3;
     }
+    // SAFETY: reads this thread's last error, which CreateMutexW just set.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // SAFETY: the handle is open and closed once, here.
         unsafe {
             CloseHandle(singleton);
         }
         return 4;
     }
-    let strings: Result<Vec<_>, _> = ["KSIP", "-f", &args[2]]
+    // The arguments as C's main takes them: each a null-terminated string the
+    // callee may write to (so owned, mutable buffers, not CString's shared
+    // ones), and the list ended by a null pointer.
+    if args[2].contains('\0') {
+        return 2;
+    }
+    let mut strings: Vec<Vec<u8>> = ["KSIP", "-f", &args[2]]
         .iter()
-        .map(|s| CString::new(*s))
+        .map(|s| s.bytes().chain(Some(0)).collect())
         .collect();
-    let strings = match strings {
-        Ok(s) => s,
-        Err(_) => return 2,
-    };
-    let mut argv: Vec<_> = strings.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+    let mut argv: Vec<*mut c_char> = strings.iter_mut().map(|s| s.as_mut_ptr().cast()).collect();
     argv.push(std::ptr::null_mut());
+    // SAFETY: this runs once in this process, before anything else uses the
+    // C runtime's streams, as ksip_stdio_init expects; argv holds `argc`
+    // writable null-terminated strings and a final null, and it and the
+    // strings outlive the engine's main, which returns before they are dropped.
     let result = unsafe {
         ksip_stdio_init();
         ksip_engine_main(3, argv.as_mut_ptr())
     };
+    // SAFETY: the handle is open and closed once, here.
     unsafe {
         CloseHandle(singleton);
     }
@@ -231,9 +265,17 @@ pub fn adapters() -> Vec<Adapter> {
     use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_UNSPEC, SOCKADDR_IN};
     const OPER_STATUS_UP: i32 = 1;
     let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    // The list is read in place as IP_ADAPTER_ADDRESSES_LH records, which
+    // hold pointers: the buffer is made of u64 so that it is 8-byte aligned,
+    // which a Vec<u8> is not promised to be.
     let mut size: u32 = 32 * 1024;
-    let mut buffer = vec![0u8; size as usize];
+    let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
     let mut found = Vec::new();
+    // SAFETY: the buffer is aligned for the records and at least `size` bytes
+    // long, the size Windows is told; after a successful call every record and
+    // every pointer in it (Next, the names, the unicast addresses and their
+    // socket addresses) points into the buffer, which lives until the loop is
+    // done, and the names are null-terminated.
     unsafe {
         for _ in 0..3 {
             let result = GetAdaptersAddresses(
@@ -245,7 +287,7 @@ pub fn adapters() -> Vec<Adapter> {
             );
             if result == 111 {
                 // ERROR_BUFFER_OVERFLOW: the size we were given is the one to use.
-                buffer = vec![0u8; size as usize];
+                buffer = vec![0u64; (size as usize).div_ceil(8)];
                 continue;
             }
             if result != 0 {
@@ -309,15 +351,22 @@ pub fn adapter_address(name: &str) -> Result<String, String> {
     Ok(adapter.address)
 }
 
-fn read_ansi(value: *const u8) -> String {
+/// A null-terminated 8-bit string, as text; empty for a null pointer.
+///
+/// # Safety
+/// `value` must be null or point to a null-terminated string that stays
+/// valid, and unchanged, for the call.
+unsafe fn read_ansi(value: *const u8) -> String {
     if value.is_null() {
         return String::new();
     }
     let mut length = 0;
-    // SAFETY: the adapter name is a null-terminated string from Windows.
+    // SAFETY: every byte up to and including the null is part of the string
+    // (the caller's promise), and the loop stops at the null.
     while unsafe { *value.add(length) } != 0 {
         length += 1;
     }
+    // SAFETY: the `length` bytes before the null were just read one by one.
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(value, length) }).into_owned()
 }
 
@@ -331,6 +380,11 @@ pub fn copy_text(value: &str) -> Result<(), String> {
     use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     const CF_UNICODETEXT: u32 = 13;
     let wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: the clipboard is opened by this thread and closed on every path
+    // once it is. The global memory is sized for the text and its null, locked
+    // only while the text is copied into it, and unlocked before it is handed
+    // over; once SetClipboardData takes it the system owns it, and only when it
+    // does not is it freed here.
     unsafe {
         // The clipboard is shared, and another program can hold it for a moment;
         // a few short retries are what other Windows programs do as well.

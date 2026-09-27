@@ -37,6 +37,12 @@ pub fn transcode(wav: &Path, mp3: &Path) -> Result<(), String> {
     }
 }
 
+/// Media Foundation, started for the one conversion and shut down after it.
+///
+/// # Safety
+/// COM must be initialised on the calling thread, and stay so until this
+/// returns. Every Media Foundation object is made and released inside
+/// `encode`, before MFShutdown here, so none outlives the start it was made under.
 unsafe fn with_media_foundation(wav: &Path, mp3: &Path) -> Result<(), String> {
     let failed = |what: &str, e: windows::core::Error| message_with("RECORDING_CONVERT_FAILED", [format!("{what}: {e}")]);
     MFStartup(MF_VERSION, 0).map_err(|e| failed("start", e))?;
@@ -45,6 +51,12 @@ unsafe fn with_media_foundation(wav: &Path, mp3: &Path) -> Result<(), String> {
     result
 }
 
+/// Reads the WAV and writes the MP3 through Media Foundation.
+///
+/// # Safety
+/// COM must be initialised on the calling thread and Media Foundation started
+/// (MFStartup) until this returns. The objects made here are locals released
+/// when it returns, before the caller shuts Media Foundation down.
 unsafe fn encode(
     wav: &Path,
     mp3: &Path,

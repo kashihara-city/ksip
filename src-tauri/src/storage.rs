@@ -125,15 +125,23 @@ thread_local! {
 pub fn fail_next_write_of(name: &str) {
     FAIL_WRITE.with(|fail| *fail.borrow_mut() = (!name.is_empty()).then(|| name.to_string()));
 }
-pub fn read_wide(value: *const u16) -> String {
+/// A null-terminated UTF-16 string, as text; empty for a null pointer.
+///
+/// # Safety
+/// `value` must be null or point to a null-terminated UTF-16 string, aligned
+/// for u16, that stays valid and unchanged for the call: what Windows hands
+/// out as a PWSTR (a credential's user name, an adapter's name, a SID's text).
+pub unsafe fn read_wide(value: *const u16) -> String {
     if value.is_null() {
         return String::new();
     }
     let mut length = 0;
-    // SAFETY: the credential API returns a null-terminated string.
+    // SAFETY: every unit up to and including the null is part of the string
+    // (the caller's promise), and the loop stops at the null.
     while unsafe { *value.add(length) } != 0 {
         length += 1;
     }
+    // SAFETY: the `length` units before the null were just read one by one.
     String::from_utf16_lossy(unsafe { slice::from_raw_parts(value, length) })
 }
 fn wide(s: &str) -> Vec<u16> {
@@ -141,6 +149,8 @@ fn wide(s: &str) -> Vec<u16> {
 }
 impl Store {
     pub fn delete_account(&self) -> Result<(), String> {
+        // SAFETY: the target is null-terminated and lives to the end of the
+        // statement, past the call.
         if unsafe { CredDeleteW(wide(&self.target).as_ptr(), CRED_TYPE_GENERIC, 0) } == 0 {
             let e = io::Error::last_os_error();
             if e.raw_os_error() != Some(1168) {
@@ -316,6 +326,12 @@ impl Store {
     pub fn read_secret(&self) -> Result<Option<(String, String)>, String> {
         let target = wide(&self.target);
         let mut item = ptr::null_mut();
+        // SAFETY: the target is null-terminated and outlives the call. The
+        // credential CredReadW allocates is read only while it is alive, freed
+        // once with CredFree on every path that has one, and not used after:
+        // its blob only for CredentialBlobSize bytes (checked to be at most
+        // 1024, and zeroed before the free), its user name as a
+        // null-terminated string or null.
         unsafe {
             if CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut item) == 0 {
                 let e = io::Error::last_os_error();
@@ -370,6 +386,8 @@ impl Store {
         }
         let mut target = wide(&self.target);
         let mut username = wide(auth_user);
+        // SAFETY: CREDENTIALW is plain data, and all zero is a valid value of
+        // every field: null pointers, zero sizes and counts.
         let mut item: CREDENTIALW = unsafe { std::mem::zeroed() };
         item.Type = CRED_TYPE_GENERIC;
         item.TargetName = target.as_mut_ptr();
@@ -377,9 +395,14 @@ impl Store {
         item.CredentialBlob = blob.as_mut_ptr();
         item.CredentialBlobSize = blob.len() as u32;
         item.Persist = CRED_PERSIST_LOCAL_MACHINE;
+        // SAFETY: every pointer in `item` points into a buffer that outlives
+        // the call: the target and user name null-terminated, the blob of the
+        // size given. CredWriteW copies what it keeps.
         let ok = unsafe { CredWriteW(&item, 0) };
         let error = io::Error::last_os_error();
         for b in &mut blob {
+            // SAFETY: `b` is a valid, exclusive reference to a byte of the blob;
+            // the volatile write keeps the zeroing from being optimised away.
             unsafe {
                 ptr::write_volatile(b, 0);
             }
@@ -392,6 +415,8 @@ impl Store {
     #[cfg(test)]
     pub fn cleanup_test(&self) {
         assert!(self.target.starts_with("KSIP/Test/"));
+        // SAFETY: the target is null-terminated and lives to the end of the
+        // statement, past the call.
         unsafe {
             CredDeleteW(wide(&self.target).as_ptr(), CRED_TYPE_GENERIC, 0);
         }

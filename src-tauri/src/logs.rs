@@ -411,11 +411,15 @@ pub fn stamp() -> String {
     };
     // TIME_ZONE_ID_DAYLIGHT, whose constant lives in a feature nothing else needs.
     const DAYLIGHT: u32 = 2;
-    let mut now: SYSTEMTIME = unsafe { std::mem::zeroed() };
-    let mut zone: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: both calls only fill the structures above.
-    unsafe { GetLocalTime(&mut now) };
-    let kind = unsafe { GetTimeZoneInformation(&mut zone) };
+    // SAFETY: SYSTEMTIME and TIME_ZONE_INFORMATION are plain numbers and
+    // arrays of them, for which all zero is valid; both calls only fill them.
+    let (now, kind, zone) = unsafe {
+        let mut now: SYSTEMTIME = std::mem::zeroed();
+        let mut zone: TIME_ZONE_INFORMATION = std::mem::zeroed();
+        GetLocalTime(&mut now);
+        let kind = GetTimeZoneInformation(&mut zone);
+        (now, kind, zone)
+    };
     // The bias says how many minutes local time is behind UTC, which is the
     // opposite sign of the offset written after the time.
     let bias = match kind {

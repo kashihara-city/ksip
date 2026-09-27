@@ -80,11 +80,15 @@ fn main() {
     };
     let name = format!("Local\\{}", storage::Store::new().target.replace('/', "_"));
     let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: the name is null-terminated and outlives the call; no security
+    // attributes are passed. The handle is checked and closed below.
     let singleton = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
     if singleton.is_null() {
         return;
     }
+    // SAFETY: reads this thread's last error, which CreateMutexW just set.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // SAFETY: the handle is open and closed once, here.
         unsafe { CloseHandle(singleton) };
         return;
     }
@@ -103,6 +107,7 @@ fn main() {
         state.services.log_app(message_with("NOTIFICATION_REGISTER_FAILED", [e]));
     }
     desktop::run(state);
+    // SAFETY: the handle has been open since the start and is closed once, here.
     unsafe {
         CloseHandle(singleton);
     }

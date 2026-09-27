@@ -111,7 +111,8 @@ impl Services {
         me.converting.fetch_add(1, Ordering::Relaxed);
         thread::spawn(move || {
             use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
-            // SAFETY: the current thread's own priority is all that is touched.
+            // SAFETY: the current thread's own priority is all that is touched;
+            // GetCurrentThread's pseudo-handle needs no closing.
             unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
             let mp3 = wav.with_extension("mp3");
             let partial = partial_recording(&wav);

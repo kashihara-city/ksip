@@ -36,8 +36,13 @@ fn user_sid() -> Option<String> {
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    // SAFETY: the token is this process's and closed here; the buffer is
-    // sized by the first call and read as the TOKEN_USER the second wrote.
+    // SAFETY: the token is this process's and closed once, before anything
+    // else can return. The buffer is sized by the first call and made of u64,
+    // so that the TOKEN_USER the second call writes at its start (it holds a
+    // pointer) is aligned, which a Vec<u8> is not promised to be; the SID it
+    // points to lies in the same buffer, alive until the text is made. The
+    // text ConvertSidToStringSidW allocates is null-terminated, read once,
+    // and freed with LocalFree as it asks.
     unsafe {
         let mut token = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
@@ -45,10 +50,10 @@ fn user_sid() -> Option<String> {
         }
         let mut needed = 0u32;
         GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
-        let mut buffer = vec![0u8; needed as usize];
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
         let ok = GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), needed, &mut needed) != 0;
         CloseHandle(token);
-        if !ok || buffer.len() < std::mem::size_of::<TOKEN_USER>() {
+        if !ok || (needed as usize) < std::mem::size_of::<TOKEN_USER>() {
             return None;
         }
         let user = &*(buffer.as_ptr() as *const TOKEN_USER);
@@ -176,6 +181,10 @@ fn send_to(name: &str, command: &str) -> Result<bool, String> {
 /// than joining someone else's pipe. Every instance is this user's alone and
 /// refuses remote clients.
 fn create(name: &[u16], first: bool) -> Option<HANDLE> {
+    // The name goes to Windows as a C string: it has to end with its null.
+    if name.last() != Some(&0) {
+        return None;
+    }
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
@@ -188,8 +197,9 @@ fn create(name: &[u16], first: bool) -> Option<HANDLE> {
         lpSecurityDescriptor: descriptor.unwrap_or(std::ptr::null_mut()),
         bInheritHandle: 0,
     };
-    // SAFETY: the name is null-terminated and the attributes outlive the call;
-    // the descriptor is freed after it.
+    // SAFETY: the name ends with its null (checked above) and the attributes,
+    // with the descriptor they point to, outlive the call; the pipe copies the
+    // descriptor, which is freed after it.
     let pipe = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
@@ -203,6 +213,8 @@ fn create(name: &[u16], first: bool) -> Option<HANDLE> {
         )
     };
     if let Some(descriptor) = descriptor {
+        // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        // which allocates it with LocalAlloc, and is freed once, here.
         unsafe { LocalFree(descriptor) };
     }
     (!pipe.is_null() && pipe != INVALID_HANDLE_VALUE).then_some(pipe)
@@ -216,6 +228,8 @@ fn read_command(pipe: HANDLE) -> Option<String> {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let mut available = 0u32;
+        // SAFETY: the pipe is an open handle the caller holds for the call; no
+        // data buffer is passed, and the only out pointer is a local.
         let peeked = unsafe {
             PeekNamedPipe(
                 pipe,
@@ -231,6 +245,9 @@ fn read_command(pipe: HANDLE) -> Option<String> {
         if !peeked || available > 0 {
             let mut buffer = [0u8; 1024];
             let mut read = 0u32;
+            // SAFETY: the pipe is open; the buffer is a local of the length
+            // given, and the call is synchronous (no OVERLAPPED), so nothing
+            // writes to it after the call returns.
             let ok = unsafe {
                 ReadFile(
                     pipe,
@@ -270,6 +287,9 @@ fn serve_named(name: &str, deliver: impl Fn(String) + Send + 'static) {
             // with a name of its own, and is connected all the same. One that
             // has already written and left is reported as "no data", and what
             // it wrote is still there to be read.
+            // SAFETY: `current` is an open pipe instance this thread created and
+            // alone holds; the call is synchronous (no OVERLAPPED). GetLastError
+            // reads what that call left on this thread.
             let connected = unsafe { ConnectNamedPipe(current, std::ptr::null_mut()) } != 0
                 || matches!(unsafe { GetLastError() }, ERROR_PIPE_CONNECTED | ERROR_NO_DATA);
             // The next instance is ready before this one is read, so a link that
@@ -283,6 +303,7 @@ fn serve_named(name: &str, deliver: impl Fn(String) + Send + 'static) {
             // Closing the handle ends this instance; a disconnect first would
             // leave an instant in which a new client could attach to it and be
             // lost with it.
+            // SAFETY: `current` is open and closed once, here; it is not used after.
             unsafe { CloseHandle(current) };
             pipe = next;
         }
@@ -389,6 +410,7 @@ mod tests {
         use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: the name is null-terminated and outlives the call.
         while unsafe { WaitNamedPipeW(wide.as_ptr(), 100) } == 0 {
             assert!(Instant::now() < deadline, "the pipe appeared");
             std::thread::sleep(Duration::from_millis(20));

@@ -3,6 +3,7 @@ use crate::message::{message, message_with};
 use serde::{Deserialize, Serialize};
 use std::{
     f32::consts::PI,
+    marker::PhantomData,
     sync::{mpsc, OnceLock},
     time::{Duration, Instant},
 };
@@ -61,6 +62,10 @@ struct MicSession {
 }
 impl Drop for MicSession {
     fn drop(&mut self) {
+        // SAFETY: the client is a live interface this session owns, dropped on
+        // the meter thread while COM is still initialised there (`_com` is
+        // declared before the session, so it is dropped after it). Stop asks
+        // nothing more, and its failure is of no consequence here.
         unsafe {
             let _ = self.client.Stop();
         }
@@ -70,31 +75,64 @@ struct PeakRequest {
     device_id: String,
     reply: mpsc::SyncSender<Result<Peak, String>>,
 }
-struct Com;
+/// COM, initialised on this thread (multithreaded) for as long as the value
+/// lives. Each successful CoInitializeEx, S_FALSE included, is balanced by
+/// one CoUninitialize on the same thread: so the value cannot leave the
+/// thread (the raw pointer makes it neither Send nor Sync), and it is
+/// declared before the COM objects made under it, which are dropped first.
+struct Com(PhantomData<*const ()>);
 impl Com {
     fn new() -> windows::core::Result<Self> {
+        // SAFETY: no pointer is passed. Only a success makes a value, and so
+        // only a success is balanced by the drop; a thread already in another
+        // apartment (RPC_E_CHANGED_MODE) gets the error and nothing to undo.
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
         }
-        Ok(Self)
+        Ok(Self(PhantomData))
     }
 }
 impl Drop for Com {
     fn drop(&mut self) {
+        // SAFETY: this value stands for one successful CoInitializeEx on this
+        // thread (it cannot have moved to another), and this is its balance.
         unsafe {
             CoUninitialize();
         }
     }
 }
+/// A PROPVARIANT this code owns (from GetValue), cleared once when dropped.
+/// It is not Clone, so no second owner can clear it again.
 struct Property(PROPVARIANT);
 impl Drop for Property {
     fn drop(&mut self) {
+        // SAFETY: the value is owned by this wrapper alone and cleared only here.
         unsafe {
             let _ = PropVariantClear(&mut self.0);
         }
     }
 }
-// GetId and PropVariantToStringAlloc return strings owned by the COM allocator.
+/// A mix format GetMixFormat handed out, freed once with CoTaskMemFree when
+/// the value is dropped: on every path, early returns included, so that no
+/// path has to remember it. Made only from GetMixFormat's result, and neither
+/// Clone nor Copy, so it has one owner; the format is read through the
+/// pointer only while the value lives.
+struct MixFormatBuffer(*mut WAVEFORMATEX);
+impl Drop for MixFormatBuffer {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from GetMixFormat, which allocates it with
+        // the COM task allocator for the caller to free; this value alone owns
+        // it, and frees it once, here.
+        unsafe { CoTaskMemFree(Some(self.0.cast())) };
+    }
+}
+/// A string the COM allocator handed out (GetId, PropVariantToStringAlloc),
+/// read and freed, also when it is not valid UTF-16.
+///
+/// # Safety
+/// `value` must be a non-null, null-terminated string from the COM task
+/// allocator that nothing uses after this call: what GetId and
+/// PropVariantToStringAlloc return on success.
 unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
     let result = value.to_string();
     CoTaskMemFree(Some(value.0.cast()));
@@ -103,6 +141,11 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
 fn error(e: windows::core::Error) -> String {
     message_with("AUDIO_DEVICE_FAILED", [e])
 }
+/// The capture client and meter for one microphone, started.
+///
+/// # Safety
+/// COM must be initialised on the calling thread, and the session dropped on
+/// this thread before COM is uninitialised here.
 unsafe fn open_microphone_session(device_id: &str) -> windows::core::Result<MicSession> {
     let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
     let wide: Vec<u16> = device_id.encode_utf16().chain(Some(0)).collect();
@@ -119,17 +162,17 @@ unsafe fn open_microphone_session(device_id: &str) -> windows::core::Result<MicS
     }
     let meter: IAudioMeterInformation = device.Activate(CLSCTX_ALL, None)?;
     let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
-    let format = client.GetMixFormat()?;
-    let initialized = client.Initialize(
+    // Initialize only reads the format during the call; the buffer frees it
+    // when this function returns, whatever Initialize said.
+    let format = MixFormatBuffer(client.GetMixFormat()?);
+    client.Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_NOPERSIST,
         0,
         0,
-        format,
+        format.0,
         None,
-    );
-    CoTaskMemFree(Some(format.cast()));
-    initialized?;
+    )?;
     client.Start()?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     Ok(MicSession {
@@ -171,11 +214,15 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                     .as_ref()
                     .is_none_or(|value| value.requested_id != request.device_id)
                 {
+                    // SAFETY: COM is initialised on this thread by `_com`, declared
+                    // before `session` and so dropped after it.
                     session = unsafe { open_microphone_session(&request.device_id) }
                         .map_err(error)
                         .ok();
                 }
                 let result = match session.as_ref() {
+                    // SAFETY: the meter is a live interface of the session, used on
+                    // the thread whose COM it was made under.
                     Some(value) => unsafe {
                         value.meter.GetPeakValue().map(|peak| Peak {
                             id: value.resolved_id.clone(),
@@ -204,6 +251,10 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
 pub fn devices() -> Result<Vec<Device>, String> {
     fn run() -> windows::core::Result<Vec<Device>> {
         let _com = Com::new()?;
+        // SAFETY: COM is initialised by `_com` for the whole block, and every
+        // interface made here is dropped at its end, before `_com`. Each string
+        // from GetId and PropVariantToStringAlloc is freed once by take_string,
+        // and the property value is cleared by its wrapper.
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -256,6 +307,11 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>
     }
     fn run(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>) -> windows::core::Result<Volume> {
         let _com = Com::new()?;
+        // SAFETY: COM is initialised by `_com` for the whole block, and every
+        // interface made here is dropped at its end, before `_com`. The id is
+        // null-terminated and outlives GetDevice; a null event context is what
+        // SetMasterVolumeLevelScalar and SetMute take for "no context"; the
+        // string from GetId is freed once by take_string.
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -318,6 +374,10 @@ pub fn peak(kind: &str, device_id: &str) -> Result<Peak, String> {
     }
     fn run(kind: &str, device_id: &str) -> windows::core::Result<Peak> {
         let _com = Com::new()?;
+        // SAFETY: COM is initialised by `_com` for the whole block, and every
+        // interface made here is dropped at its end, before `_com`. The id is
+        // null-terminated and outlives GetDevice; the string from GetId is
+        // freed once by take_string.
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -364,11 +424,29 @@ struct MixFormat {
     block: u16,
     kind: SampleKind,
 }
+/// A client's mix format, as its samples are laid out, or why it cannot be
+/// used. What write_sample and read_sample rely on is checked here: that a
+/// channel's step through a frame holds one whole sample.
+///
+/// # Safety
+/// `raw` must point to a WAVEFORMATEX followed by at least `cbSize` more
+/// bytes, all readable for the call, as the format GetMixFormat returns is
+/// while it has not been freed. Only the WAVEFORMATEX itself is read unless
+/// the tag is extensible and `cbSize` covers the extension.
 unsafe fn mix_format(raw: *const WAVEFORMATEX) -> Result<MixFormat, String> {
+    // The bytes the extensible form adds to WAVEFORMATEX, which cbSize has to cover.
+    const EXTENSION: usize = std::mem::size_of::<WAVEFORMATEXTENSIBLE>() - std::mem::size_of::<WAVEFORMATEX>();
+    // SAFETY: `raw` points to a WAVEFORMATEX (the caller's promise), read
+    // unaligned as the structure is packed.
     let base = unsafe { std::ptr::read_unaligned(raw) };
     let tag = base.wFormatTag as u32;
     let subformat = if tag == WAVE_FORMAT_EXTENSIBLE {
+        if (base.cbSize as usize) < EXTENSION {
+            return Err(message("AUDIO_DEVICE_FORMAT_INVALID"));
+        }
         let extended = raw.cast::<WAVEFORMATEXTENSIBLE>();
+        // SAFETY: cbSize says the whole WAVEFORMATEXTENSIBLE is there; the
+        // field is reached without a reference and read unaligned.
         Some(unsafe { std::ptr::read_unaligned(std::ptr::addr_of!((*extended).SubFormat)) })
     } else {
         None
@@ -385,7 +463,16 @@ unsafe fn mix_format(raw: *const WAVEFORMATEX) -> Result<MixFormat, String> {
         (_, true, 32) => SampleKind::Pcm32,
         _ => return Err(message("AUDIO_SAMPLE_FORMAT_UNSUPPORTED")),
     };
-    if base.nSamplesPerSec < 8000 || base.nChannels == 0 || base.nBlockAlign == 0 {
+    let sample_bytes = match kind {
+        SampleKind::Pcm8 => 1,
+        SampleKind::Pcm16 => 2,
+        SampleKind::Pcm24 => 3,
+        SampleKind::Float32 | SampleKind::Pcm32 => 4,
+    };
+    // write_sample and read_sample step through a frame by nBlockAlign /
+    // nChannels bytes and touch one sample at each step: a block shorter than
+    // the channels' samples would take them past the frame, and the buffer.
+    if base.nSamplesPerSec < 8000 || base.nChannels == 0 || (base.nBlockAlign as usize) < base.nChannels as usize * sample_bytes {
         return Err(message("AUDIO_DEVICE_FORMAT_INVALID"));
     }
     Ok(MixFormat {
@@ -395,52 +482,63 @@ unsafe fn mix_format(raw: *const WAVEFORMATEX) -> Result<MixFormat, String> {
         kind,
     })
 }
+/// Writes one frame's value to every channel.
+///
+/// # Safety
+/// `buffer` must be writable for at least `frame + 1` frames of `format.block`
+/// bytes (as GetBuffer gives for the frames asked for), and `format` must come
+/// from mix_format.
 unsafe fn write_sample(buffer: *mut u8, frame: usize, format: MixFormat, value: f32) {
     let bytes = format.block as usize / format.channels as usize;
     let value = value.clamp(-1.0, 1.0);
     for channel in 0..format.channels as usize {
-        let p = unsafe { buffer.add(frame * format.block as usize + channel * bytes) };
-        match format.kind {
-            SampleKind::Float32 => unsafe { std::ptr::write_unaligned(p.cast(), value) },
-            SampleKind::Pcm8 => unsafe { *p = ((value * 127.0) + 128.0).round() as u8 },
-            SampleKind::Pcm16 => unsafe {
-                std::ptr::write_unaligned(p.cast(), (value * 32767.0).round() as i16)
-            },
-            SampleKind::Pcm24 => {
-                let sample = (value * 8_388_607.0).round() as i32;
-                unsafe {
+        // SAFETY: the sample lies inside frame `frame`, which the buffer holds
+        // (the caller's promise), and mix_format checked that a channel's step
+        // of `bytes` holds a whole sample; every access is unaligned or bytewise.
+        unsafe {
+            let p = buffer.add(frame * format.block as usize + channel * bytes);
+            match format.kind {
+                SampleKind::Float32 => std::ptr::write_unaligned(p.cast(), value),
+                SampleKind::Pcm8 => *p = ((value * 127.0) + 128.0).round() as u8,
+                SampleKind::Pcm16 => std::ptr::write_unaligned(p.cast(), (value * 32767.0).round() as i16),
+                SampleKind::Pcm24 => {
+                    let sample = (value * 8_388_607.0).round() as i32;
                     *p = sample as u8;
                     *p.add(1) = (sample >> 8) as u8;
                     *p.add(2) = (sample >> 16) as u8;
                 }
+                SampleKind::Pcm32 => std::ptr::write_unaligned(p.cast(), (value * 2_147_483_647.0).round() as i32),
             }
-            SampleKind::Pcm32 => unsafe {
-                std::ptr::write_unaligned(p.cast(), (value * 2_147_483_647.0).round() as i32)
-            },
         }
     }
 }
+/// One frame's value, the channels averaged.
+///
+/// # Safety
+/// `buffer` must be readable for at least `frame + 1` frames of `format.block`
+/// bytes (as GetBuffer returns them), and `format` must come from mix_format.
 unsafe fn read_sample(buffer: *const u8, frame: usize, format: MixFormat) -> f32 {
     let bytes = format.block as usize / format.channels as usize;
     let mut total = 0.0;
     for channel in 0..format.channels as usize {
-        let p = unsafe { buffer.add(frame * format.block as usize + channel * bytes) };
-        total += match format.kind {
-            SampleKind::Float32 => unsafe { std::ptr::read_unaligned(p.cast::<f32>()) },
-            SampleKind::Pcm8 => unsafe { (*p as f32 - 128.0) / 128.0 },
-            SampleKind::Pcm16 => unsafe {
-                std::ptr::read_unaligned(p.cast::<i16>()) as f32 / 32768.0
-            },
-            SampleKind::Pcm24 => unsafe {
-                let mut value = *p as i32 | ((*p.add(1) as i32) << 8) | ((*p.add(2) as i32) << 16);
-                if value & 0x800000 != 0 {
-                    value |= !0xffffff;
+        // SAFETY: as in write_sample: the sample lies inside a frame the buffer
+        // holds, a channel's step holds a whole sample, and every access is
+        // unaligned or bytewise.
+        total += unsafe {
+            let p = buffer.add(frame * format.block as usize + channel * bytes);
+            match format.kind {
+                SampleKind::Float32 => std::ptr::read_unaligned(p.cast::<f32>()),
+                SampleKind::Pcm8 => (*p as f32 - 128.0) / 128.0,
+                SampleKind::Pcm16 => std::ptr::read_unaligned(p.cast::<i16>()) as f32 / 32768.0,
+                SampleKind::Pcm24 => {
+                    let mut value = *p as i32 | ((*p.add(1) as i32) << 8) | ((*p.add(2) as i32) << 16);
+                    if value & 0x800000 != 0 {
+                        value |= !0xffffff;
+                    }
+                    value as f32 / 8_388_608.0
                 }
-                value as f32 / 8_388_608.0
-            },
-            SampleKind::Pcm32 => unsafe {
-                std::ptr::read_unaligned(p.cast::<i32>()) as f32 / 2_147_483_648.0
-            },
+                SampleKind::Pcm32 => std::ptr::read_unaligned(p.cast::<i32>()) as f32 / 2_147_483_648.0,
+            }
         };
     }
     total / format.channels as f32
@@ -509,6 +607,17 @@ fn calibrate_once(
         }
     }
     let _com = Com::new().map_err(error)?;
+    // SAFETY: COM is initialised by `_com` for the whole block, and every
+    // interface made here is dropped at its end, before `_com`. The ids are
+    // null-terminated and outlive GetDevice. Each mix format is owned by a
+    // MixFormatBuffer from the moment GetMixFormat returns it, which frees it
+    // once when the block is left, early returns included; mix_format and
+    // Initialize (which only reads it during the call) use it while it is
+    // alive, and it is whole with its cbSize bytes, as mix_format asks, being
+    // GetMixFormat's own. The render and capture buffers are
+    // written and read only within the frames GetBuffer gave or returned, in
+    // the formats mix_format checked, and released before the next GetBuffer;
+    // the out pointers GetBuffer fills are locals.
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(error)?;
@@ -539,42 +648,19 @@ fn calibrate_once(
         let duration_ms = schedule.last().unwrap().0 + 900;
         let capture_client: IAudioClient = microphone.Activate(CLSCTX_ALL, None).map_err(error)?;
         let render_client: IAudioClient = speaker.Activate(CLSCTX_ALL, None).map_err(error)?;
-        let capture_raw = capture_client.GetMixFormat().map_err(error)?;
-        let render_raw = render_client.GetMixFormat().map_err(error)?;
-        let capture_format = mix_format(capture_raw);
-        let render_format = mix_format(render_raw);
-        if let Err(message) = &capture_format {
-            CoTaskMemFree(Some(capture_raw.cast()));
-            CoTaskMemFree(Some(render_raw.cast()));
-            return Err(message.clone());
-        }
-        if let Err(message) = &render_format {
-            CoTaskMemFree(Some(capture_raw.cast()));
-            CoTaskMemFree(Some(render_raw.cast()));
-            return Err(message.clone());
-        }
-        let capture_format = capture_format?;
-        let render_format = render_format?;
-        let capture_init = capture_client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_NOPERSIST,
-            0,
-            0,
-            capture_raw,
-            None,
-        );
-        let render_init = render_client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_NOPERSIST,
-            0,
-            0,
-            render_raw,
-            None,
-        );
-        CoTaskMemFree(Some(capture_raw.cast()));
-        CoTaskMemFree(Some(render_raw.cast()));
-        capture_init.map_err(error)?;
-        render_init.map_err(error)?;
+        let capture_raw = MixFormatBuffer(capture_client.GetMixFormat().map_err(error)?);
+        let render_raw = MixFormatBuffer(render_client.GetMixFormat().map_err(error)?);
+        let capture_format = mix_format(capture_raw.0)?;
+        let render_format = mix_format(render_raw.0)?;
+        capture_client
+            .Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_NOPERSIST, 0, 0, capture_raw.0, None)
+            .map_err(error)?;
+        render_client
+            .Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_NOPERSIST, 0, 0, render_raw.0, None)
+            .map_err(error)?;
+        // Read by Initialize, and needed no more.
+        drop(capture_raw);
+        drop(render_raw);
         let capture: IAudioCaptureClient = capture_client.GetService().map_err(error)?;
         let render: IAudioRenderClient = render_client.GetService().map_err(error)?;
         let render_frames = render_client.GetBufferSize().map_err(error)?;
@@ -755,6 +841,43 @@ pub fn calibrate_aec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mix_format_whose_samples_would_not_fit_is_refused() {
+        use windows::Win32::Media::Audio::WAVE_FORMAT_PCM;
+        let pcm = |channels: u16, bits: u16, block: u16| WAVEFORMATEX {
+            wFormatTag: WAVE_FORMAT_PCM as u16,
+            nChannels: channels,
+            nSamplesPerSec: 48_000,
+            nAvgBytesPerSec: 48_000 * block as u32,
+            nBlockAlign: block,
+            wBitsPerSample: bits,
+            cbSize: 0,
+        };
+        let plain = |format: WAVEFORMATEX| {
+            // SAFETY: a whole WAVEFORMATEX with cbSize 0: no bytes are promised after it.
+            unsafe { mix_format(&format) }.map(|f| (f.channels, f.block))
+        };
+        assert_eq!(plain(pcm(2, 16, 4)), Ok((2, 4)), "two 16-bit channels in four bytes");
+        assert_eq!(plain(pcm(2, 16, 6)), Ok((2, 6)), "a padded block is fine");
+        assert_eq!(plain(pcm(2, 16, 2)), Err(message("AUDIO_DEVICE_FORMAT_INVALID")), "two 16-bit samples do not fit in two bytes");
+        assert_eq!(plain(pcm(1, 24, 2)), Err(message("AUDIO_DEVICE_FORMAT_INVALID")));
+        // The extensible form, with its whole structure there, as GetMixFormat
+        // gives it: taken when cbSize covers the extension, refused (and the
+        // extension not read) when cbSize says it is shorter.
+        let extensible = |cb_size: u16| {
+            let mut header = pcm(2, 16, 4);
+            header.wFormatTag = WAVE_FORMAT_EXTENSIBLE as u16;
+            header.cbSize = cb_size;
+            let format = WAVEFORMATEXTENSIBLE { Format: header, SubFormat: KSDATAFORMAT_SUBTYPE_PCM, ..Default::default() };
+            // SAFETY: the pointer is to the whole WAVEFORMATEXTENSIBLE, alive for
+            // the call: its WAVEFORMATEX and the 22 bytes after it, which is at
+            // least cbSize (22 or 4) bytes.
+            unsafe { mix_format(std::ptr::addr_of!(format).cast()) }.map(|f| (f.channels, f.block))
+        };
+        assert_eq!(extensible(22), Ok((2, 4)));
+        assert_eq!(extensible(4), Err(message("AUDIO_DEVICE_FORMAT_INVALID")));
+    }
 
     #[test]
     fn correlation_finds_known_delay() {
