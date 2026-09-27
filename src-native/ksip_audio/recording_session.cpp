@@ -4,14 +4,18 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <array>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 namespace recording_session {
 namespace {
 // Every entry here is taken under the gate; the audio threads take it for
-// every frame, so nothing slow happens under it.
+// every frame, so nothing slow happens under it: a Recorder (a file, a
+// writer thread, its buffers) is made before the gate is taken and only put
+// in place under it. The commands and the decoder events all come on
+// baresip's main thread, so between a command's two takes of the gate only
+// the audio threads run, and they change nothing here.
 std::mutex gate;
 std::unique_ptr<Recorder> current;
 // The calls carrying audio, with the rate their decoder runs at.
@@ -28,17 +32,22 @@ const audio *detached_audio = nullptr;
 // target is held here and bound as soon as the filter appears.
 std::string reserved_call, reserved_path;
 
-bool begin(const std::string &path, uint32_t rate, const audio *stream) {
+// The file, its header and the writer: outside the gate. Null when the file
+// cannot be made.
+std::unique_ptr<Recorder> prepare(const std::string &path, uint32_t rate) {
     try {
         auto r = std::make_unique<Recorder>(path, rate);
-        if (!r->opened()) return false;
-        current = std::move(r);
+        if (r->opened()) return r;
     } catch (...) {
-        return false;
     }
+    return nullptr;
+}
+// A prepared recorder becomes the recording of `stream`: under the gate,
+// nothing but a few assignments.
+void install(std::unique_ptr<Recorder> r, const audio *stream) {
+    current = std::move(r);
     recording_audio = stream;
     detached_audio = nullptr;
-    return true;
 }
 // Finishing (joining the writer, closing the file) can wait on the disk, so
 // it happens outside the gate; the words are the ones the app reads.
@@ -48,41 +57,55 @@ Recorder::Summary end(std::unique_ptr<Recorder> finished) {
     return summary;
 }
 bool readable(const auframe *f) { return f->fmt == AUFMT_S16LE || f->fmt == AUFMT_FLOAT; }
-// One channel of the frame, as 16-bit samples; a frame with more channels
-// gives its first.
-const std::vector<int16_t> &mono(const auframe *f) {
-    // One buffer per audio thread, kept between frames: nothing is allocated
-    // while a frame is being processed.
-    thread_local std::vector<int16_t> out;
-    const size_t stride = std::max<size_t>(f->ch, 1), frames = f->sampc / stride;
-    out.resize(frames);
+// One channel of the frame, as 16-bit samples, into `out`; a frame with
+// more channels gives its first. Returns the count. The buffer is one fixed
+// array per audio thread, so nothing is ever allocated for a frame; a frame
+// longer than it (170 ms at 48 kHz, longer than any packet time baresip
+// uses) is cut to it.
+using Mono = std::array<int16_t, 8192>;
+size_t mono(const auframe *f, Mono &out) {
+    const size_t stride = std::max<size_t>(f->ch, 1), frames = std::min(f->sampc / stride, out.size());
     for (size_t i = 0; i < frames; ++i) {
         size_t at = i * stride;
         if (f->fmt == AUFMT_S16LE) out[i] = ((int16_t *)f->sampv)[at];
         else out[i] = (int16_t)std::clamp(((float *)f->sampv)[at] * 32768.f, -32768.f, 32767.f);
     }
-    return out;
+    return frames;
 }
 } // namespace
 
 void decoder_created(const audio *stream, uint32_t rate) {
-    std::lock_guard<std::mutex> lock(gate);
-    decoders[stream] = rate;
-    if (current && !recording_audio && detached_audio == stream) {
-        recording_audio = stream;
-        detached_audio = nullptr;
-        info("ksip_audio_filter: receive recording goes on with the call's new decoder\n");
-    }
-    if (!reserved_call.empty()) {
-        auto c = uag_call_find(reserved_call.c_str());
-        if (c && call_audio(c) == stream) {
-            bool ok = reserved_path.empty() ? (recording_audio = stream, true) : begin(reserved_path, rate, stream);
-            if (ok) info("ksip_audio_filter: receive recording bound to the reserved call\n");
-            else warning("ksip_audio_filter: cannot open the reserved WAV file\n");
-            reserved_call.clear();
-            reserved_path.clear();
+    // A reserved file to open for this call, decided under the gate and
+    // opened outside it.
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(gate);
+        decoders[stream] = rate;
+        if (current && !recording_audio && detached_audio == stream) {
+            recording_audio = stream;
+            detached_audio = nullptr;
+            info("ksip_audio_filter: receive recording goes on with the call's new decoder\n");
+        }
+        if (!reserved_call.empty()) {
+            auto c = uag_call_find(reserved_call.c_str());
+            if (c && call_audio(c) == stream) {
+                if (reserved_path.empty()) {
+                    recording_audio = stream;
+                    reserved_call.clear();
+                    info("ksip_audio_filter: receive recording bound to the reserved call\n");
+                } else path = reserved_path;
+            }
         }
     }
+    if (path.empty()) return;
+    auto r = prepare(path, rate);
+    std::lock_guard<std::mutex> lock(gate);
+    if (r) {
+        install(std::move(r), stream);
+        info("ksip_audio_filter: receive recording bound to the reserved call\n");
+    } else warning("ksip_audio_filter: cannot open the reserved WAV file\n");
+    reserved_call.clear();
+    reserved_path.clear();
 }
 void decoder_destroyed(const audio *stream) {
     std::lock_guard<std::mutex> lock(gate);
@@ -96,19 +119,15 @@ void decoder_destroyed(const audio *stream) {
 }
 void far_frame(const audio *stream, const auframe *frame) {
     if (!readable(frame)) return;
+    thread_local Mono samples;
     std::lock_guard<std::mutex> lock(gate);
-    if (current && recording_audio == stream) {
-        const auto &samples = mono(frame);
-        current->push_far(samples.data(), samples.size());
-    }
+    if (current && recording_audio == stream) current->push_far(samples.data(), mono(frame, samples), frame->srate);
 }
 void near_frame(const audio *stream, const auframe *frame) {
     if (!readable(frame)) return;
+    thread_local Mono samples;
     std::lock_guard<std::mutex> lock(gate);
-    if (current && recording_audio == stream) {
-        const auto &samples = mono(frame);
-        current->push_near(samples.data(), samples.size());
-    }
+    if (current && recording_audio == stream) current->push_near(samples.data(), mono(frame, samples), frame->srate);
 }
 int start(re_printf *pf, const char *prm) {
     if (!str_isset(prm)) return EINVAL;
@@ -124,17 +143,24 @@ int start(re_printf *pf, const char *prm) {
             path = text.substr(space + 1);
         } else id.clear();
     }
-    std::lock_guard<std::mutex> lock(gate);
-    if (current || !reserved_path.empty()) return EALREADY;
-    if (!target && decoders.size() == 1) target = decoders.begin()->first;
-    auto found = decoders.find(target);
-    if (found == decoders.end()) {
-        if (id.empty()) return re_hprintf(pf, "Call audio is not active\n"), EAGAIN;
-        reserved_call = id;
-        reserved_path = path;
-        return re_hprintf(pf, "Receive-only recording reserved\n");
+    uint32_t rate;
+    {
+        std::lock_guard<std::mutex> lock(gate);
+        if (current || !reserved_path.empty()) return EALREADY;
+        if (!target && decoders.size() == 1) target = decoders.begin()->first;
+        auto found = decoders.find(target);
+        if (found == decoders.end()) {
+            if (id.empty()) return re_hprintf(pf, "Call audio is not active\n"), EAGAIN;
+            reserved_call = id;
+            reserved_path = path;
+            return re_hprintf(pf, "Receive-only recording reserved\n");
+        }
+        rate = found->second;
     }
-    if (!begin(path, found->second, target)) return re_hprintf(pf, "Cannot open WAV file\n"), EIO;
+    auto r = prepare(path, rate);
+    if (!r) return re_hprintf(pf, "Cannot open WAV file\n"), EIO;
+    std::lock_guard<std::mutex> lock(gate);
+    install(std::move(r), target);
     return re_hprintf(pf, "Recording started\n");
 }
 int stop(re_printf *pf) {
@@ -161,28 +187,42 @@ int stop(re_printf *pf) {
 }
 int select(re_printf *pf, const char *prm) {
     if (!str_isset(prm)) return EINVAL;
+    const audio *target;
+    uint32_t rate;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(gate);
+        if (!current && reserved_path.empty()) return ENOENT;
+        detached_audio = nullptr;
+        if (strcmp(prm, "-") == 0) {
+            recording_audio = nullptr;
+            reserved_call.clear();
+            return re_hprintf(pf, "Receive recording input paused\n");
+        }
+        auto c = uag_call_find(prm);
+        if (!c) return ENOENT;
+        target = call_audio(c);
+        auto found = decoders.find(target);
+        if (found == decoders.end()) {
+            // The call exists but is not carrying audio yet; bind it once it does.
+            recording_audio = nullptr;
+            reserved_call = prm;
+            return re_hprintf(pf, "Receive recording input reserved\n");
+        }
+        if (reserved_path.empty()) {
+            recording_audio = target;
+            reserved_call.clear();
+            return re_hprintf(pf, "Receive recording input switched\n");
+        }
+        // The reserved file is for this call: opened outside the gate.
+        path = reserved_path;
+        rate = found->second;
+    }
+    auto r = prepare(path, rate);
+    if (!r) return re_hprintf(pf, "Cannot open WAV file\n"), EIO;
     std::lock_guard<std::mutex> lock(gate);
-    if (!current && reserved_path.empty()) return ENOENT;
-    detached_audio = nullptr;
-    if (strcmp(prm, "-") == 0) {
-        recording_audio = nullptr;
-        reserved_call.clear();
-        return re_hprintf(pf, "Receive recording input paused\n");
-    }
-    auto c = uag_call_find(prm);
-    if (!c) return ENOENT;
-    auto target = call_audio(c);
-    auto found = decoders.find(target);
-    if (found == decoders.end()) {
-        // The call exists but is not carrying audio yet; bind it once it does.
-        recording_audio = nullptr;
-        reserved_call = prm;
-        return re_hprintf(pf, "Receive recording input reserved\n");
-    }
-    if (!reserved_path.empty()) {
-        if (!begin(reserved_path, found->second, target)) return re_hprintf(pf, "Cannot open WAV file\n"), EIO;
-        reserved_path.clear();
-    } else recording_audio = target;
+    install(std::move(r), target);
+    reserved_path.clear();
     reserved_call.clear();
     return re_hprintf(pf, "Receive recording input switched\n");
 }

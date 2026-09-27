@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -266,8 +267,8 @@ void a_recording_writes_both_sides_with_sizes_in_the_header() {
     auto &r = *rp;
         check(r.opened(), "the file opens");
         std::vector<int16_t> far(800, 1000), near(400, -500);
-        r.push_near(near.data(), near.size());
-        r.push_far(far.data(), far.size());
+        r.push_near(near.data(), near.size(), 8000);
+        r.push_far(far.data(), far.size(), 8000);
         auto summary = r.finish();
         check(!summary.failed && summary.dropped == 0 && summary.bytes == 800 * 4, "every far frame is written, four bytes each");
     }
@@ -291,7 +292,7 @@ void far_frames_beyond_the_buffer_are_dropped_and_counted() {
     // The writer only drains once woken; a burst beyond ten seconds of audio
     // in one push cannot all fit.
     std::vector<int16_t> burst(48000 * 10 + 480, 1);
-    r.push_far(burst.data(), burst.size());
+    r.push_far(burst.data(), burst.size(), 48000);
     auto summary = r.finish();
     check(summary.dropped == 480, "what did not fit is counted");
     check(!r.complete(), "a recording with dropped samples is not complete");
@@ -302,7 +303,7 @@ void a_file_that_cannot_be_opened_is_reported_not_written() {
     auto &r = *rp;
     check(!r.opened(), "the recorder says the file did not open");
     std::vector<int16_t> far(480, 1);
-    r.push_far(far.data(), far.size());
+    r.push_far(far.data(), far.size(), 48000);
     auto summary = r.finish();
     check(summary.bytes == 0, "nothing is written");
 }
@@ -312,9 +313,123 @@ void finishing_twice_is_once() {
     auto rp = std::make_unique<recording_session::Recorder>((dir / "twice.wav").string(), 48000);
     auto &r = *rp;
     std::vector<int16_t> far(480, 1);
-    r.push_far(far.data(), far.size());
+    r.push_far(far.data(), far.size(), 48000);
     auto first = r.finish(), second = r.finish();
     check(first.bytes == second.bytes && !second.failed, "the second finish reports the same and fails nothing");
+    std::filesystem::remove_all(dir);
+}
+
+// The samples of one channel of a 16-bit stereo WAV file's data.
+std::vector<int16_t> channel(const std::vector<unsigned char> &bytes, int which) {
+    std::vector<int16_t> out;
+    for (size_t at = 44 + 2 * which; at + 1 < bytes.size(); at += 4) {
+        int16_t v;
+        std::memcpy(&v, &bytes[at], 2);
+        out.push_back(v);
+    }
+    return out;
+}
+// A sine of `hz` at `rate` for `seconds`, as the codecs hand samples over.
+std::vector<int16_t> sine(double hz, uint32_t rate, double seconds, double amplitude = 8000) {
+    std::vector<int16_t> out(size_t(rate * seconds));
+    for (size_t i = 0; i < out.size(); ++i) out[i] = (int16_t)(amplitude * std::sin(2 * 3.14159265358979 * hz * i / rate));
+    return out;
+}
+// How often the signal crosses zero upwards: twice per period in a sine.
+size_t rising_crossings(const std::vector<int16_t> &s) {
+    size_t n = 0;
+    for (size_t i = 1; i < s.size(); ++i) if (s[i - 1] < 0 && s[i] >= 0) ++n;
+    return n;
+}
+void this_side_is_kept_while_the_far_end_is_silent() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-near-only";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "near.wav";
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
+        std::vector<int16_t> near(8000, 700);
+        rp->push_near(near.data(), near.size(), 8000);
+        auto summary = rp->finish();
+        check(!summary.failed && summary.dropped == 0 && summary.bytes == 8000 * 4, "a second of this side alone is a second of file");
+    }
+    auto bytes = read_file(path);
+    auto left = channel(bytes, 0), right = channel(bytes, 1);
+    check(left.size() == 8000 && left[4000] == 0 && right[4000] == 700, "the far channel is silence, this side is what was sent");
+    std::filesystem::remove_all(dir);
+}
+void samples_at_another_rate_are_brought_to_the_file_rate() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-rates";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "rates.wav";
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 48000);
+        // The far end at 8 kHz in 20 ms frames, this side at 16 kHz in 10 ms
+        // frames, both one second of a tone, arriving as they do in a call:
+        // in step with each other.
+        auto far = sine(400, 8000, 1.0), near = sine(1000, 16000, 1.0);
+        for (size_t ms = 0; ms < 1000; ms += 20) {
+            rp->push_far(far.data() + ms * 8, 160, 8000);
+            rp->push_near(near.data() + ms * 16, 160, 16000);
+            rp->push_near(near.data() + (ms + 10) * 16, 160, 16000);
+        }
+        auto summary = rp->finish();
+        check(!summary.failed && summary.dropped == 0, "nothing is dropped on the way to the file rate");
+    }
+    auto bytes = read_file(path);
+    check(le32(bytes, 24) == 48000, "the header keeps the file rate");
+    auto left = channel(bytes, 0), right = channel(bytes, 1);
+    check(left.size() >= 48000 - 16 && left.size() <= 48000 + 16, "a second in is a second out, whatever the input rate");
+    size_t far_periods = rising_crossings(left), near_periods = rising_crossings(right);
+    check(far_periods >= 398 && far_periods <= 401, "the far tone keeps its pitch at the file rate");
+    check(near_periods >= 998 && near_periods <= 1001, "this side's tone keeps its pitch at the file rate");
+    std::filesystem::remove_all(dir);
+}
+void a_gap_in_the_far_end_leaves_this_side_in_place() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-gap";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "gap.wav";
+    auto settle = [] { std::this_thread::sleep_for(std::chrono::milliseconds(150)); };
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
+        std::vector<int16_t> far1(8000, 1000), near1(8000, -500), near2(8000, -600), far3(8000, 2000), near3(8000, -700);
+        // Second one: both sides. Second two: the far end stops, this side
+        // goes on. Second three: both again.
+        rp->push_far(far1.data(), far1.size(), 8000);
+        rp->push_near(near1.data(), near1.size(), 8000);
+        settle();
+        rp->push_near(near2.data(), near2.size(), 8000);
+        settle();
+        rp->push_far(far3.data(), far3.size(), 8000);
+        rp->push_near(near3.data(), near3.size(), 8000);
+        auto summary = rp->finish();
+        check(!summary.failed && summary.dropped == 0 && summary.bytes == 24000 * 4, "three seconds of file, nothing dropped");
+    }
+    auto bytes = read_file(path);
+    auto left = channel(bytes, 0), right = channel(bytes, 1);
+    check(left.size() == 24000, "the length is the time that passed");
+    check(left[4000] == 1000 && right[4000] == -500, "the first second pairs the two sides");
+    check(left[12000] == 0 && right[12000] == -600, "in the gap this side is kept, with silence for the far end");
+    check(left[20000] == 2000 && right[20000] == -700, "after the gap the sides pair again");
+    check(left[23600] == 0 && right[23600] == -700, "what this side still held at the end is written with silence");
+    std::filesystem::remove_all(dir);
+}
+void a_rate_change_in_the_middle_keeps_the_time_axis() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-change";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "change.wav";
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
+        // A PCMU call whose far end changes to Opus: a second at 8 kHz, then
+        // a second at 48 kHz, the same tone.
+        auto first = sine(300, 8000, 1.0), second = sine(300, 48000, 1.0);
+        for (size_t at = 0; at < first.size(); at += 160) rp->push_far(first.data() + at, 160, 8000);
+        for (size_t at = 0; at < second.size(); at += 960) rp->push_far(second.data() + at, 960, 48000);
+        rp->finish();
+    }
+    auto left = channel(read_file(path), 0);
+    check(left.size() >= 16000 - 16 && left.size() <= 16000 + 16, "two seconds of file for two seconds of audio");
+    size_t periods = rising_crossings(left);
+    check(periods >= 598 && periods <= 601, "the tone keeps its pitch across the change");
     std::filesystem::remove_all(dir);
 }
 
@@ -407,6 +522,10 @@ int main() {
     far_frames_beyond_the_buffer_are_dropped_and_counted();
     a_file_that_cannot_be_opened_is_reported_not_written();
     finishing_twice_is_once();
+    this_side_is_kept_while_the_far_end_is_silent();
+    samples_at_another_rate_are_brought_to_the_file_rate();
+    a_gap_in_the_far_end_leaves_this_side_in_place();
+    a_rate_change_in_the_middle_keeps_the_time_axis();
     std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }
