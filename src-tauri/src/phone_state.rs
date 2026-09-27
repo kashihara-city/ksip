@@ -240,9 +240,13 @@ impl PhoneState {
     pub fn note_closed(&mut self, id: &str, reason: &str) {
         self.records.entry(id.to_string()).or_default().closing = Some(reason.to_string());
     }
-    /// The engine announced a call, before any report shows it.
+    /// The engine announced a call, before any report shows it. The direction
+    /// is known from here on, whatever state the call is first seen in (the
+    /// first report may already show it answered).
     pub fn note_announced(&mut self, id: &str, direction_code: &str, peer: &str) {
-        self.records.entry(id.to_string()).or_default().announced = Some((message(direction_code), peer.to_string()));
+        let record = self.records.entry(id.to_string()).or_default();
+        record.announced = Some((message(direction_code), peer.to_string()));
+        record.direction.get_or_insert_with(|| message(direction_code));
     }
     /// A call was dialled from this line; the report that follows shows it there.
     pub fn note_dialled(&mut self, id: &str, line: u8) {
@@ -361,10 +365,11 @@ impl PhoneState {
         Some(Applied { calls, ended, answer })
     }
     /// The engine is gone without being asked: the calls of the last report
-    /// get their rows (their closing words never came), and the bookkeeping
-    /// is emptied.
+    /// get their rows (their closing words never came), so do the calls it
+    /// announced and never showed in a report (no report will come to make
+    /// them), and the bookkeeping is emptied.
     pub fn engine_gone(&mut self, dnd: bool, now: u64) -> Vec<CallHistory> {
-        let rows = self
+        let mut rows: Vec<CallHistory> = self
             .calls
             .iter()
             .map(|old| {
@@ -380,6 +385,23 @@ impl PhoneState {
                 }
             })
             .collect();
+        let seen: Vec<&String> = self.calls.iter().map(|c| &c.id).collect();
+        let mut unseen: Vec<(&String, &CallRecord)> =
+            self.records.iter().filter(|(id, record)| record.announced.is_some() && !seen.contains(id)).collect();
+        unseen.sort_by(|a, b| a.0.cmp(b.0));
+        for (_, record) in unseen {
+            let (direction, peer) = record.announced.clone().unwrap_or_default();
+            let incoming = direction == message("HISTORY_INCOMING");
+            rows.push(CallHistory {
+                ended_at: now,
+                direction,
+                peer,
+                name: String::new(),
+                duration: 0,
+                recording: String::new(),
+                outcome: call_outcome(if incoming { "INCOMING" } else { "OUTGOING" }, incoming, record.closing.as_deref().unwrap_or(""), dnd),
+            });
+        }
         self.calls.clear();
         self.records.clear();
         rows
@@ -513,6 +535,39 @@ mod tests {
             ("sip:1005@pbx.example".into(), message("HISTORY_ELSEWHERE"), String::new()),
         ]);
         assert!(phone.records.is_empty(), "nothing lingers once the calls have gone");
+    }
+
+    #[test]
+    fn a_call_first_seen_answered_keeps_the_direction_it_was_announced_with() {
+        let mut phone = PhoneState::default();
+        let g = phone.new_engine();
+        phone.note_announced("i1", "HISTORY_INCOMING", "sip:1003@pbx.example");
+        // The first report already shows it answered, a state that says
+        // nothing about the direction.
+        phone.apply_report(g, 1, vec![call("i1", "ESTABLISHED", "sip:1003@pbx.example")], false, false, 1).unwrap();
+        let a = phone.apply_report(g, 2, vec![], false, false, 2).unwrap();
+        assert_eq!(a.ended.len(), 1);
+        assert_eq!(a.ended[0].direction, message("HISTORY_INCOMING"));
+    }
+
+    #[test]
+    fn an_engine_that_dies_before_a_report_still_makes_the_rows_of_what_it_announced() {
+        let mut phone = PhoneState::default();
+        let g = phone.new_engine();
+        phone.apply_report(g, 1, vec![call("e1", "ESTABLISHED", "sip:1005@pbx.example")], false, false, 1).unwrap();
+        // Announced after that report, and gone with the engine before the next.
+        phone.note_announced("o1", "HISTORY_OUTGOING", "sip:1002@pbx.example");
+        phone.note_announced("i1", "HISTORY_INCOMING", "sip:1003@pbx.example");
+        phone.note_closed("i1", "connection reset [108],SIP;cause=487");
+        let rows = phone.engine_gone(false, 9);
+        let got: Vec<(String, String, String)> = rows.iter().map(|r| (r.peer.clone(), r.direction.clone(), r.outcome.clone())).collect();
+        assert_eq!(got, vec![
+            ("sip:1005@pbx.example".into(), message("HISTORY_CALL"), String::new()),
+            ("sip:1003@pbx.example".into(), message("HISTORY_INCOMING"), message("HISTORY_MISSED")),
+            ("sip:1002@pbx.example".into(), message("HISTORY_OUTGOING"), message("HISTORY_CANCELLED")),
+        ]);
+        assert!(rows.iter().all(|r| r.ended_at == 9));
+        assert!(phone.records.is_empty() && phone.calls().is_empty(), "nothing lingers");
     }
 
     #[test]

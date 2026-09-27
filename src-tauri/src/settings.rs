@@ -540,7 +540,10 @@ impl Services {
         Ok(settings)
     }
     /// The policy values own a registry value each, so they are removed from
-    /// the settings document instead of being stored twice.
+    /// the settings document instead of being stored twice. Every value is
+    /// written whatever became of the ones before it, so that one value that
+    /// cannot be written does not keep the rest from landing; the first
+    /// failure is the one reported.
     pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
         let mut document = serde_json::to_value(settings).map_err(|e| e.to_string())?;
         if let Some(fields) = document.as_object_mut() {
@@ -548,11 +551,13 @@ impl Services {
                 fields.remove(key);
             }
         }
-        self.store.write_settings(&document)?;
+        let mut first = self.store.write_settings(&document).err();
         for (key, value) in settings.policy_values() {
-            self.store.write_text(&key, &value)?;
+            if let Err(e) = self.store.write_text(&key, &value) {
+                first.get_or_insert(e);
+            }
         }
-        Ok(())
+        first.map_or(Ok(()), Err)
     }
     /// The stored password, when the account still belongs to the same
     /// authentication user. The vault holds that user and the password; the
@@ -567,25 +572,47 @@ impl Services {
     }
     /// Writes the account and the settings, or leaves the store as it was.
     /// Both are several registry values and a credential written one by one,
-    /// so a failure part way through would leave old and new mixed; the copies
-    /// read first are then written back, every one of them, and only when
-    /// that fails too is the person told to save again.
+    /// so a failure part way through would leave old and new mixed. What is
+    /// there is read first as stored (a value that was absent stays absent),
+    /// and after a failure every piece is put back on its own, so that one
+    /// that cannot be put back does not keep the others from being; only
+    /// when something could not be put back is the person told to save again.
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
         let old_account = self.store.read_account()?;
-        let old_settings = self.settings()?;
-        let written = self
-            .store
-            .write_account(account)
-            .and_then(|()| self.save_settings(settings));
-        if let Err(e) = written {
-            let restored = match &old_account {
+        let old_document = self.store.read_settings::<serde_json::Value>()?;
+        let mut old_policy = Vec::new();
+        for (key, _) in settings.policy_values() {
+            let value = self.store.read_text_raw(&key)?;
+            old_policy.push((key, value));
+        }
+        let Err(e) = self.store.write_account(account).and_then(|()| self.save_settings(settings)) else {
+            return Ok(());
+        };
+        let mut failures = Vec::new();
+        failures.extend(
+            match &old_account {
                 Some(previous) => self.store.write_account(previous),
                 None => self.store.delete_account(),
             }
-            .and_then(|()| self.save_settings(&old_settings));
-            return Err(if restored.is_ok() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) });
+            .err(),
+        );
+        failures.extend(
+            match &old_document {
+                serde_json::Value::Null => self.store.delete_text("Settings"),
+                document => self.store.write_settings(document),
+            }
+            .err(),
+        );
+        for (key, value) in &old_policy {
+            failures.extend(
+                match value {
+                    Some(value) => self.store.write_text(key, value),
+                    None => self.store.delete_text(key),
+                }
+                .err(),
+            );
         }
-        Ok(())
+        Err(if failures.is_empty() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) })
     }
     /// Keeps the `ksip:` registration in step with the setting.
     pub fn apply_browser_integration(&self) {
@@ -606,6 +633,13 @@ mod tests {
     use super::*;
     use crate::phone_state::{automatic_recording_target, CallInfo};
     use crate::storage::Store;
+    /// The tests that write the store run one at a time: the credential
+    /// vault has been seen to answer a read of one target with "not found"
+    /// while another target was being deleted from a second thread.
+    fn store_tests_one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
     #[test]
     fn reject_config_injection_and_port_overlap() {
         let rejected = |s: Settings| validate(&s).is_err();
@@ -825,6 +859,7 @@ mod tests {
     }
     #[test]
     fn a_save_that_fails_part_way_leaves_the_store_as_it_was() {
+        let _one_at_a_time = store_tests_one_at_a_time();
         let suffix = format!("test-rollback-{}", std::process::id());
         let mut app = Services::open().0;
         app.store = Store {
@@ -860,7 +895,50 @@ mod tests {
         result.unwrap();
     }
     #[test]
+    fn a_rollback_puts_back_every_value_it_can_and_absent_ones_as_absent() {
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let suffix = format!("test-rollback-each-{}", std::process::id());
+        let mut app = Services::open().0;
+        app.store = Store {
+            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
+            target: format!("KSIP/Test/{suffix}"),
+        };
+        let account = |server: &str| Account {
+            server: server.into(),
+            port: 5060,
+            extension: "1001".into(),
+            auth_user: "1001".into(),
+            password: "local-test-only".into(),
+        };
+        let result = (|| -> Result<(), String> {
+            // Nothing stored yet: a first save that fails leaves nothing behind,
+            // not even the values written before the failure.
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&Settings { transport: "tcp".into(), codecs: "PCMU".into(), ..Settings::default() }, &account("192.0.2.10"));
+            crate::storage::fail_next_write_of("");
+            assert!(failed.is_err(), "the injected failure must surface");
+            assert!(app.store.read_account()?.is_none(), "no account is left behind");
+            assert_eq!(app.store.read_text_raw("transport")?, None, "a value that was absent is absent again");
+            assert_eq!(app.store.read_settings::<serde_json::Value>()?, serde_json::Value::Null, "no settings document is left behind");
+            // With values stored, a failure that also keeps the rollback of
+            // its own value from working still puts the other values back.
+            app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
+            crate::storage::fail_next_write_of("codecs");
+            let failed = app.persist_configuration(&Settings { transport: "tcp".into(), codecs: "PCMU".into(), ..Settings::default() }, &account("192.0.2.20"));
+            crate::storage::fail_next_write_of("");
+            let e = failed.expect_err("the injected failure must surface");
+            assert!(e.contains("ACCOUNT_ROLLBACK_FAILED"), "the failed rollback of the codecs is reported: {e}");
+            assert_eq!(app.store.read_account()?.expect("account").server, "192.0.2.10", "the account is back");
+            assert_eq!(app.settings()?.transport, "udp", "the transport, written before the failure, is back");
+            assert_eq!(app.settings()?.codecs, "opus", "the codecs never changed");
+            Ok(())
+        })();
+        app.store.cleanup_test();
+        result.unwrap();
+    }
+    #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {
+        let _one_at_a_time = store_tests_one_at_a_time();
         let suffix = format!("test-password-{}", std::process::id());
         let mut app = Services::open().0;
         app.store = Store {

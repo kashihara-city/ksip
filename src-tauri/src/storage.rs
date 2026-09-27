@@ -144,6 +144,33 @@ impl Store {
             target: "KSIP/SIP/default".into(),
         }
     }
+    /// One value as it is stored, or None when there is no such value: what
+    /// a rollback has to put back, absence included.
+    pub fn read_text_raw(&self, name: &str) -> Result<Option<String>, String> {
+        let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey(&self.key) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        match key.get_value::<String, _>(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    /// Removes one value; one that is not there is no error.
+    pub fn delete_text(&self, name: &str) -> Result<(), String> {
+        let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(&self.key, KEY_SET_VALUE) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        };
+        match key.delete_value(name) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
     /// Reads one policy value. These sit on their own rather than inside the
     /// settings document so that a group policy can push them individually.
     pub fn read_text(&self, name: &str) -> String {
