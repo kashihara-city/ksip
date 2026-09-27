@@ -204,15 +204,19 @@ impl EngineLink {
     /// The requests that should go first (stopping a recording, releasing
     /// the subscriptions) are the caller's, since they want answers.
     /// Ends the process: asked to quit, given three seconds, then killed.
-    /// Ok is the word that the process has ended (the wait on it returned);
-    /// Err means that could not be confirmed (its state could not be read,
-    /// the kill or the wait failed), and the caller must not take the files
-    /// the engine had open as closed. Either way the link's threads are
-    /// joined; on Err the process, if it lives, is beyond this handle.
-    pub fn stop(mut self) -> Result<StopReport, String> {
-        let result = self.end();
-        self.close_threads();
-        result
+    /// Ok is the word that the process has ended (the wait on it returned),
+    /// and the link's threads are joined. Err means that could not be
+    /// confirmed (its state could not be read, the kill or the wait failed):
+    /// the caller must not take the files the engine had open as closed nor
+    /// its ports as free, and gets the link back to try again.
+    pub fn stop(mut self) -> Result<StopReport, Box<(EngineLink, String)>> {
+        match self.end() {
+            Ok(report) => {
+                self.close_threads();
+                Ok(report)
+            }
+            Err(e) => Err(Box::new((self, e))),
+        }
     }
     fn end(&mut self) -> Result<StopReport, String> {
         let payload = serde_json::to_vec(&json!({"command":"quit","token":"quit"})).unwrap();

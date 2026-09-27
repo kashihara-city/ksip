@@ -107,16 +107,20 @@ pub struct Ready {
 /// What work that ran outside the actor brings back. The flow that asked
 /// for it is waiting for exactly this; the actor decides, the work only
 /// reports.
+/// How an attempt to stop an engine went: Ok, the process has ended; Err,
+/// that could not be confirmed, and the link comes back to be tried again.
+pub type StopOutcome = Result<StopReport, Box<(EngineLink, String)>>;
 pub enum Work {
     /// The previous engine, if any, was stopped and a new one was started,
-    /// or the start failed. `stopped` is how the previous one went.
+    /// or the start failed. `stopped` is how the previous one went; when it
+    /// could not be confirmed ended, no new one was started over its ports.
     Started {
-        stopped: Option<Result<StopReport, String>>,
+        stopped: Option<StopOutcome>,
         /// Boxed: the started engine is the largest thing a message carries.
         result: Result<Box<Ready>, String>,
     },
-    /// An engine was stopped.
-    Stopped(Result<StopReport, String>),
+    /// An engine was stopped, or could not be confirmed stopped.
+    Stopped(StopOutcome),
     /// The audio devices were read again.
     Devices(Result<Vec<Device>, String>),
     /// The chosen adapter's address, as it is now; None when it has none.

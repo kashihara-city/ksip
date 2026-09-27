@@ -56,6 +56,9 @@ enum FileJob {
     History(Vec<CallHistory>),
     /// The history is emptied, on disk first; answered once done.
     Clear(Sender<Result<(), String>>),
+    /// The log is emptied, tab and file; answered once done. On this thread
+    /// so that no sync is out on the disk while it happens.
+    ClearLogs(Sender<()>),
     /// The last lines and rows are written and the thread ends; answered
     /// with the first failure, if any.
     Stop(Sender<Result<(), String>>),
@@ -110,7 +113,14 @@ impl FileWorker {
                     }
                 }
                 Ok(false) => {}
-                Err(e) => journal = Err(e),
+                Err(failure) => {
+                    // A failure is a failure every time, for whoever asks (the
+                    // Stop at the end); the person hears of it once.
+                    if failure.first {
+                        self.show_error(message_with("JOURNAL_WRITE_FAILED", [&failure.error]));
+                    }
+                    journal = Err(failure.error);
+                }
             }
         }
         let history = {
@@ -119,12 +129,10 @@ impl FileWorker {
             self.history_sequence.store(history.sequence(), Ordering::Relaxed);
             result
         };
-        let mut first = None;
-        for e in [journal, history].into_iter().filter_map(Result::err) {
-            self.show_error(message_with("JOURNAL_WRITE_FAILED", [&e]));
-            first.get_or_insert(e);
+        if let Err(e) = &history {
+            self.show_error(message_with("JOURNAL_WRITE_FAILED", [e]));
         }
-        first.map_or(Ok(()), Err)
+        journal.and(history)
     }
     fn run(self, jobs: Receiver<FileJob>) {
         loop {
@@ -143,6 +151,14 @@ impl FileWorker {
                         self.log(e);
                     }
                 }
+                Ok(FileJob::ClearLogs(reply)) => {
+                    {
+                        let mut logs = self.logs.lock().unwrap();
+                        logs.clear(&self.data);
+                        self.log_sequence.store(logs.sequence(), Ordering::Relaxed);
+                    }
+                    let _ = reply.send(());
+                }
                 Ok(FileJob::Clear(reply)) => {
                     let result = {
                         let mut history = self.history.lock().unwrap();
@@ -153,7 +169,13 @@ impl FileWorker {
                     let _ = reply.send(result);
                 }
                 Ok(FileJob::Stop(reply)) => {
-                    let _ = reply.send(self.move_files_along(true));
+                    // The last word says what is left unwritten, if anything.
+                    let result = self.move_files_along(true);
+                    let owed = self.logs.lock().unwrap().owed();
+                    let _ = reply.send(match result {
+                        Err(e) if owed > 0 => Err(format!("{e} ({owed} log lines unwritten)")),
+                        other => other,
+                    });
                     return;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -267,6 +289,14 @@ impl Services {
         let (reply, done) = mpsc::channel();
         self.files.send(FileJob::Clear(reply)).map_err(|_| message("APP_CLOSING"))?;
         done.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| Err(message_with("JOURNAL_WRITE_FAILED", ["timeout"])))
+    }
+    /// Empties the log, tab and file, on the file thread, so that a sync out
+    /// on the disk cannot bring cleared lines back; waited for.
+    pub fn clear_logs(&self) {
+        let (reply, done) = mpsc::channel();
+        if self.files.send(FileJob::ClearLogs(reply)).is_ok() {
+            let _ = done.recv_timeout(Duration::from_secs(5));
+        }
     }
     /// The app is leaving: the last lines and rows are written and the file
     /// thread ends. Waited for up to three seconds; a disk that does not

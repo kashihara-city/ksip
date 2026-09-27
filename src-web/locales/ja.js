@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'音声エンジンを起動してください',
       ENGINE_PROFILE_PATH_INVALID:'プロファイルのパスが不正です',
       ENGINE_RESPONSE_TIMEOUT:'コマンド応答がタイムアウトしました',
+      RECORDING_START_UNCONFIRMED:'録音開始の応答がありません。録音中として扱い、エンジンの通知か停止で確定します',
       RECORDING_STOP_UNCONFIRMED:'録音停止の応答がありません。録音は続いているものとして扱います',
       RECORDING_START_FAILED:'録音ファイルを開けなかったため、この通話は録音されません',
       ENGINE_STOP_UNCONFIRMED:'音声エンジンの終了を確認できません: {0}',

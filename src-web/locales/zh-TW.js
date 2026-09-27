@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'請先啟動語音引擎',
       ENGINE_PROFILE_PATH_INVALID:'設定檔路徑不正確',
       ENGINE_RESPONSE_TIMEOUT:'指令回應逾時',
+      RECORDING_START_UNCONFIRMED:'錄音開始沒有回應，視為錄音中，待引擎通知或停止時確定',
       RECORDING_STOP_UNCONFIRMED:'錄音停止沒有回應，視為仍在錄音',
       RECORDING_START_FAILED:'無法開啟錄音檔，此通話不會錄音',
       ENGINE_STOP_UNCONFIRMED:'無法確認語音引擎已結束：{0}',

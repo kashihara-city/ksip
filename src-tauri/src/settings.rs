@@ -581,11 +581,14 @@ impl Services {
     /// that cannot be put back does not keep the others from being; only
     /// when something could not be put back is the person told to save again.
     /// A mark (SAVE_MARK) stands in the store from before the first write
-    /// until the save has gone through whole or been put back whole, so that
-    /// a process that ends in the middle, or a rollback that failed, is seen
-    /// at the next start (Services::open) and the mixed values are not
-    /// connected on.
+    /// until a save has gone through whole, so that a process that ends in
+    /// the middle, or a rollback that failed, is seen at the next start
+    /// (Services::open) and at every connect (prepare_restart), and the
+    /// mixed values are not connected on. A rollback that succeeds takes the
+    /// mark away only if this save put it there: values that were suspect
+    /// before this save are no less suspect for having been put back.
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
+        let marked_before = !self.store.read_text(SAVE_MARK).is_empty();
         let old_account = self.store.read_account()?;
         let old_document = self.store.read_settings::<serde_json::Value>()?;
         let mut old_policy = Vec::new();
@@ -625,8 +628,9 @@ impl Services {
                 .err(),
             );
         }
-        if failures.is_empty() {
-            // Put back whole: the mark goes, with the same proviso as above.
+        if failures.is_empty() && !marked_before {
+            // Put back whole, to values that were whole: the mark goes, with
+            // the same proviso as above.
             failures.extend(self.store.delete_text(SAVE_MARK).err());
         }
         Err(if failures.is_empty() { e } else { message_with("ACCOUNT_ROLLBACK_FAILED", [e]) })
@@ -950,6 +954,12 @@ mod tests {
             assert_eq!(app.settings()?.transport, "udp", "the transport, written before the failure, is back");
             assert_eq!(app.settings()?.codecs, "opus", "the codecs never changed");
             assert_eq!(app.store.read_text_raw(SAVE_MARK)?, Some("1".into()), "a rollback that failed leaves the mark for the next start");
+            // With the mark standing, a save that fails before it writes
+            // anything (a password too long for the vault) is put back whole,
+            // and the mark stays: the values it went back to were suspect already.
+            let too_long = Account { password: "x".repeat(1025), ..account("192.0.2.10") };
+            assert!(app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &too_long).is_err());
+            assert_eq!(app.store.read_text_raw(SAVE_MARK)?, Some("1".into()), "a rollback does not clear a mark it did not set");
             // A save that goes through whole takes the mark away.
             app.persist_configuration(&Settings { transport: "udp".into(), codecs: "opus".into(), ..Settings::default() }, &account("192.0.2.10"))?;
             assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "a whole save clears the mark");

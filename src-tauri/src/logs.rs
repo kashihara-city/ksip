@@ -18,6 +18,9 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 const LOG_LIMIT: usize = 1000;
+/// How many lines are kept for a file that cannot be written before the
+/// oldest are let go.
+const PENDING_LIMIT: usize = 20_000;
 /// What the file keeps after a rewrite while the detail log is on. SIP traces
 /// and WebRTC's lines fill the ordinary thousand in seconds, and a report
 /// needs the minutes around a failure. The tab keeps LOG_LIMIT either way.
@@ -29,16 +32,23 @@ pub const LOG_APP: &str = "app";
 pub const LOG_ENGINE: &str = "engine";
 pub const LOG_EVENT: &str = "event";
 const LOG_UI: &str = "ui";
-/// What a sync is to write: decided under the lock, written without it.
+/// What a sync is to write: decided under the lock, written without it. The
+/// lines are the batch itself, taken out of the pending queue, so that
+/// nothing pushed or cleared meanwhile can be mistaken for them.
 pub struct SyncPlan {
-    bytes: Vec<u8>,
-    count: usize,
+    lines: Vec<LogLine>,
     offset: u64,
 }
-/// What the disk part of a sync found and did.
+/// What the disk part of a sync found and did: the bytes appended, or why not.
 pub struct SyncOutcome {
     foreign: Foreign,
-    appended: Result<(), String>,
+    appended: Result<u64, String>,
+}
+/// A write that failed. `first` says it is the first since the last success:
+/// worth a word to the person, where the same failure every second is not.
+pub struct SyncFailure {
+    pub error: String,
+    pub first: bool,
 }
 /// Lines the file gained from another process since it was last seen.
 #[derive(Default)]
@@ -121,11 +131,15 @@ impl LogLine {
 /// Another process appends to it too: the link handler, when there is
 /// nothing to hand a link to. Those lines are picked up from the file.
 pub struct Logs {
+    /// The lines the tab shows: the last LOG_LIMIT of this run.
     entries: VecDeque<LogLine>,
     sequence: u64,
     flushed: Instant,
-    /// Lines at the back of `entries` that the file does not have yet.
-    unwritten: usize,
+    /// The lines the file does not have yet, oldest first, apart from the
+    /// tab's ring: a sync takes them out as a batch and puts them back in
+    /// front if the write fails, and the ring is trimmed or cleared without
+    /// touching what is owed to the file.
+    pending: VecDeque<LogLine>,
     /// The file as it was last seen: how many lines, and where it ended.
     file_lines: usize,
     offset: u64,
@@ -147,7 +161,7 @@ impl Logs {
             entries: VecDeque::new(),
             sequence: 0,
             flushed: Instant::now(),
-            unwritten: 0,
+            pending: VecDeque::new(),
             file_lines,
             offset,
             file_limit: LOG_LIMIT,
@@ -159,16 +173,20 @@ impl Logs {
         self.file_limit = if detail { DETAIL_LOG_FILE_LIMIT } else { LOG_LIMIT };
     }
     pub(crate) fn push(&mut self, line: LogLine) {
+        self.pending.push_back(line.clone());
+        // A disk that fails for long is not allowed to eat the memory: the
+        // oldest owed lines go, and the tab keeps showing the newest.
+        while self.pending.len() > PENDING_LIMIT {
+            self.pending.pop_front();
+        }
         self.entries.push_back(line);
         self.sequence += 1;
-        self.unwritten += 1;
         self.trim();
     }
     fn trim(&mut self) {
         while self.entries.len() > LOG_LIMIT {
             self.entries.pop_front();
         }
-        self.unwritten = self.unwritten.min(self.entries.len());
     }
     /// Brings the file and the tab up to date with each other: lines another
     /// process appended come in, the lines of this one go out. Appending only
@@ -182,31 +200,37 @@ impl Logs {
     pub fn sync(&mut self, data: &Path) -> Result<(), String> {
         let plan = self.plan_sync();
         let outcome = Self::perform_sync(data, &plan);
-        if self.commit_sync(plan, outcome)? {
-            let path = data.join(LOG_FILE);
-            if let Ok((length, lines)) = keep_last_lines(&path, self.file_limit) {
-                self.file_shortened(length, lines);
+        match self.commit_sync(plan, outcome) {
+            Ok(true) => {
+                let path = data.join(LOG_FILE);
+                if let Ok((length, lines)) = keep_last_lines(&path, self.file_limit) {
+                    self.file_shortened(length, lines);
+                }
+                Ok(())
             }
+            Ok(false) => Ok(()),
+            Err(SyncFailure { error, first: true }) => Err(error),
+            Err(SyncFailure { first: false, .. }) => Ok(()),
         }
-        Ok(())
     }
     /// Whether a second has passed since the file was last written.
     pub fn due(&self) -> bool {
         self.flushed.elapsed() >= Duration::from_secs(1)
     }
     /// A sync in three steps, so that whoever holds the log's lock is never
-    /// made to wait on the disk: `plan_sync` under the lock says what is to
-    /// be written, `perform_sync` reads and writes the file with no lock
-    /// held, and `commit_sync` under the lock takes the outcome into the
-    /// books. Lines pushed in between wait for the next sync. `sync` does
-    /// the three in a row, for a caller that holds nothing else up.
+    /// made to wait on the disk: `plan_sync` under the lock takes the owed
+    /// lines out as the batch to write, `perform_sync` reads and writes the
+    /// file with no lock held, and `commit_sync` under the lock takes the
+    /// outcome into the books. Lines pushed in between are owed to the next
+    /// sync; a clear in between empties the ring and what is owed, and the
+    /// batch out on the disk is booked against the file it was written to.
+    /// Only one sync is out at a time (the file thread's), so the file's
+    /// offset the plan carries is the file's state when the batch is
+    /// appended. `sync` does the three in a row, for a caller that holds
+    /// nothing else up.
     pub fn plan_sync(&mut self) -> SyncPlan {
         self.flushed = Instant::now();
-        SyncPlan {
-            bytes: lines(self.entries.iter().skip(self.entries.len() - self.unwritten)),
-            count: self.unwritten,
-            offset: self.offset,
-        }
+        SyncPlan { lines: std::mem::take(&mut self.pending).into(), offset: self.offset }
     }
     /// The disk part: what another process appended since the file was last
     /// seen (a line appended between this look and this process's own append
@@ -215,29 +239,33 @@ impl Logs {
     pub fn perform_sync(data: &Path, plan: &SyncPlan) -> SyncOutcome {
         let path = data.join(LOG_FILE);
         let foreign = read_foreign(&path, plan.offset);
-        let appended = if plan.count > 0 {
-            let _ = std::fs::create_dir_all(data);
-            append(&path, &plan.bytes).map_err(err)
+        let appended = if plan.lines.is_empty() {
+            Ok(0)
         } else {
-            Ok(())
+            let bytes = lines(plan.lines.iter());
+            let _ = std::fs::create_dir_all(data);
+            append(&path, &bytes).map(|()| bytes.len() as u64).map_err(err)
         };
         SyncOutcome { foreign, appended }
     }
-    /// Takes a sync's outcome into the books. Err on the first failure to
-    /// write since the last success (the lines stay and are tried again;
-    /// the same failure is not reported twice). Ok(true) when the file has
-    /// grown to twice the limit and wants shortening (`keep_last_lines` and
-    /// then `file_shortened`), which the caller does without the lock.
-    pub fn commit_sync(&mut self, plan: SyncPlan, outcome: SyncOutcome) -> Result<bool, String> {
+    /// Takes a sync's outcome into the books. Err whenever the write failed
+    /// (the batch goes back in front of what is owed, to be tried again with
+    /// it), with `first` saying whether this failure is news. Ok(true) when
+    /// the file has grown to twice the limit and wants shortening
+    /// (`keep_last_lines` and then `file_shortened`), which the caller does
+    /// without the lock.
+    pub fn commit_sync(&mut self, plan: SyncPlan, outcome: SyncOutcome) -> Result<bool, SyncFailure> {
         let foreign = outcome.foreign;
         if foreign.replaced {
             // Someone emptied or replaced the file; it is taken as new.
             self.offset = 0;
             self.file_lines = 0;
         }
+        // In front of the batch being booked and of what came since: the
+        // file had these lines before any of those.
+        let newer = (plan.lines.len() + self.pending.len()).min(self.entries.len());
         for entry in foreign.entries {
-            // In front of the unwritten lines: the file has this one already.
-            let at = self.entries.len() - self.unwritten;
+            let at = self.entries.len() - newer;
             self.entries.insert(at, entry);
             self.sequence += 1;
         }
@@ -245,24 +273,28 @@ impl Logs {
         self.offset += foreign.consumed;
         self.trim();
         match outcome.appended {
-            Ok(()) => {
-                self.offset += plan.bytes.len() as u64;
-                self.file_lines += plan.count;
-                self.unwritten -= plan.count;
+            Ok(bytes) => {
+                self.offset += bytes;
+                self.file_lines += plan.lines.len();
                 if self.write_failed {
                     self.write_failed = false;
                     self.push(LogLine::new(stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
                 }
+                Ok(self.file_lines > 2 * self.file_limit)
             }
-            Err(e) => {
+            Err(error) => {
                 let first = !self.write_failed;
                 self.write_failed = true;
-                if first {
-                    return Err(e);
-                }
+                let mut owed: VecDeque<LogLine> = plan.lines.into();
+                owed.append(&mut self.pending);
+                self.pending = owed;
+                Err(SyncFailure { error, first })
             }
         }
-        Ok(self.file_lines > 2 * self.file_limit)
+    }
+    /// How many lines the file does not have yet.
+    pub fn owed(&self) -> usize {
+        self.pending.len()
     }
     /// How many lines the file keeps after a rewrite.
     pub fn file_limit(&self) -> usize {
@@ -276,11 +308,14 @@ impl Logs {
         self.offset = length;
         self.file_lines = lines;
     }
-    fn clear(&mut self, data: &Path) {
+    /// Empties the tab, what is owed to the file, and the file. Done on the
+    /// file thread (see Services::clear_logs), so that no sync is out on the
+    /// disk meanwhile.
+    pub fn clear(&mut self, data: &Path) {
         self.entries.clear();
+        self.pending.clear();
         // Restarting the sequence tells the window that its copy is stale.
         self.sequence = 0;
-        self.unwritten = 0;
         let _ = std::fs::write(data.join(LOG_FILE), b"");
         self.offset = 0;
         self.file_lines = 0;
@@ -443,11 +478,6 @@ impl Services {
         // A write that fails is kept and said by the file thread's next sync.
         let _ = logs.sync(&self.data);
     }
-    pub fn clear_logs(&self) {
-        let mut logs = self.logs.lock().unwrap();
-        logs.clear(&self.data);
-        self.log_sequence.store(logs.sequence(), std::sync::atomic::Ordering::Relaxed);
-    }
     pub fn read_logs(&self, after: u64) -> LogPage {
         let logs = self.logs.lock().unwrap();
         let start = logs.sequence - logs.entries.len() as u64;
@@ -600,6 +630,49 @@ mod tests {
         assert!(data_dir(&test).ends_with("temp/build/test-unit"), "{}", data_dir(&test).display());
     }
     #[test]
+    fn what_happens_between_the_plan_and_the_commit_is_neither_lost_nor_counted_twice() {
+        let dir = std::env::temp_dir().join(format!("ksip-log-batch-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut logs = Logs::open(&dir);
+        logs.push(LogLine::new("t1".into(), LOG_APP, "one".into()));
+        // The batch is out on the disk; meanwhile a line is pushed, and the
+        // ring is trimmed by a burst past its limit.
+        let plan = logs.plan_sync();
+        logs.push(LogLine::new("t2".into(), LOG_APP, "two".into()));
+        for i in 0..LOG_LIMIT + 5 {
+            logs.push(LogLine::new("t".into(), LOG_APP, format!("burst {i}")));
+        }
+        let outcome = Logs::perform_sync(&dir, &plan);
+        assert!(logs.commit_sync(plan, outcome).is_ok());
+        assert_eq!(logs.owed(), 1 + LOG_LIMIT + 5, "what came after the plan is still owed");
+        assert_eq!(logs.entries.len(), LOG_LIMIT, "the tab keeps its last lines");
+        let plan = logs.plan_sync();
+        assert_eq!(plan.lines.len(), 1 + LOG_LIMIT + 5);
+        assert_eq!(plan.lines[0].text, "two", "the next batch starts where the last ended");
+        // A batch that could not be written goes back in front of what came since.
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join(LOG_FILE)).unwrap();
+        logs.push(LogLine::new("t3".into(), LOG_APP, "three".into()));
+        let outcome = Logs::perform_sync(&dir, &plan);
+        let failure = logs.commit_sync(plan, outcome).expect_err("the write failed");
+        assert!(failure.first);
+        assert_eq!(logs.owed(), 1 + LOG_LIMIT + 5 + 1);
+        assert_eq!(logs.pending.front().unwrap().text, "two");
+        assert_eq!(logs.pending.back().unwrap().text, "three");
+        // The same failure again is a failure still, just not news.
+        let plan = logs.plan_sync();
+        let outcome = Logs::perform_sync(&dir, &plan);
+        let again = logs.commit_sync(plan, outcome).expect_err("the write failed again");
+        assert!(!again.first, "the second time is not news");
+        assert_eq!(logs.owed(), 1 + LOG_LIMIT + 5 + 1, "nothing is lost while the disk fails");
+        // Emptying while nothing is out takes the owed lines with it.
+        std::fs::remove_dir(dir.join(LOG_FILE)).unwrap();
+        logs.clear(&dir);
+        assert_eq!(logs.owed(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
     fn lines_that_could_not_be_written_wait_for_the_next_sync() {
         let dir = std::env::temp_dir().join(format!("ksip-journal-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -610,16 +683,16 @@ mod tests {
         logs.push(LogLine::new("2026-09-26T22:00:00+09:00".into(), LOG_APP, "first".into()));
         logs.push(LogLine::new("2026-09-26T22:00:01+09:00".into(), LOG_APP, "second".into()));
         assert!(logs.sync(&dir).is_err(), "the first failure is reported");
-        assert_eq!(logs.unwritten, 2, "the lines wait");
+        assert_eq!(logs.owed(), 2, "the lines wait");
         assert!(logs.sync(&dir).is_ok(), "the same failure is not reported again");
-        assert_eq!(logs.unwritten, 2);
+        assert_eq!(logs.owed(), 2);
         // The way is clear again: everything that waited is written, in order,
         // and the log notes its own recovery.
         std::fs::remove_dir(dir.join(LOG_FILE)).unwrap();
         assert!(logs.sync(&dir).is_ok());
-        assert_eq!(logs.unwritten, 1, "the recovery note itself is written with the next sync");
+        assert_eq!(logs.owed(), 1, "the recovery note itself is written with the next sync");
         assert!(logs.sync(&dir).is_ok());
-        assert_eq!(logs.unwritten, 0);
+        assert_eq!(logs.owed(), 0);
         let written = std::fs::read_to_string(dir.join(LOG_FILE)).unwrap();
         assert_eq!(written.lines().count(), 3);
         assert!(written.lines().next().unwrap().contains("first"));

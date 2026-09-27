@@ -145,6 +145,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_NOT_RUNNING:'Start the audio engine first',
       ENGINE_PROFILE_PATH_INVALID:'The profile path is not valid',
       ENGINE_RESPONSE_TIMEOUT:'The command timed out',
+      RECORDING_START_UNCONFIRMED:'The recording start was not answered; it is treated as recording until the engine says or a stop settles it',
       RECORDING_STOP_UNCONFIRMED:'The recording stop was not answered; the recording is treated as still running',
       RECORDING_START_FAILED:'The recording file could not be opened, so this call is not recorded',
       ENGINE_STOP_UNCONFIRMED:'The end of the audio engine could not be confirmed: {0}',

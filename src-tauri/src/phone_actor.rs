@@ -22,13 +22,13 @@
 use crate::app::Services;
 use crate::audio::{Calibration, Volume};
 use crate::engine_config::{endpoint_notes, AudioEndpoints};
-use crate::engine_link::{EngineLink, EngineReport, StopReport};
+use crate::engine_link::{EngineLink, EngineReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
 use crate::message::{message, message_with};
-use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, Work};
+use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
 use crate::phone_state::{automatic_recording_target, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
-use crate::settings::{dial_target, validate, CustomButton, Settings};
+use crate::settings::{dial_target, validate, CustomButton, Settings, SAVE_MARK};
 use crate::storage::Account;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -277,10 +277,20 @@ struct Phone {
     /// The call whose recording the engine could not open: the automatic
     /// recording does not try the same call again and again.
     recording_refused: Option<String>,
-    /// A lost engine's stop worker gave no report in time: the calls stay as
-    /// the window shows them until the report comes (see stray), since the
-    /// process may still be there.
+    /// The engine was lost and its end has not been confirmed: the calls
+    /// stay as the window shows them until a stop reports the process ended
+    /// (recover, or a late report in stray), since it may still be there.
     exit_unsettled: bool,
+    /// When a lost engine may be given another stop: at once after the loss,
+    /// a while after a stop that could not confirm its end.
+    recover_after: Instant,
+    /// The maintenance is kept for a calibration worker that outlived its
+    /// wait: it still has the devices, and the maintenance ends with its
+    /// report (see stray).
+    maintenance_held: bool,
+    /// The file of a recording whose start has been sent and not answered
+    /// yet: the engine's events about it are matched to this path.
+    recording_pending: Option<PathBuf>,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
     /// A look at the adapter's address is under way.
@@ -289,8 +299,12 @@ struct Phone {
     work_serial: u64,
     /// The exclusive workers (an engine start, an engine stop, a calibration)
     /// whose report has not come: they hold the engine's ports or the audio
-    /// devices, so no start or calibration begins while one is outstanding,
-    /// however long ago its wait was given up. A stop is never refused.
+    /// devices. With a lost engine not yet confirmed ended (`lost`), they are
+    /// what engine_busy() counts: no start or calibration begins while any
+    /// is outstanding, however long ago its wait was given up. A stop is
+    /// never refused. A worker leaves the ledger with its report; what the
+    /// report hands back (an engine to stop, a link to try again) goes
+    /// straight onto it or into `lost`, in the same step.
     exclusive: Vec<u64>,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
@@ -310,8 +324,16 @@ struct Actor {
     queue: VecDeque<(Instant, Job)>,
     /// The shutdown waiting for the engine to be gone.
     shutdown: Option<Reply<()>>,
+    /// Until when the shutdown waits for workers still holding the engine's
+    /// resources; after it the app leaves and says so.
+    shutdown_deadline: Option<Instant>,
     next_poll: Instant,
 }
+/// How long a lost engine waits for another stop after one that could not
+/// confirm its end.
+const RECOVER_RETRY: Duration = Duration::from_secs(5);
+/// How long the shutdown waits for unrecovered workers and lost engines.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 impl Actor {
     fn new(services: Services, view: Snapshot, rx: Receiver<Message>, tx: Sender<Message>, published: Published) -> Self {
@@ -329,6 +351,9 @@ impl Actor {
             open_recording: None,
             recording_refused: None,
             exit_unsettled: false,
+            recover_after: Instant::now(),
+            maintenance_held: false,
+            recording_pending: None,
             bound: String::new(),
             probing: false,
             work_serial: 0,
@@ -344,6 +369,7 @@ impl Actor {
             current: None,
             queue: VecDeque::new(),
             shutdown: None,
+            shutdown_deadline: None,
             next_poll: Instant::now() + POLL,
         }
     }
@@ -392,13 +418,33 @@ impl Actor {
     }
     /// The shutdown is answered once nothing of the engine is left; true when
     /// the actor is done.
+    /// The shutdown is over when the flows are done and the engine is gone.
+    /// Workers still holding the engine's ports or the devices, and a lost
+    /// engine not yet confirmed ended, are waited for up to SHUTDOWN_GRACE;
+    /// then the app leaves and writes down what it left: the engine watches
+    /// for the app's end and quits on its own, which is the fallback, not
+    /// the recovery.
     fn finish_shutdown(&mut self) -> bool {
-        let done = {
+        let (settled, unrecovered) = {
             let p = self.shared.borrow();
-            p.closing && p.link.is_none() && p.lost.is_none() && p.starting.is_none() && self.current.is_none() && self.queue.is_empty()
+            (
+                p.closing && p.link.is_none() && p.starting.is_none() && self.current.is_none() && self.queue.is_empty(),
+                p.exclusive.len() + usize::from(p.lost.is_some()),
+            )
         };
-        if !done {
+        if !settled {
             return false;
+        }
+        if unrecovered > 0 {
+            match self.shutdown_deadline {
+                Some(deadline) if Instant::now() >= deadline => {
+                    self.shared.borrow().services.log(
+                        LOG_APP,
+                        format!("ksip: leaving with {unrecovered} engine worker(s) or engine(s) unrecovered; the engine quits on its own once the app is gone"),
+                    );
+                }
+                _ => return false,
+            }
         }
         if let Some(reply) = self.shutdown.take() {
             self.shared.borrow().answer(reply, Ok(()));
@@ -462,6 +508,7 @@ impl Actor {
             Command::Shutdown(reply) => {
                 self.shared.borrow_mut().closing = true;
                 self.shutdown = Some(reply);
+                self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
                 let mut kept = VecDeque::new();
                 for (since, job) in self.queue.drain(..) {
                     if job.survives_closing() {
@@ -493,11 +540,15 @@ impl Actor {
         {
             let mut p = self.shared.borrow_mut();
             if let Some(status) = p.link.as_mut().and_then(EngineLink::exited) {
+                // The process ended on its own: this is its confirmed end,
+                // the same as a stop's Ok, and everything that follows an
+                // end follows here (the recording's file, the calls' rows).
                 let engine = p.link.take().expect("the link that exited");
-                let notice = message_with("ENGINE_EXITED", [status]);
-                p.close_calls_on_exit(Some(notice.clone()));
                 engine.close();
-                p.services.log(LOG_APP, notice);
+                let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| status.to_string());
+                p.services.log(LOG_APP, format!("ksip: the engine ended on its own, exit code {code}"));
+                p.engine_ended();
+                p.settle_exit(code);
             }
             match &p.waiting {
                 Some(Waiting::Response { deadline, .. }) if Instant::now() >= *deadline && p.delivered.is_none() => {
@@ -515,6 +566,14 @@ impl Actor {
         }
         if self.shared.borrow().maintenance_off_owed && !self.queue.iter().any(|(_, job)| matches!(job, Job::MaintenanceOff)) {
             self.queue.push_front((Instant::now(), Job::MaintenanceOff));
+        }
+        // A lost engine whose stop could not confirm its end is given another.
+        let retry = {
+            let p = self.shared.borrow();
+            p.needs_recovery() && Instant::now() >= p.recover_after
+        };
+        if retry && !self.queue.iter().any(|(_, job)| matches!(job, Job::Recover)) {
+            self.queue.push_front((Instant::now(), Job::Recover));
         }
         // One look at the engine per interval, queued behind whatever runs
         // now. A long flow (a calibration, a restart) holds the phone in
@@ -626,10 +685,12 @@ impl Phone {
         let serial = self.work(job);
         self.exclusive.push(serial);
     }
-    /// Whether an exclusive worker is still out: a start or a calibration
-    /// does not begin then, or two engines would fight for the ports.
-    fn exclusive_outstanding(&self) -> bool {
-        !self.exclusive.is_empty()
+    /// Whether the engine's resources are held by something not yet done: an
+    /// exclusive worker still out, or a lost engine not yet confirmed ended.
+    /// A start or a calibration does not begin then, or two engines would
+    /// fight for the ports.
+    fn engine_busy(&self) -> bool {
+        !self.exclusive.is_empty() || self.lost.is_some()
     }
     /// What the link delivered. Only the engine the actor holds, or the one
     /// it is starting, can change the phone; the words of an earlier one are
@@ -673,6 +734,8 @@ impl Phone {
                 // window shows as over, and fight the next start for its ports.
                 self.services.log(LOG_APP, message("ENGINE_CONTROL_LOST"));
                 self.lost = self.link.take();
+                self.exit_unsettled = true;
+                self.recover_after = Instant::now();
                 self.view.registration = "DISCONNECTED".into();
                 if matches!(&self.waiting, Some(Waiting::Response { generation, .. }) if *generation == link.generation) && self.delivered.is_none() {
                     self.delivered = Some(Delivered::Response(Err(RequestError::Disconnected)));
@@ -690,28 +753,42 @@ impl Phone {
     /// counts: a stop that came late is the word the recovery waited for,
     /// and an engine nobody will take is ended.
     fn stray(&mut self, work: Work) {
-        let (stopped, started) = match work {
-            Work::Started { stopped, result } => (stopped, result.ok()),
-            Work::Stopped(report) => (Some(report), None),
-            _ => (None, None),
-        };
-        if let Some(report) = stopped {
-            let code = exit_code(&report);
-            self.log_stop(report);
-            if self.exit_unsettled {
-                self.exit_unsettled = false;
-                self.settle_exit(code);
+        match work {
+            Work::Started { stopped, result } => {
+                if let Some(outcome) = stopped {
+                    self.finish_recovery(outcome);
+                }
+                if let Ok(ready) = result {
+                    // An engine nobody will take: stopped on the ledger like
+                    // any other, so that no start begins over its ports
+                    // before its end is confirmed.
+                    self.work_exclusive(move || Work::Stopped(ready.link.stop()));
+                }
             }
-        }
-        if let Some(ready) = started {
-            // An engine nobody will take: ended, without waiting for it.
-            thread::spawn(move || {
-                let _ = ready.link.stop();
-            });
+            Work::Stopped(outcome) => self.finish_recovery(outcome),
+            Work::Calibrated(_) if self.maintenance_held => {
+                // The calibration that was given up on has ended: the devices
+                // are free, and the maintenance held for it ends now.
+                self.maintenance_held = false;
+                self.phone.end_maintenance();
+                self.maintenance_off_owed = true;
+            }
+            _ => {}
         }
     }
-    /// A lost engine's process has ended (or its end cannot be had): the
-    /// calls that were up get their rows, and the window its notice.
+    /// A stop's outcome: taken in (take_stop), and when it confirms the end
+    /// of an engine whose loss left the calls unsettled, they are settled.
+    fn finish_recovery(&mut self, outcome: StopOutcome) {
+        let confirmed = outcome.is_ok();
+        let code = exit_code(&outcome);
+        self.take_stop(outcome);
+        if confirmed && self.exit_unsettled {
+            self.exit_unsettled = false;
+            self.settle_exit(code);
+        }
+    }
+    /// A lost engine's process has ended: the calls that were up get their
+    /// rows, and the window its notice.
     fn settle_exit(&mut self, code: String) {
         let notice = message_with("ENGINE_EXITED", [code]);
         self.close_calls_on_exit(Some(notice.clone()));
@@ -781,13 +858,32 @@ impl Phone {
             let param = e["param"].as_str().unwrap_or("");
             if let Some(rest) = param.strip_prefix("ksip_audio_filter,recording,") {
                 let (what, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+                // The file named is the recording's identity: the one whose
+                // start is out (answered or not), or the one shown. A word
+                // about any other file is not about this phone's recording.
+                let named = |p: &Phone, path: &str| {
+                    p.recording_pending.as_deref().is_some_and(|x| x.to_string_lossy() == path) || (p.view.recording && p.view.recording_path == path)
+                };
                 match what {
-                    "active" if self.view.recording && self.open_recording.is_none() => {
-                        self.open_recording = Some(PathBuf::from(self.view.recording_path.clone()));
+                    "active" => {
+                        if named(self, detail) && self.open_recording.is_none() {
+                            self.open_recording = Some(PathBuf::from(detail));
+                        }
                     }
-                    "failed" if self.view.recording => self.recording_failed(detail),
-                    "closed" if self.view.recording || self.open_recording.is_some() => {
-                        self.recording_closed(detail.starts_with("complete"));
+                    "failed" => {
+                        if named(self, detail) {
+                            self.recording_failed(detail);
+                        }
+                    }
+                    "closed" => {
+                        // "complete|incomplete <bytes> <dropped> <path>"
+                        let mut parts = detail.splitn(4, ' ');
+                        let complete = parts.next() == Some("complete");
+                        let path = parts.nth(2).unwrap_or("");
+                        let open = self.open_recording.as_deref().is_some_and(|x| x.to_string_lossy() == path);
+                        if open || named(self, path) {
+                            self.recording_closed(complete);
+                        }
                     }
                     _ => {}
                 }
@@ -860,6 +956,12 @@ impl Phone {
     /// Everything of a restart that is decided before the engine is touched:
     /// the account, the settings and the numbers to watch.
     fn prepare_restart(&mut self) -> Result<(Account, Settings, String), String> {
+        // A save that did not finish leaves its mark: the stored values may
+        // be old and new mixed, and the phone does not connect on them, by
+        // hand or otherwise, until a save has gone through whole.
+        if !self.services.store.read_text(SAVE_MARK).is_empty() {
+            return Err(message("SETTINGS_SAVE_INTERRUPTED"));
+        }
         // A connect is asked for (the button, a saved setting) or follows an
         // automatic reason that checked first; either way the phone is wanted
         // registered from here on.
@@ -935,16 +1037,16 @@ impl Phone {
         v.recording_call.clear();
         Some(engine)
     }
-    /// How the engine went is part of the record: one that had to be ended
-    /// was still waiting on something, usually a SIP request the server has
-    /// not answered, and the window waited with it. An Ok report is the word
-    /// that the process has ended (see EngineLink::stop), and only then is
-    /// the WAV it may have been writing known to be closed and turned into
-    /// an MP3. An Err is a stop that could not be confirmed: the file stays
-    /// as it is (the sweep at the next start converts what is left), and the
-    /// window is told.
-    fn log_stop(&mut self, report: Result<StopReport, String>) {
-        match report {
+    /// A stop worker's outcome. Ok: the process has ended (see
+    /// EngineLink::stop); how it went is part of the record (one that had to
+    /// be killed was still waiting on something, usually a SIP request the
+    /// server has not answered), and what it had open is closed
+    /// (engine_ended). Err: its end could not be confirmed; the link comes
+    /// back and is kept as `lost`, to be stopped again after RECOVER_RETRY,
+    /// and until then the engine's resources count as held (engine_busy)
+    /// and the window is told.
+    fn take_stop(&mut self, outcome: StopOutcome) {
+        match outcome {
             Ok(report) => {
                 if report.forced {
                     self.services.log(LOG_APP, "ksip: the engine did not quit within 3 seconds and was ended".into());
@@ -952,14 +1054,23 @@ impl Phone {
                     let code = report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
                     self.services.log(LOG_APP, format!("ksip: the engine quit in {} ms, exit code {code}", report.took.as_millis()));
                 }
-                if let Some(wav) = self.open_recording.take() {
-                    self.services.convert_recording(wav);
-                }
+                self.engine_ended();
             }
-            Err(e) => {
-                self.services.log(LOG_APP, format!("ksip: the engine's end could not be confirmed ({e})"));
+            Err(back) => {
+                let (link, e) = *back;
+                self.services.log(LOG_APP, format!("ksip: the engine's end could not be confirmed ({e}); it is tried again"));
                 self.view.error = message_with("ENGINE_STOP_UNCONFIRMED", [e]);
+                self.lost = Some(link);
+                self.recover_after = Instant::now() + RECOVER_RETRY;
             }
+        }
+    }
+    /// The confirmed end of the engine process, whichever way it was learnt:
+    /// the WAV it may have been writing is closed for certain and becomes an
+    /// MP3, once.
+    fn engine_ended(&mut self) {
+        if let Some(wav) = self.open_recording.take() {
+            self.services.convert_recording(wav);
         }
     }
     /// The engine has closed the recording's file, by its answer to the stop
@@ -1117,11 +1228,11 @@ async fn await_work(s: &Shared, timeout: Duration) -> Result<Work, String> {
 }
 /// How the engine's end is written down: the exit code, "killed", or the
 /// reason it could not be confirmed.
-fn exit_code(report: &Result<StopReport, String>) -> String {
-    match report {
+fn exit_code(outcome: &StopOutcome) -> String {
+    match outcome {
         Ok(report) if report.forced => "killed".to_string(),
         Ok(report) => report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-        Err(e) => e.clone(),
+        Err(back) => back.1.clone(),
     }
 }
 /// How long each kind of work may take: the engine start has its own twelve
@@ -1210,16 +1321,13 @@ async fn recover(s: Shared) {
     };
     let mut p = s.borrow_mut();
     match report {
-        Some(report) => {
-            let code = exit_code(&report);
-            p.log_stop(report);
-            p.settle_exit(code);
-        }
+        // Confirmed ended: the calls are settled. Not confirmed: the link is
+        // back in `lost` and tried again after a while, the calls unsettled.
+        Some(outcome) => p.finish_recovery(outcome),
         None => {
             // The stop worker has not reported: whether the process is gone
             // is unknown, so nothing is said to be over yet. The report,
             // when it comes, settles it (stray); the window is told meanwhile.
-            p.exit_unsettled = true;
             p.services.log(LOG_APP, message("ENGINE_STOP_PENDING"));
             p.view.error = message("ENGINE_STOP_PENDING");
         }
@@ -1237,9 +1345,9 @@ async fn connect(s: &Shared) -> Result<(), String> {
     result
 }
 async fn restart(s: &Shared) -> Result<(), String> {
-    // A start or stop given up on may still hold the ports: no new engine
-    // until its report has come.
-    if s.borrow().exclusive_outstanding() {
+    // A start or stop given up on, or a lost engine not yet confirmed ended,
+    // may still hold the ports: no new engine until that is settled.
+    if s.borrow().engine_busy() {
         return Err(message("WORKER_OUTSTANDING"));
     }
     let (account, settings, watched) = s.borrow_mut().prepare_restart()?;
@@ -1253,6 +1361,12 @@ async fn restart(s: &Shared) -> Result<(), String> {
         let (services, devices, tx) = (p.services.clone(), p.view.devices.clone(), p.tx.clone());
         p.work_exclusive(move || {
             let stopped = old.map(EngineLink::stop);
+            if let Some(Err(back)) = &stopped {
+                // The old engine could not be confirmed ended: no new one
+                // over its ports. The link comes back with the report.
+                let error = message_with("ENGINE_STOP_UNCONFIRMED", [back.1.clone()]);
+                return Work::Started { stopped, result: Err(error) };
+            }
             let result = services.prepare_start(&settings, &account, &devices).and_then(|prepared| {
                 EngineLink::start(prepared.plan, generation, tx).map(|link| {
                     Box::new(Ready {
@@ -1273,8 +1387,8 @@ async fn restart(s: &Shared) -> Result<(), String> {
         let Ok(Work::Started { stopped, result, .. }) = started else {
             return Err(message("APP_CLOSING"));
         };
-        if let Some(report) = stopped {
-            p.log_stop(report);
+        if let Some(outcome) = stopped {
+            p.take_stop(outcome);
         }
         *result?
     };
@@ -1315,9 +1429,11 @@ async fn release_link(s: &Shared) -> Option<EngineLink> {
 async fn stop_and_wait(s: &Shared, engine: EngineLink) {
     s.borrow_mut().work_exclusive(move || Work::Stopped(engine.stop()));
     match await_work(s, STOP_TIMEOUT).await {
-        Ok(Work::Stopped(report)) => s.borrow_mut().log_stop(report),
+        Ok(Work::Stopped(outcome)) => s.borrow_mut().take_stop(outcome),
         Ok(_) => {}
-        Err(e) => s.borrow_mut().log_stop(Err(e)),
+        // Not reported in time: the worker stays on the ledger, and its
+        // report, when it comes, is taken in stray.
+        Err(e) => s.borrow().services.log(LOG_APP, format!("ksip: the engine's stop has not reported yet ({e}); its report is awaited")),
     }
 }
 /// Stops the engine, if one runs.
@@ -1442,7 +1558,7 @@ async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(
 /// its own; the phone is in maintenance until it reports back.
 async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful: bool) -> Result<Calibration, String> {
     // A calibration given up on may still hold the devices.
-    if s.borrow().exclusive_outstanding() {
+    if s.borrow().engine_busy() {
         return Err(message("WORKER_OUTSTANDING"));
     }
     enter_maintenance(s).await?;
@@ -1450,7 +1566,12 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
     let result = match await_work(s, CALIBRATION_TIMEOUT).await {
         Ok(Work::Calibrated(result)) => result,
         Ok(_) => Err(message("APP_CLOSING")),
-        Err(e) => Err(e),
+        Err(e) => {
+            // The worker still has the devices: the maintenance stays until
+            // its report comes (stray ends it then).
+            s.borrow_mut().maintenance_held = true;
+            return Err(e);
+        }
     };
     leave_maintenance(s).await;
     result
@@ -1561,18 +1682,38 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         (folder.join(&name), name)
     };
     let text = path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?.to_string();
-    let (_, answer) = request(s, "ksip_record", &format!("{id} {text}")).await?;
+    // The file's name goes out first: the engine's events about it (an
+    // "active" that comes before the answer) are matched to it meanwhile.
+    s.borrow_mut().recording_pending = Some(path.clone());
+    let answer = request(s, "ksip_record", &format!("{id} {text}")).await;
     let mut p = s.borrow_mut();
+    p.recording_pending = None;
+    let answered = match answer {
+        Ok((_, answer)) => Some(answer),
+        Err(e) if e.unknown() => {
+            // No answer: the engine may well be recording. It is shown as
+            // recording, with the file known open only if the engine's
+            // "active" has said so, until its word or a stop settles it.
+            p.services.log(LOG_APP, format!("ksip: the recording start was not answered ({e})"));
+            None
+        }
+        Err(e) => return Err(e.into()),
+    };
     p.phone.note_recording(id, &name);
     p.recording_refused = None;
     // "started": the file is open. "reserved": the call has no audio yet, and
     // the engine's "active" event will say when the file is open (or "failed"
     // that it never will be).
-    p.open_recording = (!answer.contains("reserved")).then(|| path.clone());
+    if answered.as_deref().is_some_and(|a| !a.contains("reserved")) {
+        p.open_recording = Some(path.clone());
+    }
     let v = &mut p.view;
     v.recording = true;
     v.recording_call = id.into();
     v.recording_path = path.to_string_lossy().into();
+    if answered.is_none() {
+        return Err(message("RECORDING_START_UNCONFIRMED"));
+    }
     Ok(())
 }
 /// Ends the recording. The engine's answer says what became of the file:

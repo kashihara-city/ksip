@@ -350,7 +350,7 @@ mod tests {
                     break;
                 }
             }
-            let report = link.stop().unwrap();
+            let report = link.stop().map_err(|back| back.1).unwrap();
             assert!(!report.forced, "the engine quits when asked");
             // The reader thread says the connection is gone once the engine has.
             let deadline = Instant::now() + Duration::from_secs(3);
