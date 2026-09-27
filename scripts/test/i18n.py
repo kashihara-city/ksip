@@ -83,6 +83,19 @@ def names():
     return found
 
 
+def broken_lines(text):
+    """Entries that are not one whole single-quoted string: a quote left
+    unescaped in a sentence (an apostrophe, say) ends the string early, and
+    the whole locale file then fails to load in the window. After each
+    entry's closing quote comes a comma or the end of the table, nothing else."""
+    broken = []
+    for found in re.finditer(r"(%s)\s*:\s*'((?:[^'\\]|\\.)*)'" % NAME, text):
+        after = text[found.end():].lstrip()
+        if after[:1] not in (",", "}"):
+            broken.append(text[found.start():found.end() + 20].replace("\n", " "))
+    return broken
+
+
 def table(text, opening):
     """The names one table answers, and the values each sentence expects."""
     start = text.index(opening) + len(opening)
@@ -108,6 +121,7 @@ def main():
     }
     if "ja" not in locales:
         raise SystemExit("locales/ja.js がありません")
+
     windows = {
         name: set(re.findall(r"\{(\d+)\}", sentence))
         for name, sentence in re.findall(
@@ -117,6 +131,9 @@ def main():
     }
     japanese = locales["ja"]
     problems = []
+    for path in sorted((ROOT / "src-web/locales").glob("*.js")):
+        for line in broken_lines(path.read_text(encoding="utf-8")):
+            problems.append("%s: 文字列が途中で切れています（引用符）: %s" % (path.name, line))
     for name, takes_values in sorted(reported.items()):
         holder = japanese if name in japanese else windows if name in windows else None
         if holder is None:
