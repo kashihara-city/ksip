@@ -32,6 +32,9 @@ struct Adm {
     virtual void stop_recording() = 0;
 };
 enum class Timer { Linger, HandBack };
+// Where the current call's microphone comes from: no source, the device, or
+// the timed silence that stands in for a device that would not start.
+enum class Input { None, Device, Silence };
 struct Clock {
     virtual ~Clock() = default;
     virtual void start(Timer which, uint64_t ms) = 0;
@@ -77,6 +80,7 @@ public:
         const int result = adm.start_playout(fresh->device(), fresh);
         if (result) {
             hooks.start_failed(true, fresh->device(), result);
+            note_failure(true, result);
             if (previous && adm.start_playout(previous->device(), previous) == 0) {
                 previous->started = true;
                 active_playout = previous;
@@ -144,6 +148,7 @@ public:
         const int result = adm.start_recording(device, fresh);
         if (result) {
             hooks.start_failed(false, device, result);
+            note_failure(false, result);
             hooks.start_fallback(fresh);
         } else {
             fresh->started = true;
@@ -163,9 +168,27 @@ public:
     Play *playout() const { return active_playout; }
     Source *source() const { return active_source; }
     size_t player_count() const { return players.size(); }
+    // How things stand, read off who has the streams, so that it cannot
+    // disagree with them: a source that started has the device, one that did
+    // not runs on the fallback's silence, and a new source replaces either.
+    Input input() const { return !active_source ? Input::None : active_source->started ? Input::Device : Input::Silence; }
+    // A device start that failed, the newest of them. Counted, so that one
+    // that happened between two reports is still seen, whatever came after.
+    struct Failure {
+        bool playout = false;
+        int result = 0;
+    };
+    unsigned failures() const { return failure_count; }
+    Failure last_failure() const { return failure; }
 
 private:
     void keep_warm() { clock.start(Timer::Linger, kLingerMs); }
+    void note_failure(bool playout, int result) {
+        ++failure_count;
+        failure = {playout, result};
+    }
+    unsigned failure_count = 0;
+    Failure failure;
     Adm &adm;
     Clock &clock;
     Hooks hooks;

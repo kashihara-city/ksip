@@ -22,7 +22,7 @@
 use crate::app::Services;
 use crate::audio::{Calibration, Volume};
 use crate::engine_config::{endpoint_notes, AudioEndpoints};
-use crate::engine_link::{EngineLink, EngineReport};
+use crate::engine_link::{AudioState, EngineLink, EngineReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
 use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
@@ -332,6 +332,8 @@ struct Phone {
     exclusive: Vec<u64>,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
+    /// What the current engine's reports have been said about.
+    notices: EngineNotices,
     closing: bool,
     waiting: Option<Waiting>,
     delivered: Option<Delivered>,
@@ -353,6 +355,42 @@ struct Actor {
     shutdown_deadline: Option<Instant>,
     next_poll: Instant,
 }
+/// What an engine's state reports have been said about. A report repeats how
+/// things stand every 300 ms; each thing is said once for each engine, and a
+/// failed device start once for each failure however many reports carry it.
+#[derive(Default)]
+struct EngineNotices {
+    audio_down: bool,
+    no_trust: bool,
+    failures: u64,
+}
+impl EngineNotices {
+    /// What a report has to say that was not said: the audio module is not up,
+    /// the speaker would not start (a microphone that would not start is the
+    /// silence notice, not a banner), the trust store for TLS is empty.
+    fn news(&mut self, audio: Option<&AudioState>, trust: Option<u64>) -> Vec<String> {
+        let mut said = Vec::new();
+        if let Some(audio) = audio {
+            if !audio.ready && !self.audio_down {
+                self.audio_down = true;
+                said.push(message("AUDIO_DEVICE_INIT_FAILED"));
+            }
+            if audio.failures > self.failures {
+                self.failures = audio.failures;
+                if let Some(failure) = audio.last_failure.as_ref().filter(|f| f.side == "speaker") {
+                    said.push(message_with("AUDIO_SPEAKER_START_FAILED", [failure.result.to_string()]));
+                }
+            }
+        }
+        // baresip only warns when it cannot load the trust list, and then
+        // fails every TLS registration with nothing else to show for it.
+        if trust == Some(0) && !self.no_trust {
+            self.no_trust = true;
+            said.push(message("TRUST_STORE_UNUSABLE"));
+        }
+        said
+    }
+}
 /// How long a lost engine waits for another stop after one that could not
 /// confirm its end.
 const RECOVER_RETRY: Duration = Duration::from_secs(5);
@@ -372,6 +410,7 @@ impl Actor {
             starting_lost: false,
             lost: None,
             maintenance_off_owed: false,
+            notices: EngineNotices::default(),
             open_recording: None,
             recording_refused: None,
             converted: std::collections::HashSet::new(),
@@ -727,7 +766,7 @@ impl Phone {
         match link.body {
             LinkBody::Log(text) => {
                 if held || starting {
-                    self.derive_from_log(&text);
+                    self.alert_failure_from_log(&text);
                 }
                 self.services.log(LOG_ENGINE, text);
             }
@@ -827,37 +866,17 @@ impl Phone {
         self.close_calls_on_exit(Some(notice.clone()));
         self.services.log(LOG_APP, notice);
     }
-    /// What the engine's own words say about the phone's state.
-    fn derive_from_log(&mut self, s: &str) -> bool {
-        let v = &mut self.view;
-        let mut changed = false;
-        if s.contains("Google WebRTC ADM + APM initialized (processing enabled") {
-            v.aec_active = true;
-            changed = true;
+    /// The one thing still read from the engine's words. The ring tone plays
+    /// through baresip's own wasapi module (audio_alert), which says that
+    /// its device would not start only in its log. Everything else about
+    /// the audio and the trust store comes in the state report (apply_report).
+    /// Only the banner: the log changes no state.
+    fn alert_failure_from_log(&mut self, s: &str) -> bool {
+        if s.contains("wasapi/play:") && s.contains("failed") {
+            self.view.error = message_with("AUDIO_DEVICE_INIT_FAILED_DETAIL", [s]);
+            return true;
         }
-        if s.contains("ksip: microphone fallback active") {
-            v.microphone_fallback = true;
-            changed = true;
-        }
-        if s.contains("ksip: microphone input recovered") {
-            v.microphone_fallback = false;
-            changed = true;
-        }
-        if (s.contains("ksip_audio:") || s.contains("wasapi/src:") || s.contains("wasapi/play:"))
-            && s.contains("failed")
-            && !s.contains("using silence")
-        {
-            v.error = message_with("AUDIO_DEVICE_INIT_FAILED_DETAIL", [s]);
-            v.aec_active = false;
-            changed = true;
-        }
-        // The engine only warns when it cannot load the trust list, and then
-        // fails every TLS registration with nothing else to show for it.
-        if s.contains("tls_add_ca() failed") {
-            v.error = message("TRUST_STORE_UNUSABLE");
-            changed = true;
-        }
-        changed
+        false
     }
     fn event(&mut self, e: &Value) {
         let kind = e["type"].as_str().unwrap_or("");
@@ -943,8 +962,12 @@ impl Phone {
         v.transport = report.transport;
         v.media_encryption = report.media_encryption;
         v.calls = applied.calls;
-        if v.calls.is_empty() {
-            v.microphone_fallback = false;
+        // How the audio stands now, as the module says: a microphone that
+        // came back, a speaker handed back after a failed start, are there
+        // in the next report, and nothing the log said stands against them.
+        if let Some(audio) = &report.audio {
+            v.aec_active = audio.ready && audio.processing;
+            v.microphone_fallback = audio.input == "silence";
         }
         v.transfer = report.transfer;
         v.parking = report.parking;
@@ -961,6 +984,9 @@ impl Phone {
                 }
             }
             self.services.add_history(applied.ended);
+        }
+        for notice in self.notices.news(report.audio.as_ref(), report.tls_trust_certificates) {
+            self.show_error(notice);
         }
         applied.answer
     }
@@ -1020,6 +1046,7 @@ impl Phone {
         self.services.logs.lock().unwrap().set_detail(settings.detail_log);
         // The window shows what the engine is actually running with, so a
         // reconnect brings the saved settings forward as well.
+        self.notices = EngineNotices::default();
         let v = &mut self.view;
         v.settings = settings.clone();
         v.error.clear();
@@ -2014,15 +2041,88 @@ mod tests {
         p.clear_polling_error();
         assert_eq!(p.view.error, "AUDIO_DEVICE_INIT_FAILED");
     }
+    /// A state report as the engine writes it, with the audio module's state.
+    fn report_with(audio: Value, trust: Option<u64>) -> EngineReport {
+        let transfer = serde_json::to_value(Transfer::default()).unwrap();
+        let mut report = json!({"registration": "REGISTER_OK", "calls": [], "transfer": transfer, "audio": audio});
+        if let Some(n) = trust {
+            report["tls_trust_certificates"] = json!(n);
+        }
+        serde_json::from_value(report).unwrap()
+    }
     #[test]
-    fn microphone_fallback_log_updates_visible_state() {
+    fn the_audio_state_follows_the_reports_through_failure_and_recovery() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
-        assert!(p.derive_from_log("ksip: microphone fallback active"));
+        let audio = |input: &str, failures: u64, last: Value| json!({"ready": true, "processing": true, "input": input, "output": true, "failures": failures, "last_failure": last});
+        p.apply_report(1, report_with(audio("device", 0, Value::Null), None));
+        assert!(p.view.aec_active && !p.view.microphone_fallback && p.view.error.is_empty());
+        // The microphone would not start: silence stands in, and says so by the
+        // notice, not by a banner.
+        p.apply_report(2, report_with(audio("silence", 1, json!({"side": "microphone", "result": -3})), None));
+        assert!(p.view.microphone_fallback && p.view.aec_active && p.view.error.is_empty());
+        // Silence replaced by silence is still silence; the device back is the device.
+        p.apply_report(3, report_with(audio("silence", 2, json!({"side": "microphone", "result": -3})), None));
         assert!(p.view.microphone_fallback);
-        assert!(p.derive_from_log("ksip: microphone input recovered"));
+        p.apply_report(4, report_with(audio("device", 2, json!({"side": "microphone", "result": -3})), None));
+        assert!(!p.view.microphone_fallback, "the microphone that came back is shown as back");
+        // A speaker that would not start is said once, and the processing stays
+        // on: the stream was handed back.
+        p.apply_report(5, report_with(audio("device", 3, json!({"side": "speaker", "result": -3})), None));
+        assert_eq!(p.view.error, message_with("AUDIO_SPEAKER_START_FAILED", ["-3"]));
+        assert!(p.view.aec_active, "a failed start does not turn the processing off");
+        p.view.error.clear();
+        p.apply_report(6, report_with(audio("device", 3, json!({"side": "speaker", "result": -3})), None));
+        assert!(p.view.error.is_empty(), "a failure already said is not said again by the next report");
+        // A report older than one applied changes nothing.
+        p.apply_report(5, report_with(audio("silence", 3, json!({"side": "speaker", "result": -3})), None));
         assert!(!p.view.microphone_fallback);
-        assert!(!p.derive_from_log("ksip: something else"));
+        // Calls gone and the source with them: the module says none.
+        p.apply_report(7, report_with(audio("none", 3, Value::Null), None));
+        assert!(!p.view.microphone_fallback);
+    }
+    #[test]
+    fn a_module_that_is_not_up_and_an_empty_trust_store_are_said_once() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let down = json!({"ready": false, "processing": false, "input": "none", "output": false, "failures": 0});
+        p.apply_report(1, report_with(down.clone(), Some(0)));
+        assert!(!p.view.aec_active);
+        assert_eq!(p.view.error, message("TRUST_STORE_UNUSABLE"), "the last thing said stands");
+        p.view.error.clear();
+        p.apply_report(2, report_with(down.clone(), Some(0)));
+        assert!(p.view.error.is_empty(), "neither is said again by the same engine");
+        // A new engine is told apart: what it reports is said anew.
+        p.begin_start(&Settings::default());
+        p.apply_report(1, report_with(down, Some(120)));
+        assert_eq!(p.view.error, message("AUDIO_DEVICE_INIT_FAILED"));
+        // No report of the audio at all (an engine without the module's
+        // report) changes and says nothing.
+        p.view.error.clear();
+        let transfer = serde_json::to_value(Transfer::default()).unwrap();
+        p.apply_report(2, serde_json::from_value(json!({"registration": "REGISTER_OK", "calls": [], "transfer": transfer})).unwrap());
+        assert!(p.view.error.is_empty());
+    }
+    #[test]
+    fn the_engine_log_changes_no_state() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        p.starting = Some(3);
+        let line = |text: &str| LinkMessage { generation: 3, seq: 1, body: LinkBody::Log(text.into()) };
+        for text in [
+            "ksip: microphone fallback active",
+            "ksip_audio: Google WebRTC ADM + APM initialized (processing enabled: aec on)",
+            "ksip_audio: start playout failed (-3) for {speaker}",
+            "ksip_audio: WebRTC ADM playout handed back after a failed start",
+            "ua: tls_add_ca() failed: No such file",
+        ] {
+            p.handle_link(line(text));
+        }
+        assert!(!p.view.microphone_fallback && !p.view.aec_active && p.view.error.is_empty(), "the words are logged, and that is all");
+        // The ring tone's player is the one thing the log still speaks for.
+        p.handle_link(line("wasapi/play: IAudioClient_Initialize failed (0x88890008)"));
+        assert!(p.view.error.contains("IAudioClient_Initialize"));
+        assert!(!p.view.aec_active);
     }
     #[test]
     fn words_of_an_engine_no_longer_held_change_nothing() {
@@ -2031,8 +2131,8 @@ mod tests {
         // No engine is held, so no generation is current: the line is logged
         // and nothing else.
         let line = |body| LinkMessage { generation: 7, seq: 1, body };
-        p.handle_link(line(LinkBody::Log("ksip: microphone fallback active".into())));
-        assert!(!p.view.microphone_fallback);
+        p.handle_link(line(LinkBody::Log("wasapi/play: IAudioClient_Start failed".into())));
+        assert!(p.view.error.is_empty());
         p.handle_link(line(LinkBody::Event(json!({"event":true,"type":"REGISTER_OK","param":""}))));
         assert_eq!(p.view.registration, "UNCONFIGURED");
         p.handle_link(line(LinkBody::Lost));
@@ -2044,8 +2144,9 @@ mod tests {
         let mut p = a.shared.borrow_mut();
         p.starting = Some(3);
         let line = |body| LinkMessage { generation: 3, seq: 1, body };
-        p.handle_link(line(LinkBody::Log("Google WebRTC ADM + APM initialized (processing enabled)".into())));
-        assert!(p.view.aec_active);
+        p.handle_link(line(LinkBody::Log("wasapi/play: IAudioClient_Start failed".into())));
+        assert!(p.view.error.contains("IAudioClient_Start"), "the ring tone's failure of an engine being started counts");
+        p.view.error.clear();
         p.handle_link(line(LinkBody::Lost));
         assert!(p.starting_lost, "the start finds its engine gone when it reports");
         assert!(p.view.error.is_empty(), "nothing is said until the start reports");

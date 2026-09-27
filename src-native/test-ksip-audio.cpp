@@ -169,6 +169,45 @@ void a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goe
     f.core.source_gone(&next);
     check(f.adm.recording == nullptr && f.clock.linger, "the microphone is detached and idles");
 }
+// A source goes as the module lets it go: its fallback first, then the core.
+void StopAll(Fixture &f, Source &source) {
+    f.fallbacks.erase(std::remove(f.fallbacks.begin(), f.fallbacks.end(), &source), f.fallbacks.end());
+    f.core.source_gone(&source);
+}
+void the_state_follows_the_microphone_from_silence_to_the_device_and_back() {
+    using playback_session::Input;
+    Fixture f;
+    check(f.core.input() == Input::None && f.core.failures() == 0, "before any call there is no input and no failure");
+    Source first, second, third, fourth;
+    f.adm.broken.push_back("mic-broken");
+    f.core.take_source(&first, "mic-broken");
+    check(f.core.input() == Input::Silence && f.core.failures() == 1, "a microphone that would not open: the input is silence, one failure");
+    check(!f.core.last_failure().playout && f.core.last_failure().result == -3, "the failure is the microphone's, with the bridge's result");
+    f.core.take_source(&second, "mic-broken");
+    check(f.core.input() == Input::Silence && f.core.failures() == 2, "silence replaced by silence: still silence, the failure counted again");
+    f.core.take_source(&third, "mic-ok");
+    check(f.core.input() == Input::Device && f.core.failures() == 2, "a later start that works: the input is the device, and the failures stay counted");
+    f.adm.broken.push_back("mic-late");
+    f.core.take_source(&fourth, "mic-late");
+    check(f.core.input() == Input::Silence && f.core.failures() == 3, "the device replaced by one that fails: silence again");
+    StopAll(f, fourth);
+    check(f.core.input() == Input::None, "the source gone: no input, whatever it was");
+}
+void the_state_says_the_speaker_plays_after_a_failed_start_handed_back() {
+    Fixture f;
+    Player tone{"speaker-a"}, call{"speaker-broken"}, later{"speaker-a"};
+    f.core.take_playout(&tone);
+    f.adm.broken.push_back("speaker-broken");
+    f.core.take_playout(&call);
+    check(f.core.playout() == &tone && f.core.failures() == 1 && f.core.last_failure().playout, "the failed start is counted as the speaker's, and the tone plays on");
+    f.core.take_playout(&later);
+    check(f.core.playout() == &later && f.core.failures() == 1, "a later start that works: the speaker plays, the failure stays counted");
+    f.core.playout_gone(&later);
+    f.core.hand_back();
+    f.core.playout_gone(&tone);
+    f.core.hand_back();
+    check(f.core.playout() == nullptr, "every player gone: nothing plays");
+}
 void the_microphone_is_opened_ahead_only_once_and_only_when_free() {
     Fixture f;
     f.core.open_microphone_ahead("mic-ok");
@@ -574,6 +613,8 @@ int main() {
     a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle();
     a_restore_that_fails_too_lets_the_streams_idle();
     a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goes();
+    the_state_follows_the_microphone_from_silence_to_the_device_and_back();
+    the_state_says_the_speaker_plays_after_a_failed_start_handed_back();
     the_microphone_is_opened_ahead_only_once_and_only_when_free();
     clearing_a_callback_waits_for_the_call_in_flight();
     clearing_from_inside_the_callback_does_not_wait_on_itself();

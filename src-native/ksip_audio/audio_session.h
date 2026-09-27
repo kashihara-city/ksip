@@ -54,4 +54,7 @@ ksip_audio *bridge();
 // from whoever had it.
 int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handler, void *arg);
 int allocate_source(ausrc_st **out, const char *device, ausrc_read_h *handler, void *arg);
+// The session's part of the module's state (audio_state.h): "input",
+// "output", "failures" and "last_failure", added to `audio`.
+void add_state(odict *audio);
 } // namespace playback_session

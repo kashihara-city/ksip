@@ -10,11 +10,13 @@
 #include <baresip.h>
 #include <string>
 #include "ksip_audio_bridge.h"
+#include "audio_state.h"
 #include "ksip_io.h"
 #include "sip_account.h"
 #include "calls.h"
 #include "subscriptions.h"
 #include "transfer.h"
+#include "trust_state.h"
 
 namespace {
 bool sip_message_log = false;
@@ -63,6 +65,8 @@ int state(re_printf *pf, void *) {
         return err;
     }
     sip_account::write_state(od);
+    trust_state::write_state(od);
+    ksip_audio_add_state(od);
     unsigned count = calls::write_state(od, list);
     subscriptions::write_state(od);
     transfer::write_state(xfer);

@@ -120,6 +120,20 @@ void close() {
     g_audio = nullptr;
 }
 ksip_audio *bridge() { return g_audio; }
+void add_state(odict *audio) {
+    static const char *const inputs[] = {"none", "device", "silence"};
+    odict_entry_add(audio, "input", ODICT_STRING, inputs[static_cast<int>(g_core.input())]);
+    odict_entry_add(audio, "output", ODICT_BOOL, g_core.playout() != nullptr);
+    odict_entry_add(audio, "failures", ODICT_INT, static_cast<int64_t>(g_core.failures()));
+    if (!g_core.failures()) return;
+    odict *last = nullptr;
+    if (odict_alloc(&last, 4)) return;
+    const auto failure = g_core.last_failure();
+    odict_entry_add(last, "side", ODICT_STRING, failure.playout ? "speaker" : "microphone");
+    odict_entry_add(last, "result", ODICT_INT, static_cast<int64_t>(failure.result));
+    odict_entry_add(audio, "last_failure", ODICT_OBJECT, last);
+    mem_deref(last);
+}
 
 int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handler, void *arg) {
     auto *state = static_cast<auplay_st *>(mem_zalloc(sizeof(auplay_st), PlayoutDestructor));

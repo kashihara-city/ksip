@@ -46,6 +46,41 @@ pub struct EngineReport {
     pub audio_processing_stats: Option<AudioProcessingStats>,
     #[serde(default)]
     pub mwi_summary: String,
+    /// The audio module's state (src-native/ksip_audio/audio_state.h); none
+    /// from an engine without the module's report.
+    #[serde(default)]
+    pub audio: Option<AudioState>,
+    /// The certificates in the store the engine verifies the server's
+    /// certificate with, while the SIP transport is TLS
+    /// (src-native/ksip/trust_state.cpp).
+    #[serde(default)]
+    pub tls_trust_certificates: Option<u64>,
+}
+/// The audio module's state as the engine reports it: how things stand now
+/// (read off the module's own records, never off its log), and the device
+/// starts that failed, counted so that one between two reports is still seen.
+#[derive(Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct AudioState {
+    /// The module is up; false when its bridge would not start.
+    pub ready: bool,
+    /// Echo cancellation, the high-pass filter, the noise suppression or the AGC is on.
+    pub processing: bool,
+    /// Where the current call's microphone comes from: "device", "silence"
+    /// (a device that would not start, replaced by timed silence) or "none".
+    pub input: String,
+    /// A player has the speaker.
+    pub output: bool,
+    pub failures: u64,
+    pub last_failure: Option<AudioFailure>,
+}
+#[derive(Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct AudioFailure {
+    /// "speaker" or "microphone".
+    pub side: String,
+    /// The bridge's start result.
+    pub result: i64,
 }
 /// Everything a start needs, worked out before the process exists: the
 /// executable, the profile folder with the config already written, and the

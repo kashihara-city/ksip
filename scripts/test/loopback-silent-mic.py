@@ -1,4 +1,4 @@
-"""Verify that an unavailable WASAPI microphone still produces timed RTP."""
+"""Verify that an unavailable WASAPI microphone still produces timed RTP, and that the audio module reports the silence standing in and the failed start in its state, and no input once the call has gone."""
 from pathlib import Path
 import array, json, math, os, socket, subprocess, threading, time, wave
 import engine_control
@@ -107,6 +107,16 @@ module_app account.dll
             assert self.cv.wait_for(lambda: token in self.responses, 8)
             value = self.responses.pop(token)
         assert value.get("ok"), value
+        return value.get("data", "")
+
+    def audio(self, until=lambda audio: True, timeout=5):
+        """The audio module's state (audio_state.h), once it is as wanted."""
+        end = time.monotonic() + timeout
+        while True:
+            audio = json.loads(self.command("ksip_audio_state"))["audio"]
+            if until(audio) or time.monotonic() > end:
+                return audio
+            time.sleep(0.1)
 
     def event(self, kind):
         with self.cv:
@@ -141,11 +151,15 @@ def main():
         receiver.command("accept")
         receiver.event("CALL_ESTABLISHED")
         sender.event("CALL_ESTABLISHED")
+        # The module's own state, not its log: the microphone is silence
+        # standing in, and the start that failed is counted as the microphone's.
+        during = sender.audio()
         receiver.command("ksip_record", str(receiver.directory / "received.wav"))
         time.sleep(6)
         receiver.command("ksip_record_stop")
         sender.command("hangup")
         receiver.event("CALL_CLOSED")
+        after = sender.audio(lambda audio: audio["input"] == "none")
     finally:
         for phone in reversed(phones):
             phone.close()
@@ -160,6 +174,10 @@ def main():
     # signed PCM unit, rather than necessarily to exactly zero.
     assert rms < 2, rms
     assert "ksip: microphone fallback active" in log, log
+    assert during["ready"] and during["input"] == "silence", during
+    assert during["failures"] >= 1 and during["last_failure"]["side"] == "microphone", during
+    assert after["input"] == "none" and after["failures"] == during["failures"], after
+    print(json.dumps({"during": during, "after": after}, indent=2))
     print(json.dumps({"samples": len(samples), "rate": rate, "rms": rms}, indent=2))
     print("PASS: unavailable WebRTC ADM microphone produced continuous silent RTP")
 

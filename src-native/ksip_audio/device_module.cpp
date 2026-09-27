@@ -3,6 +3,7 @@
 // request for a player or a source to the session, which decides who has
 // the stream.
 #include "audio_session.h"
+#include "audio_state.h"
 #include <cerrno>
 #include <cstring>
 
@@ -10,6 +11,19 @@ namespace {
 struct auplay *g_player;
 struct ausrc *g_source;
 ksip_audio *g_audio;
+// Whether the module is up, and with any of the processing on; see audio_state.h.
+bool g_ready = false, g_processing = false;
+int StateCommand(re_printf *pf, void *) {
+    odict *od = nullptr;
+    int err = odict_alloc(&od, 4);
+    if (!err) err = ksip_audio_add_state(od);
+    if (!err) err = json_encode_odict(pf, od);
+    mem_deref(od);
+    return err;
+}
+const cmd commands[] = {
+    {"ksip_audio_state", 0, 0, "The audio module's state as JSON (audio_state.h)", StateCommand},
+};
 
 bool Valid(const struct auplay_prm *p) { return p->srate == playback_session::kRate && p->ch == playback_session::kChannels && p->fmt == AUFMT_S16LE; }
 bool Valid(const struct ausrc_prm *p) { return p->srate == playback_session::kRate && p->ch == playback_session::kChannels && p->fmt == AUFMT_S16LE; }
@@ -50,7 +64,9 @@ int module_init() {
     playback_session::open(g_audio);
     int error = ausrc_register(&g_source, baresip_ausrcl(), "ksip_audio", AllocateSource);
     error |= auplay_register(&g_player, baresip_auplayl(), "ksip_audio", AllocatePlayout);
+    error |= cmd_register(baresip_commands(), commands, RE_ARRAY_SIZE(commands));
     if (error) {
+        cmd_unregister(baresip_commands(), commands);
         g_source = static_cast<struct ausrc *>(mem_deref(g_source));
         g_player = static_cast<struct auplay *>(mem_deref(g_player));
         playback_session::close();
@@ -58,7 +74,9 @@ int module_init() {
         g_audio = nullptr;
         return error;
     }
-    // The app reads "processing enabled" from this line.
+    g_ready = true;
+    g_processing = enabled;
+    // For the log only: the app reads the module's state (audio_state.h).
     if (enabled)
         info("ksip_audio: Google WebRTC ADM + APM initialized (processing enabled:"
              " aec %s, high-pass %s, noise suppression %s, agc %s)\n",
@@ -67,6 +85,9 @@ int module_init() {
     return 0;
 }
 int module_close() {
+    g_ready = false;
+    g_processing = false;
+    cmd_unregister(baresip_commands(), commands);
     playback_session::close();
     g_source = static_cast<struct ausrc *>(mem_deref(g_source));
     g_player = static_cast<struct auplay *>(mem_deref(g_player));
@@ -76,6 +97,20 @@ int module_close() {
 }
 } // namespace
 
+extern "C" int ksip_audio_add_state(struct odict *od) {
+    if (!od) return EINVAL;
+    odict *audio = nullptr;
+    int err = odict_alloc(&audio, 8);
+    if (err) return err;
+    odict_entry_add(audio, "ready", ODICT_BOOL, g_ready);
+    odict_entry_add(audio, "processing", ODICT_BOOL, g_ready && g_processing);
+    // Not up, the session has had nothing to do: no input, no output, no
+    // failures, which is what it says.
+    playback_session::add_state(audio);
+    err = odict_entry_add(od, "audio", ODICT_OBJECT, audio);
+    mem_deref(audio);
+    return err;
+}
 extern "C" int ksip_audio_get_current_stats(ksip_audio_stats *stats) {
     if (!stats || !g_audio) return EINVAL;
     return ksip_audio_get_stats(g_audio, stats);

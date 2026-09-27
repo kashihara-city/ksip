@@ -300,7 +300,7 @@ mod tests {
     #[test]
     #[ignore = "requires scripts/build/native.ps1; uses isolated temp/build/rust-engine-test"]
     fn real_engine_starts_stops_and_restarts() {
-        use crate::engine_link::EngineLink;
+        use crate::engine_link::{AudioState, EngineLink, EngineReport};
         use crate::phone_message::{LinkBody, Message};
         let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -366,6 +366,23 @@ mod tests {
                     break;
                 }
             }
+            // The state report carries the audio module's state from the
+            // start, before any call: up, with the processing on (the
+            // default settings), no input yet, nothing failed.
+            let token = link.send("ksip_state", "").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(8);
+            let state: EngineReport = loop {
+                let message = rx.recv_timeout(deadline - Instant::now().min(deadline)).expect("the state in time");
+                if let Message::Link(delivered) = message {
+                    if let LinkBody::Response { token: t, value } = delivered.body {
+                        if t == token {
+                            break serde_json::from_str(value["data"].as_str().unwrap_or_default()).expect("a state report");
+                        }
+                    }
+                }
+            };
+            let audio = state.audio.expect("the audio module's state");
+            assert_eq!(audio, AudioState { ready: true, processing: true, input: "none".into(), output: false, failures: 0, last_failure: None });
             let report = link.stop().map_err(|back| back.1).unwrap();
             assert!(!report.forced, "the engine quits when asked");
             // The reader thread says the connection is gone once the engine has.
