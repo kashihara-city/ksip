@@ -6,12 +6,73 @@ use windows_sys::Win32::Foundation::{
 };
 
 /// The browser hands a `ksip:` link to a new process. That process passes the
-/// command to the one already running through this pipe, then exits.
+/// command to the one already running through this pipe, then exits. The
+/// pipe is this user's, in this logon session: its name carries both, so
+/// that a link goes to the app running where the browser runs and not to
+/// another session's, and its access list (see `security`) lets nobody but
+/// this user open or create it; remote clients are refused outright.
 pub fn pipe_name() -> String {
     format!(
-        r"\\.\pipe\{}",
-        crate::storage::Store::new().target.replace('/', "_")
+        r"\\.\pipe\{}-{}",
+        crate::storage::Store::new().target.replace('/', "_"),
+        scope()
     )
+}
+/// The user (by SID) and the logon session this process runs in.
+fn scope() -> String {
+    format!("{}-{}", user_sid().unwrap_or_else(|| "S-unknown".into()), session_id())
+}
+fn session_id() -> u32 {
+    use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    let mut session = 0u32;
+    // SAFETY: the process id is this process's; the out pointer is valid.
+    unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session) };
+    session
+}
+/// The SID of the user this process runs as, as text.
+fn user_sid() -> Option<String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    // SAFETY: the token is this process's and closed here; the buffer is
+    // sized by the first call and read as the TOKEN_USER the second wrote.
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        let mut needed = 0u32;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+        let mut buffer = vec![0u8; needed as usize];
+        let ok = GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), needed, &mut needed) != 0;
+        CloseHandle(token);
+        if !ok || buffer.len() < std::mem::size_of::<TOKEN_USER>() {
+            return None;
+        }
+        let user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        let mut text: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
+            return None;
+        }
+        let sid = crate::storage::read_wide(text);
+        LocalFree(text.cast());
+        Some(sid)
+    }
+}
+/// A security descriptor that gives this user, and nobody else, full access
+/// (SDDL: a protected DACL with one allow entry), or None when the user
+/// cannot be told, in which case the system's default applies.
+fn security() -> Option<*mut core::ffi::c_void> {
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    let sid = user_sid()?;
+    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})").encode_utf16().chain(Some(0)).collect();
+    let mut descriptor = std::ptr::null_mut();
+    // SAFETY: the SDDL text is null-terminated; the descriptor comes from
+    // LocalAlloc and is freed by the caller with LocalFree.
+    let ok = unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut descriptor, std::ptr::null_mut()) } != 0;
+    (ok && !descriptor.is_null()).then_some(descriptor)
 }
 
 const SCHEME: &str = "ksip:";
@@ -108,23 +169,40 @@ fn send_to(name: &str, command: &str) -> Result<bool, String> {
     }
 }
 
-fn create(name: &[u16]) -> Option<HANDLE> {
-    use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+/// One instance of the pipe. The first instance claims the name: if another
+/// process holds it already, the claim fails and is tried again later rather
+/// than joining someone else's pipe. Every instance is this user's alone and
+/// refuses remote clients.
+fn create(name: &[u16], first: bool) -> Option<HANDLE> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
     use windows_sys::Win32::System::Pipes::{
-        CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
+    let descriptor = security();
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.unwrap_or(std::ptr::null_mut()),
+        bInheritHandle: 0,
+    };
+    // SAFETY: the name is null-terminated and the attributes outlive the call;
+    // the descriptor is freed after it.
     let pipe = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
-            PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_ACCESS_DUPLEX | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 },
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             1024,
             1024,
             0,
-            std::ptr::null(),
+            if descriptor.is_some() { &attributes } else { std::ptr::null() },
         )
     };
+    if let Some(descriptor) = descriptor {
+        unsafe { LocalFree(descriptor) };
+    }
     (!pipe.is_null() && pipe != INVALID_HANDLE_VALUE).then_some(pipe)
 }
 
@@ -179,11 +257,11 @@ fn serve_named(name: &str, deliver: impl Fn(String) + Send + 'static) {
     use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
     let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
     std::thread::spawn(move || {
-        let mut pipe = create(&wide);
+        let mut pipe = create(&wide, true);
         loop {
             let Some(current) = pipe else {
                 std::thread::sleep(Duration::from_secs(1));
-                pipe = create(&wide);
+                pipe = create(&wide, true);
                 continue;
             };
             // A client that connected before this call is reported as an error
@@ -194,7 +272,7 @@ fn serve_named(name: &str, deliver: impl Fn(String) + Send + 'static) {
                 || matches!(unsafe { GetLastError() }, ERROR_PIPE_CONNECTED | ERROR_NO_DATA);
             // The next instance is ready before this one is read, so a link that
             // arrives meanwhile finds a pipe instead of nothing.
-            let next = create(&wide);
+            let next = create(&wide, false);
             if connected {
                 if let Some(command) = read_command(current) {
                     deliver(command);

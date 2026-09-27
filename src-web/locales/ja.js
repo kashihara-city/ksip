@@ -152,6 +152,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ENGINE_STOP_PENDING:'音声エンジンの停止を待っています。終了が確認できるまで通話の記録は確定しません',
       WORKER_OUTSTANDING:'前の起動・停止・校正がまだ終わっていないため、始められません',
       SETTINGS_SAVE_INTERRUPTED:'前回の設定保存が途中で終わっています。設定を確認して保存し直してください',
+      MAINTENANCE_IN_PROGRESS:'別の設定変更か校正がまだ終わっていないため、いまは行えません',
+      ENGINE_CONTROL_AUTH_FAILED:'音声エンジンとの制御接続を認証できませんでした',
       WORK_TIMEOUT:'処理が時間内に終わりませんでした',
       OPERATION_WAIT_TIMEOUT:'他の処理が終わらないため操作を取り消しました',
       ENGINE_START_FAILED:'音声エンジンの起動失敗: {0}。ログを確認してください',

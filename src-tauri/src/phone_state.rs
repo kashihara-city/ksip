@@ -216,8 +216,18 @@ pub struct PhoneState {
     /// it, however late it is looked at, changes nothing either.
     last_report: u64,
     /// Something that needs the phone quiet (a settings change, a device
-    /// calibration) is going on. Begun only while no call is up.
-    maintenance: bool,
+    /// calibration) is going on: the number of the operation that began it,
+    /// which alone can end it. Begun only while no call is up and nothing
+    /// else holds it.
+    maintenance: Option<u64>,
+    next_maintenance: u64,
+}
+/// Why maintenance could not begin.
+#[derive(Debug, PartialEq)]
+pub enum MaintenanceRefused {
+    CallInProgress,
+    /// Another operation holds it: one whose worker is still out, for one.
+    Held,
 }
 
 impl PhoneState {
@@ -257,19 +267,34 @@ impl PhoneState {
         self.records.entry(id.to_string()).or_default().recording = Some(file.to_string());
     }
     /// Maintenance (a settings change, a calibration) starts only while no
-    /// call is up, and marks the phone so until it ends.
-    pub fn begin_maintenance(&mut self) -> Result<(), ()> {
-        if !self.calls.is_empty() {
-            return Err(());
+    /// call is up and nobody holds it, and marks the phone so until the
+    /// operation that began it ends it. Returns that operation's number.
+    pub fn begin_maintenance(&mut self) -> Result<u64, MaintenanceRefused> {
+        if self.maintenance.is_some() {
+            return Err(MaintenanceRefused::Held);
         }
-        self.maintenance = true;
-        Ok(())
+        if !self.calls.is_empty() {
+            return Err(MaintenanceRefused::CallInProgress);
+        }
+        self.next_maintenance += 1;
+        self.maintenance = Some(self.next_maintenance);
+        Ok(self.next_maintenance)
     }
-    pub fn end_maintenance(&mut self) {
-        self.maintenance = false;
+    /// Ends the maintenance, if `owner` is the operation that began it: true
+    /// when it did end. Another operation's number ends nothing, so a
+    /// maintenance held for a worker outlives the operations that come and
+    /// go meanwhile.
+    pub fn end_maintenance(&mut self, owner: u64) -> bool {
+        if self.maintenance == Some(owner) {
+            self.maintenance = None;
+            true
+        } else {
+            false
+        }
     }
+    #[cfg(test)]
     pub fn in_maintenance(&self) -> bool {
-        self.maintenance
+        self.maintenance.is_some()
     }
     /// Takes one report of the engine's calls, received as number `seq` of
     /// its engine's messages. Returns what changed, or None for a report of
@@ -625,11 +650,16 @@ mod tests {
     fn maintenance_begins_only_while_no_call_is_up() {
         let mut phone = PhoneState::default();
         let g = phone.new_engine();
-        assert!(phone.begin_maintenance().is_ok());
+        let owner = phone.begin_maintenance().expect("nothing is up");
         assert!(phone.in_maintenance());
-        phone.end_maintenance();
+        // Held: nobody else begins one, and nobody else ends it.
+        assert_eq!(phone.begin_maintenance(), Err(MaintenanceRefused::Held));
+        assert!(!phone.end_maintenance(owner + 1));
+        assert!(phone.in_maintenance());
+        assert!(phone.end_maintenance(owner));
+        assert!(!phone.in_maintenance());
         phone.apply_report(g, 1, vec![call("c1", "ESTABLISHED", "sip:1002@pbx.example")], false, false, 1).unwrap();
-        assert!(phone.begin_maintenance().is_err());
+        assert_eq!(phone.begin_maintenance(), Err(MaintenanceRefused::CallInProgress));
         assert!(!phone.in_maintenance());
     }
 

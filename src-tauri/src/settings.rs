@@ -661,6 +661,30 @@ mod tests {
         static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
         ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+    /// A test's own store: named after the test, the process and a count, so
+    /// that no two tests share one; emptied before the test, in case an
+    /// earlier run left it behind, and after it, even when an assertion fails.
+    struct StoreGuard(Store);
+    impl StoreGuard {
+        fn new(name: &str) -> Self {
+            static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let suffix = format!("{name}-{}-{}", std::process::id(), COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            let store = Store {
+                key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
+                target: format!("KSIP/Test/{suffix}"),
+            };
+            store.cleanup_test();
+            Self(store)
+        }
+        fn store(&self) -> Store {
+            Store { key: self.0.key.clone(), target: self.0.target.clone() }
+        }
+    }
+    impl Drop for StoreGuard {
+        fn drop(&mut self) {
+            self.0.cleanup_test();
+        }
+    }
     #[test]
     fn reject_config_injection_and_port_overlap() {
         let rejected = |s: Settings| validate(&s).is_err();
@@ -881,12 +905,9 @@ mod tests {
     #[test]
     fn a_save_that_fails_part_way_leaves_the_store_as_it_was() {
         let _one_at_a_time = store_tests_one_at_a_time();
-        let suffix = format!("test-rollback-{}", std::process::id());
+        let guard = StoreGuard::new("test-rollback");
         let mut app = Services::open().0;
-        app.store = Store {
-            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
-            target: format!("KSIP/Test/{suffix}"),
-        };
+        app.store = guard.store();
         let account = |server: &str| Account {
             server: server.into(),
             port: 5060,
@@ -912,18 +933,15 @@ mod tests {
             assert_eq!(app.settings()?.codecs, "PCMU");
             Ok(())
         })();
-        app.store.cleanup_test();
+        drop(guard);
         result.unwrap();
     }
     #[test]
     fn a_rollback_puts_back_every_value_it_can_and_absent_ones_as_absent() {
         let _one_at_a_time = store_tests_one_at_a_time();
-        let suffix = format!("test-rollback-each-{}", std::process::id());
+        let guard = StoreGuard::new("test-rollback-each");
         let mut app = Services::open().0;
-        app.store = Store {
-            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
-            target: format!("KSIP/Test/{suffix}"),
-        };
+        app.store = guard.store();
         let account = |server: &str| Account {
             server: server.into(),
             port: 5060,
@@ -965,18 +983,15 @@ mod tests {
             assert_eq!(app.store.read_text_raw(SAVE_MARK)?, None, "a whole save clears the mark");
             Ok(())
         })();
-        app.store.cleanup_test();
+        drop(guard);
         result.unwrap();
     }
     #[test]
     fn only_a_new_authentication_user_asks_for_the_password_again() {
         let _one_at_a_time = store_tests_one_at_a_time();
-        let suffix = format!("test-password-{}", std::process::id());
+        let guard = StoreGuard::new("test-password");
         let mut app = Services::open().0;
-        app.store = Store {
-            key: format!(r"Software\KashiharaCity\ksip\Test\{suffix}"),
-            target: format!("KSIP/Test/{suffix}"),
-        };
+        app.store = guard.store();
         let account = Account {
             server: "127.0.0.1".into(),
             port: 5060,
@@ -1005,7 +1020,7 @@ mod tests {
             assert!(app.password_for(&other).is_err());
             Ok(())
         })();
-        app.store.cleanup_test();
+        drop(guard);
         result.unwrap();
     }
 }

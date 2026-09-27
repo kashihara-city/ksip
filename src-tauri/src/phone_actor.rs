@@ -26,7 +26,7 @@ use crate::engine_link::{EngineLink, EngineReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
 use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
-use crate::phone_state::{automatic_recording_target, Mwi, PhoneState, Snapshot, Transfer};
+use crate::phone_state::{automatic_recording_target, MaintenanceRefused, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
 use crate::settings::{dial_target, validate, CustomButton, Settings, SAVE_MARK};
 use crate::storage::Account;
@@ -159,6 +159,21 @@ impl std::fmt::Display for RequestError {
         f.write_str(&String::from(self.clone()))
     }
 }
+/// A recording start out with the engine, and what has become of it
+/// meanwhile: an engine's word about the file (failed, closed) that came
+/// before the start's answer is the word that counts.
+struct PendingStart {
+    path: PathBuf,
+    /// The engine the start went to.
+    generation: u64,
+    ended: Option<PendingEnd>,
+}
+enum PendingEnd {
+    /// The file could not be opened: there is no recording.
+    Failed,
+    /// The file was opened and has already been closed.
+    Closed { complete: bool },
+}
 /// What arrived for it.
 enum Delivered {
     Response(Result<(u64, Value), RequestError>),
@@ -285,12 +300,16 @@ struct Phone {
     /// a while after a stop that could not confirm its end.
     recover_after: Instant,
     /// The maintenance is kept for a calibration worker that outlived its
-    /// wait: it still has the devices, and the maintenance ends with its
-    /// report (see stray).
-    maintenance_held: bool,
-    /// The file of a recording whose start has been sent and not answered
-    /// yet: the engine's events about it are matched to this path.
-    recording_pending: Option<PathBuf>,
+    /// wait: it still has the devices, and the maintenance (this operation's,
+    /// by number) ends with its report (see stray). Nothing else can end it
+    /// meanwhile, so a connect or a settings change in between is refused.
+    maintenance_held: Option<u64>,
+    /// A recording whose start has been sent and not answered yet: the
+    /// engine's events about its file are matched to it and what they say
+    /// is kept for the start's continuation, and the engine it was sent to
+    /// is remembered, so that an answer that never came does not revive a
+    /// recording of an engine that has since ended.
+    recording_pending: Option<PendingStart>,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
     /// A look at the adapter's address is under way.
@@ -352,7 +371,7 @@ impl Actor {
             recording_refused: None,
             exit_unsettled: false,
             recover_after: Instant::now(),
-            maintenance_held: false,
+            maintenance_held: None,
             recording_pending: None,
             bound: String::new(),
             probing: false,
@@ -544,6 +563,10 @@ impl Actor {
                 // the same as a stop's Ok, and everything that follows an
                 // end follows here (the recording's file, the calls' rows).
                 let engine = p.link.take().expect("the link that exited");
+                // The request out with it, if any, gets no answer from it.
+                if matches!(&p.waiting, Some(Waiting::Response { generation, .. }) if *generation == engine.generation()) && p.delivered.is_none() {
+                    p.delivered = Some(Delivered::Response(Err(RequestError::Disconnected)));
+                }
                 engine.close();
                 let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| status.to_string());
                 p.services.log(LOG_APP, format!("ksip: the engine ended on its own, exit code {code}"));
@@ -766,14 +789,17 @@ impl Phone {
                 }
             }
             Work::Stopped(outcome) => self.finish_recovery(outcome),
-            Work::Calibrated(_) if self.maintenance_held => {
-                // The calibration that was given up on has ended: the devices
-                // are free, and the maintenance held for it ends now.
-                self.maintenance_held = false;
-                self.phone.end_maintenance();
+            Work::Calibrated(_) => self.release_held_maintenance(),
+            _ => {}
+        }
+    }
+    /// The calibration that was given up on has ended: the devices are free,
+    /// and the maintenance held for it ends now, by its own number.
+    fn release_held_maintenance(&mut self) {
+        if let Some(owner) = self.maintenance_held.take() {
+            if self.phone.end_maintenance(owner) {
                 self.maintenance_off_owed = true;
             }
-            _ => {}
         }
     }
     /// A stop's outcome: taken in (take_stop), and when it confirms the end
@@ -861,27 +887,33 @@ impl Phone {
                 // The file named is the recording's identity: the one whose
                 // start is out (answered or not), or the one shown. A word
                 // about any other file is not about this phone's recording.
-                let named = |p: &Phone, path: &str| {
-                    p.recording_pending.as_deref().is_some_and(|x| x.to_string_lossy() == path) || (p.view.recording && p.view.recording_path == path)
+                // What is said about a start still out is kept for it.
+                let (what, path) = match what {
+                    // "complete|incomplete <bytes> <dropped> <path>"
+                    "closed" => (what, detail.splitn(4, ' ').nth(3).unwrap_or("")),
+                    _ => (what, detail),
                 };
+                let pending = self.recording_pending.as_ref().is_some_and(|x| x.path.to_string_lossy() == path);
+                let shown = self.view.recording && self.view.recording_path == path;
+                let open = self.open_recording.as_deref().is_some_and(|x| x.to_string_lossy() == path);
                 match what {
-                    "active" => {
-                        if named(self, detail) && self.open_recording.is_none() {
-                            self.open_recording = Some(PathBuf::from(detail));
+                    "active" if (pending || shown) && self.open_recording.is_none() => {
+                        self.open_recording = Some(PathBuf::from(path));
+                    }
+                    "failed" if pending || shown => {
+                        if let Some(start) = self.recording_pending.as_mut() {
+                            start.ended = Some(PendingEnd::Failed);
+                        }
+                        if shown {
+                            self.recording_failed(path);
                         }
                     }
-                    "failed" => {
-                        if named(self, detail) {
-                            self.recording_failed(detail);
+                    "closed" if pending || shown || open => {
+                        let complete = detail.starts_with("complete");
+                        if let Some(start) = self.recording_pending.as_mut() {
+                            start.ended = Some(PendingEnd::Closed { complete });
                         }
-                    }
-                    "closed" => {
-                        // "complete|incomplete <bytes> <dropped> <path>"
-                        let mut parts = detail.splitn(4, ' ');
-                        let complete = parts.next() == Some("complete");
-                        let path = parts.nth(2).unwrap_or("");
-                        let open = self.open_recording.as_deref().is_some_and(|x| x.to_string_lossy() == path);
-                        if open || named(self, path) {
+                        if shown || open {
                             self.recording_closed(complete);
                         }
                     }
@@ -1264,15 +1296,22 @@ async fn poll(s: &Shared) -> Result<(), String> {
 /// the last report yet). The engine is told, so that a call arriving
 /// meanwhile is refused as busy rather than left ringing at a phone that is
 /// being worked on.
-async fn enter_maintenance(s: &Shared) -> Result<(), String> {
+/// Begins maintenance for the operation that calls, and returns its number:
+/// the operation ends it with leave_maintenance and nothing else can. Refused
+/// while a call is up, or while another operation holds it (a calibration
+/// whose worker is still out).
+async fn enter_maintenance(s: &Shared) -> Result<u64, String> {
     poll(s).await?;
-    s.borrow_mut().phone.begin_maintenance().map_err(|()| message("CALL_IN_PROGRESS"))?;
+    let owner = s.borrow_mut().phone.begin_maintenance().map_err(|refused| match refused {
+        MaintenanceRefused::CallInProgress => message("CALL_IN_PROGRESS"),
+        MaintenanceRefused::Held => message("MAINTENANCE_IN_PROGRESS"),
+    })?;
     // The engine takes the maintenance in one step, only while it has no
     // call: a call that came in after the look above is what its refusal
     // means, and the maintenance is then not begun.
     if let Err(e) = tell_maintenance(s, "on").await {
         let mut p = s.borrow_mut();
-        p.phone.end_maintenance();
+        p.phone.end_maintenance(owner);
         // No answer is not a "no": the engine may have taken the maintenance
         // and be refusing calls on it. It is told to end it at the next look,
         // as after a failed leave.
@@ -1281,14 +1320,18 @@ async fn enter_maintenance(s: &Shared) -> Result<(), String> {
         }
         return Err(if e.busy() { message("CALL_IN_PROGRESS") } else { e.into() });
     }
-    Ok(())
+    Ok(owner)
 }
-async fn leave_maintenance(s: &Shared) {
-    if s.borrow().phone.in_maintenance() && tell_maintenance(s, "off").await.is_err() {
+/// Ends the maintenance `owner` began. Another number ends nothing, and the
+/// engine is not told off then: the maintenance is somebody else's.
+async fn leave_maintenance(s: &Shared, owner: u64) {
+    if !s.borrow_mut().phone.end_maintenance(owner) {
+        return;
+    }
+    if tell_maintenance(s, "off").await.is_err() {
         // The engine would go on refusing calls; it is told again at the next look.
         s.borrow_mut().maintenance_off_owed = true;
     }
-    s.borrow_mut().phone.end_maintenance();
 }
 /// Tells the engine that maintenance begins or ends. Without an engine there
 /// is nothing to tell, and nothing to refuse.
@@ -1339,9 +1382,9 @@ async fn connect(s: &Shared) -> Result<(), String> {
     if s.borrow().closing {
         return Err(message("APP_CLOSING"));
     }
-    enter_maintenance(s).await?;
+    let owner = enter_maintenance(s).await?;
     let result = restart(s).await;
-    leave_maintenance(s).await;
+    leave_maintenance(s, owner).await;
     result
 }
 async fn restart(s: &Shared) -> Result<(), String> {
@@ -1458,13 +1501,13 @@ async fn refresh_devices(s: &Shared) -> Result<(), String> {
     if s.borrow().link.is_none() {
         return Ok(());
     }
-    if enter_maintenance(s).await.is_err() {
+    let Ok(owner) = enter_maintenance(s).await else {
         return Ok(());
-    }
+    };
     let settings = s.borrow().services.settings();
     let taken = match settings {
         Err(e) => {
-            leave_maintenance(s).await;
+            leave_maintenance(s, owner).await;
             return Err(e);
         }
         Ok(settings) => match apply_audio_endpoints(s, &settings).await {
@@ -1475,7 +1518,7 @@ async fn refresh_devices(s: &Shared) -> Result<(), String> {
             }
         },
     };
-    leave_maintenance(s).await;
+    leave_maintenance(s, owner).await;
     // Restarting the engine would register again; someone who unregistered
     // on purpose keeps the devices they have until they connect themselves.
     if !taken && !s.borrow().view.unregistered_by_choice {
@@ -1515,7 +1558,7 @@ async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), St
     Ok(())
 }
 async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(), String> {
-    enter_maintenance(s).await?;
+    let owner = enter_maintenance(s).await?;
     let saved = {
         let mut p = s.borrow_mut();
         (|| -> Result<(Settings, bool), String> {
@@ -1547,7 +1590,7 @@ async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(
             }
         },
     };
-    leave_maintenance(s).await;
+    leave_maintenance(s, owner).await;
     match outcome {
         Err(e) => Err(e),
         Ok(true) => Ok(()),
@@ -1561,19 +1604,20 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
     if s.borrow().engine_busy() {
         return Err(message("WORKER_OUTSTANDING"));
     }
-    enter_maintenance(s).await?;
+    let owner = enter_maintenance(s).await?;
     s.borrow_mut().work_exclusive(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
     let result = match await_work(s, CALIBRATION_TIMEOUT).await {
         Ok(Work::Calibrated(result)) => result,
         Ok(_) => Err(message("APP_CLOSING")),
         Err(e) => {
-            // The worker still has the devices: the maintenance stays until
-            // its report comes (stray ends it then).
-            s.borrow_mut().maintenance_held = true;
+            // The worker still has the devices: the maintenance stays, this
+            // operation's, until its report comes (stray ends it then), and
+            // no other operation can enter or end it meanwhile.
+            s.borrow_mut().maintenance_held = Some(owner);
             return Err(e);
         }
     };
-    leave_maintenance(s).await;
+    leave_maintenance(s, owner).await;
     result
 }
 async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
@@ -1607,9 +1651,10 @@ async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mu
 /// comes up on the new settings is a separate matter, told in the window's
 /// own error line, so that the dialog can close on what did succeed.
 async fn save_configuration(s: Shared, settings: Settings, mut account: Account, reply: Reply<()>) {
-    if let Err(e) = enter_maintenance(&s).await {
-        return s.borrow().answer(reply, Err(e));
-    }
+    let owner = match enter_maintenance(&s).await {
+        Ok(owner) => owner,
+        Err(e) => return s.borrow().answer(reply, Err(e)),
+    };
     let saved = {
         let mut p = s.borrow_mut();
         (|| -> Result<(), String> {
@@ -1646,7 +1691,7 @@ async fn save_configuration(s: Shared, settings: Settings, mut account: Account,
             Ok(())
         })()
     };
-    leave_maintenance(&s).await;
+    leave_maintenance(&s, owner).await;
     match saved {
         Err(e) => s.borrow().answer(reply, Err(e)),
         Ok(()) => {
@@ -1683,20 +1728,52 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
     };
     let text = path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?.to_string();
     // The file's name goes out first: the engine's events about it (an
-    // "active" that comes before the answer) are matched to it meanwhile.
-    s.borrow_mut().recording_pending = Some(path.clone());
+    // "active" that comes before the answer, a "failed" or "closed" that
+    // settles it) are matched to it meanwhile, and the engine it goes to is
+    // remembered.
+    {
+        let mut p = s.borrow_mut();
+        let generation = p.link.as_ref().map(EngineLink::generation).ok_or_else(|| message("ENGINE_NOT_RUNNING"))?;
+        p.recording_pending = Some(PendingStart { path: path.clone(), generation, ended: None });
+    }
     let answer = request(s, "ksip_record", &format!("{id} {text}")).await;
     let mut p = s.borrow_mut();
-    p.recording_pending = None;
+    let start = p.recording_pending.take().expect("the start that was out");
+    // What the engine said about the file while the start was out comes
+    // first: it is the later word.
+    match start.ended {
+        Some(PendingEnd::Failed) => {
+            p.recording_refused = Some(id.to_string());
+            return Err(message("RECORDING_START_FAILED"));
+        }
+        Some(PendingEnd::Closed { complete }) => {
+            // Opened and already closed (its call ended at once): the file is
+            // there and becomes an MP3, once; nothing is shown as recording.
+            if p.open_recording.take().is_some_and(|open| open == path) || !p.open_recording.is_some() {
+                p.services.convert_recording(path);
+            }
+            if !complete {
+                p.view.error = message("RECORDING_WRITE_PROBLEM");
+            }
+            return Ok(());
+        }
+        None => {}
+    }
+    let alive = p.link.as_ref().is_some_and(|link| link.generation() == start.generation);
     let answered = match answer {
         Ok((_, answer)) => Some(answer),
-        Err(e) if e.unknown() => {
-            // No answer: the engine may well be recording. It is shown as
-            // recording, with the file known open only if the engine's
-            // "active" has said so, until its word or a stop settles it.
+        Err(e) if e.unknown() && alive => {
+            // No answer, and the engine is still there: it may well be
+            // recording. It is shown as recording, with the file known open
+            // only if the engine's "active" has said so, until its word or a
+            // stop settles it.
             p.services.log(LOG_APP, format!("ksip: the recording start was not answered ({e})"));
             None
         }
+        // No answer and the engine is gone: nothing was started that is
+        // still running, and whatever file it opened is the confirmed end's
+        // to convert (engine_ended). Nothing is shown.
+        Err(e) if e.unknown() => return Err(e.into()),
         Err(e) => return Err(e.into()),
     };
     p.phone.note_recording(id, &name);
@@ -2037,10 +2114,28 @@ mod tests {
     #[test]
     fn maintenance_is_entered_and_left_without_an_engine() {
         let a = actor();
-        run_now(enter_maintenance(&a.shared)).unwrap();
+        let owner = run_now(enter_maintenance(&a.shared)).unwrap();
         assert!(a.shared.borrow().phone.in_maintenance());
-        run_now(leave_maintenance(&a.shared));
+        // Held for one operation: another is refused, and cannot end it.
+        assert_eq!(run_now(enter_maintenance(&a.shared)), Err(message("MAINTENANCE_IN_PROGRESS")));
+        run_now(leave_maintenance(&a.shared, owner + 1));
+        assert!(a.shared.borrow().phone.in_maintenance());
+        run_now(leave_maintenance(&a.shared, owner));
         assert!(!a.shared.borrow().phone.in_maintenance());
+    }
+    #[test]
+    fn a_maintenance_held_for_a_late_worker_is_released_by_its_report_only() {
+        let a = actor();
+        let owner = run_now(enter_maintenance(&a.shared)).unwrap();
+        a.shared.borrow_mut().maintenance_held = Some(owner);
+        // A connect meanwhile finds the phone held, and ends nothing.
+        assert_eq!(run_now(enter_maintenance(&a.shared)), Err(message("MAINTENANCE_IN_PROGRESS")));
+        assert!(a.shared.borrow().phone.in_maintenance());
+        // The late report frees it, once.
+        a.shared.borrow_mut().stray(Work::Calibrated(Err("late".into())));
+        assert!(!a.shared.borrow().phone.in_maintenance());
+        assert!(a.shared.borrow().maintenance_off_owed, "the engine is told off at the next look");
+        assert!(a.shared.borrow().maintenance_held.is_none());
     }
     #[test]
     fn a_request_without_an_engine_is_refused_at_once() {
