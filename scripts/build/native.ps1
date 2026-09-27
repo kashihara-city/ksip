@@ -39,7 +39,7 @@ Run cmake @('--install','temp/build/libressl')
 $tls = @("-DOPENSSL_ROOT_DIR=$prefix", "-DOPENSSL_INCLUDE_DIR=$prefix/include", "-DOPENSSL_SSL_LIBRARY=$prefix/lib/ssl.lib", "-DOPENSSL_CRYPTO_LIBRARY=$prefix/lib/crypto.lib", '-DUSE_OPENSSL=ON')
 $tlsFlags = @("-DCMAKE_C_FLAGS_RELEASE=$flags /DNOCRYPT","-DCMAKE_CXX_FLAGS_RELEASE=$flags /DNOCRYPT")
 # Wideband codecs. Both are static only: the app ships as one executable.
-Run cmake (@('-S','temp/vendor/opus','-B','temp/build/opus') + $common + @('-DOPUS_BUILD_SHARED_LIBRARY=OFF','-DOPUS_BUILD_PROGRAMS=OFF','-DOPUS_BUILD_TESTING=OFF'))
+Run cmake (@('-S','temp/vendor/opus','-B','temp/build/opus') + $common + @('-DOPUS_BUILD_SHARED_LIBRARY=OFF','-DOPUS_BUILD_PROGRAMS=OFF','-DOPUS_BUILD_TESTING=OFF','-DOPUS_STATIC_RUNTIME=ON'))
 Run cmake @('--build','temp/build/opus','--parallel','8')
 Run cmake @('--install','temp/build/opus')
 Run cmake (@('-S','temp/vendor/libg722','-B','temp/build/libg722') + $common + @('-DENABLE_SHARED_LIB=OFF','-DENABLE_STATIC_LIB=ON','-DG722_BUILD_TEST_PROGRAMS=OFF','-DBUILD_TESTING=OFF'))
