@@ -2,7 +2,7 @@
 from pathlib import Path
 import ctypes as C
 from ctypes import wintypes as W
-import json, os, re, socket, subprocess, threading, time
+import json, os, re, secrets, socket, subprocess, threading, time
 
 ROOT = Path(__file__).resolve().parents[2]
 class Credential(C.Structure):
@@ -206,19 +206,21 @@ opus_packet_loss 10
 opus_dtx no
 opus_application voip
 rtp_ports {rtp_port}-{rtp_port+20}
-ctrl_tcp_listen 127.0.0.1:{ctrl}
+ksip_ctrl_listen 127.0.0.1:{ctrl}
 {codec_modules}
 module aufile.dll
 module ksip_audio_filter.dll
 module auconv.dll
 module auresamp.dll
-module ctrl_tcp.dll
+module ksip_ctrl.dll
 module menu.dll
 module ksip.dll
 {extra_config}
 ''',encoding='utf-8')
         self.log=open(self.dir/'engine.log','wb')
-        env=dict(os.environ,KSIP_CREDENTIAL_TARGET=self.target)
+        # The control connection takes commands only after the start's secret.
+        self.secret=secrets.token_hex(32)
+        env=dict(os.environ,KSIP_CREDENTIAL_TARGET=self.target,KSIP_CONTROL_SECRET=self.secret)
         engine=os.environ.get('KSIP_TEST_ENGINE_EXE')
         command=[engine,'--engine',str(os.getpid()),'-f',str(self.dir)] if engine else [str(ROOT/'temp/build/native/bin/baresip.exe'),'-f',str(self.dir)]
         self.proc=subprocess.Popen(command,cwd=ROOT/'temp/build/native/bin',env=env,stdin=subprocess.DEVNULL,stdout=self.log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
@@ -231,6 +233,7 @@ module ksip.dll
                     time.sleep(.1)
             self.sock.settimeout(None)
             threading.Thread(target=self.read,daemon=True).start()
+            self.command('auth',self.secret)
             self.command('ksip_login')
             self.wait(lambda s:s['registration']=='REGISTER_OK',timeout=20)
         except BaseException:self.close();raise

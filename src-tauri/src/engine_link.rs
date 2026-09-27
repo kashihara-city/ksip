@@ -55,10 +55,12 @@ pub struct StartPlan {
     pub profile: PathBuf,
     pub control: TcpListener,
     pub credential_target: String,
+    /// The secret this engine takes commands for: made for this start, handed
+    /// to the process in its environment, said first on the control
+    /// connection, and written nowhere else (not the profile, not the log).
+    pub control_secret: String,
 }
 
-/// How a stop went: whether the engine had to be ended, how long it took to
-/// go, and what it exited with.
 /// How an engine process ended. One of these exists only for a process that
 /// has ended: `EngineLink::stop` returns Err rather than a report when it
 /// could not confirm the end.
@@ -108,6 +110,7 @@ impl EngineLink {
             .args(["--engine", &std::process::id().to_string(), "-f", &profile])
             .current_dir(plan.exe.parent().unwrap())
             .env("KSIP_CREDENTIAL_TARGET", &plan.credential_target)
+            .env("KSIP_CONTROL_SECRET", &plan.control_secret)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -139,7 +142,7 @@ impl EngineLink {
             }));
         }
         let deadline = Instant::now() + Duration::from_secs(12);
-        let writer = loop {
+        let mut writer = loop {
             if let Ok(socket) = TcpStream::connect((Ipv4Addr::LOCALHOST, ctrl)) {
                 break socket;
             }
@@ -156,6 +159,23 @@ impl EngineLink {
         writer
             .set_write_timeout(Some(Duration::from_secs(3)))
             .map_err(err)?;
+        // The first word is the secret; the engine takes commands from this
+        // connection only once it has said yes, and takes no other connection
+        // while this one holds. The answer is read here, frame by frame from
+        // the socket itself, so that nothing after it is swallowed.
+        writer.set_read_timeout(Some(Duration::from_secs(5))).map_err(err)?;
+        let hello = serde_json::to_vec(&json!({"command":"auth","params":plan.control_secret,"token":"auth"})).map_err(err)?;
+        let accepted = write_netstring(&mut writer, &hello)
+            .and_then(|()| read_netstring(&mut writer))
+            .ok()
+            .and_then(|answer| serde_json::from_slice::<Value>(&answer).ok())
+            .is_some_and(|answer| answer["ok"] == true && answer["token"] == "auth");
+        if !accepted {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(message("ENGINE_CONTROL_AUTH_FAILED"));
+        }
+        writer.set_read_timeout(None).map_err(err)?;
         let mut reader = BufReader::new(writer.try_clone().map_err(err)?);
         let (s, q) = (sink.clone(), seq.clone());
         threads.push(thread::spawn(move || {

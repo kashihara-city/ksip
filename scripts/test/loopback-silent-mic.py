@@ -1,6 +1,6 @@
 """Verify that an unavailable WASAPI microphone still produces timed RTP."""
 from pathlib import Path
-import array, json, math, socket, subprocess, threading, time, wave
+import array, json, math, os, secrets, socket, subprocess, threading, time, wave
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "temp" / "build" / "silent-fallback-test"
@@ -38,17 +38,18 @@ auplay_format s16
 auenc_format s16
 audec_format s16
 rtp_ports {rtp}-{rtp + 20}
-ctrl_tcp_listen 127.0.0.1:{ctrl}
+ksip_ctrl_listen 127.0.0.1:{ctrl}
 module g711.dll
 module ksip_audio.dll
 module aufile.dll
 module ksip_audio_filter.dll
 module auconv.dll
 module auresamp.dll
-module ctrl_tcp.dll
+module ksip_ctrl.dll
 module menu.dll
 module_app account.dll
 """
+        self.secret = secrets.token_hex(32)
         (self.directory / "config").write_text(config, encoding="utf-8")
         (self.directory / "accounts").write_text(
             f"<sip:{name}@localhost:{sip};transport=udp>;regint=0;audio_codecs=PCMU/8000/1;answermode=manual\n",
@@ -58,6 +59,7 @@ module_app account.dll
         self.process = subprocess.Popen(
             [str(ROOT / "temp/build/native/bin/baresip.exe"), "-f", str(self.directory)],
             cwd=self.directory,
+            env=dict(os.environ, KSIP_CONTROL_SECRET=self.secret),
             stdin=subprocess.DEVNULL,
             stdout=self.log,
             stderr=subprocess.STDOUT,
@@ -74,6 +76,7 @@ module_app account.dll
                 time.sleep(0.1)
         self.socket.settimeout(None)
         threading.Thread(target=self.read, daemon=True).start()
+        self.command("auth", self.secret)
 
     def read(self):
         try:

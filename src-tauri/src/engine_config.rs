@@ -9,6 +9,20 @@ use crate::settings::Settings;
 use crate::storage::Account;
 use std::{net::TcpListener, path::PathBuf};
 
+/// A secret for one engine start, from the system's random source: 256 bits
+/// as hex. The engine takes commands only on the connection that says it.
+fn control_secret() -> Result<String, String> {
+    use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+    let mut bytes = [0u8; 32];
+    // SAFETY: a null algorithm handle with BCRYPT_USE_SYSTEM_PREFERRED_RNG asks
+    // the system's generator to fill the buffer, whose length is given.
+    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status != 0 {
+        return Err(crate::message::message_with("ENGINE_START_FAILED", ["no random source for the control secret"]));
+    }
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -219,10 +233,10 @@ impl Services {
         put(format!("ksip_speaker_gain {}", s.speaker_gain));
         put(format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20));
         put("rtp_timeout 60".into());
-        put(format!("ctrl_tcp_listen 127.0.0.1:{ctrl}"));
+        put(format!("ksip_ctrl_listen 127.0.0.1:{ctrl}"));
         for module in [
             "g711", "libg722", "opus", "wasapi", "ksip_audio", "ksip_audio_filter", "auconv", "auresamp",
-            "ctrl_tcp", "menu", "srtp", "dtls_srtp", "ksip",
+            "ksip_ctrl", "menu", "srtp", "dtls_srtp", "ksip",
         ] {
             put(format!("module {module}.dll"));
         }
@@ -268,6 +282,7 @@ impl Services {
                 profile,
                 control: reservation,
                 credential_target: self.store.target.clone(),
+                control_secret: control_secret()?,
             },
             endpoints,
             address,

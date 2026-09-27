@@ -13,7 +13,7 @@ def old(date):return datetime.datetime.fromisoformat(date.replace('Z','+00:00'))
 # only what scripts/build/patch-webrtc.py touches may show up in git status.
 PATCHED={'re':{'cmake/re-config.cmake','src/sipevent/subscribe.c'},
          'baresip':{'src/main.c','CMakeLists.txt'}}
-ADDED={'baresip':('modules/ksip_audio/','modules/ksip_audio_filter/','modules/ksip/')}
+ADDED={'baresip':('modules/ksip_audio/','modules/ksip_audio_filter/','modules/ksip/','modules/ksip_ctrl/')}
 WEBRTC_TOUCHED={'BUILD.gn','modules/audio_device/win/core_audio_utility_win.cc',
                 'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc','ksip_bridge/'}
 def tree_differences(name,archive,tree):

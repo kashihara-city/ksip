@@ -111,6 +111,9 @@ shutil.copy2(ROOT / "src-native/ksip_audio/filter/CMakeLists.txt",
              baresip / "modules/ksip_audio_filter/CMakeLists.txt")
 shutil.copytree(ROOT / "src-native/ksip",
                 baresip / "modules/ksip", dirs_exist_ok=True)
+# The app's authenticated control connection, in place of baresip's ctrl_tcp.
+shutil.copytree(ROOT / "src-native/ksip_ctrl",
+                baresip / "modules/ksip_ctrl", dirs_exist_ok=True)
 
 cmake = baresip / "CMakeLists.txt"
 cmake.write_text(cmake.read_text() + "\n# KSIP embedded entry point\n" +

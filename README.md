@@ -479,6 +479,7 @@ python -X utf8 scripts/test/run.py --group app --folder temp/build/ci-ksip
 実音声デバイスは不要です。
 
 ```powershell
+python -X utf8 scripts/test/loopback-control.py
 python -X utf8 scripts/test/loopback-call.py
 python -X utf8 scripts/test/loopback-gain.py
 python -X utf8 scripts/test/loopback-silent-mic.py

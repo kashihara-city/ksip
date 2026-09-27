@@ -1,5 +1,5 @@
 ﻿"""Set up a disposable UI profile, an auto-answer peer and a caller using the provided accounts."""
-import json,pathlib,sys,tempfile,time,winreg
+import json,pathlib,subprocess,sys,tempfile,time,winreg
 from sip_fixture import PBX,ROOT,Phone,account_with,accounts,ca_certificate,lab,numbers,park_target,park_watch,put_account,talking_source,delete_account
 BASE=ROOT/'temp/build/ksip-ui';BASE.mkdir(parents=True,exist_ok=True)
 PROFILE='test-ui-ksip'
@@ -140,14 +140,10 @@ elif sys.argv[1]=='cleanup':
     try:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,KEY)
     except FileNotFoundError:pass
 elif sys.argv[1]=='stop-engine':
-    import socket,re
-    path=pathlib.Path(tempfile.gettempdir())/'ksip-profile'/PROFILE/'config'
-    if path.exists():
-        match=re.search(r'ctrl_tcp_listen 127.0.0.1:(\d+)',path.read_text())
-        if match:
-            try:
-                with socket.create_connection(('127.0.0.1',int(match[1])),timeout=2) as sock:
-                    data=b'{"command":"quit","token":"cleanup"}'
-                    sock.sendall(str(len(data)).encode()+b':'+data+b',')
-                time.sleep(1)
-            except OSError:pass
+    # The control connection takes nobody but the app, so a leftover engine of
+    # the test profile is ended by its process: the one started with --engine
+    # on this profile's folder.
+    folder=str(pathlib.Path(tempfile.gettempdir())/'ksip-profile'/PROFILE).replace('\\','\\\\').replace("'","''")
+    script=f"Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%--engine%'\" | Where-Object {{ $_.CommandLine -like '*{folder}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+    subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',script],check=False,capture_output=True)
+    time.sleep(1)
