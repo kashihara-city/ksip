@@ -385,6 +385,7 @@ python -X utf8 scripts/test/build-paths.py
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/rust.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/audio-module.ps1
 python -X utf8 scripts/test/audio-devices.py
 python -X utf8 scripts/test/supply-chain.py
 python -X utf8 scripts/test/i18n.py
@@ -394,6 +395,8 @@ python -X utf8 scripts/test/line-endings.py
 ```
 
 `test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。
+
+`test/audio-module.ps1` は音声モジュールのうち機器も baresip も要らない部分を単体で試します。再生ストリームの引継ぎ（新しいプレーヤーが取り、去れば前のプレーヤーへ返す、起動に失敗した切替は取り上げた相手へ返す）、マイクが開かないときの無音の代替、コールバック解除中の競合（実行中の呼び出しを待つ、呼び出しの中からの解除は待たない）、WAV 録音のバッファと見出しです。
 
 `test/audio-devices.py` にはWindowsの実音声デバイスが必要です。
 

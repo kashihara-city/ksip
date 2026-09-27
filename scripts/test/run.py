@@ -6,7 +6,7 @@ TESTS = ROOT / 'scripts/test'
 # The order matters: the cheap checks first, the app last because it takes the
 # extension the phones use, and the group is what --group selects.
 SUITE = [
-    ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-devices.py'),
+    ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'audio-devices.py'),
     ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'no-secrets.py'),
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'),
     ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'),

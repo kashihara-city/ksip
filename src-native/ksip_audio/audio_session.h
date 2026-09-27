@@ -20,7 +20,8 @@ struct auplay_st {
     void *arg;
     bool started;
     // The endpoint this player asked for, so that it can take the stream back.
-    char device[160];
+    char device_name[160];
+    const char *device() const { return device_name; }
 };
 struct ausrc_st {
     ausrc_read_h *handler;
