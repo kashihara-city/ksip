@@ -48,10 +48,11 @@ std::unique_ptr<Recorder> prepare(const std::string &path, uint32_t rate) {
 // written (a start it asked for answers the same; a reservation that came
 // true has only this to tell it).
 void install(std::unique_ptr<Recorder> r, const audio *stream) {
+    const std::string path = r->path();
     current = std::move(r);
     recording_audio = stream;
     detached_audio = nullptr;
-    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "active");
+    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "active %s", path.c_str());
 }
 // Finishing (joining the writer, closing the file) can wait on the disk, so
 // it happens outside the gate; the words are the ones the app reads.
@@ -60,8 +61,8 @@ Recorder::Summary end(std::unique_ptr<Recorder> finished) {
     info("ksip_audio_filter: WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
     // The app's word that the file is closed, whichever way that came
     // about, and whether it is whole; the stop command answers the same.
-    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "closed %s %llu %llu", summary.failed || summary.dropped ? "incomplete" : "complete",
-                 summary.bytes, summary.dropped);
+    module_event("ksip_audio_filter", "recording", nullptr, nullptr, "closed %s %llu %llu %s", summary.failed || summary.dropped ? "incomplete" : "complete",
+                 summary.bytes, summary.dropped, finished->path().c_str());
     return summary;
 }
 bool readable(const auframe *f) { return f->fmt == AUFMT_S16LE || f->fmt == AUFMT_FLOAT; }
@@ -115,7 +116,7 @@ void decoder_created(const audio *stream, uint32_t rate) {
         // The app was told the recording was reserved; it has to hear that
         // no file came of it.
         warning("ksip_audio_filter: cannot open the reserved WAV file\n");
-        module_event("ksip_audio_filter", "recording", nullptr, nullptr, "failed reserved");
+        module_event("ksip_audio_filter", "recording", nullptr, nullptr, "failed %s", path.c_str());
     }
     reserved_call.clear();
     reserved_path.clear();

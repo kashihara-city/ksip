@@ -439,6 +439,28 @@ void a_side_that_starts_late_is_placed_where_the_clock_says() {
     check(left.size() >= 3200 && left.size() <= 4400, "the file is as long as the time that passed");
     std::filesystem::remove_all(dir);
 }
+void silence_for_a_gap_goes_after_the_samples_already_in_hand() {
+    auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-order";
+    std::filesystem::create_directories(dir);
+    auto path = dir / "order.wav";
+    {
+        auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
+        // 200 ms of the far end (within the slack, so it waits in the ring),
+        // then nothing for 550 ms, then more. What came first stays first;
+        // the gap's silence sits between the two.
+        std::vector<int16_t> first(1600, 1000), second(1600, 2000);
+        rp->push_far(first.data(), first.size(), 8000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(550));
+        rp->push_far(second.data(), second.size(), 8000);
+        rp->finish();
+    }
+    auto left = channel(read_file(path), 0);
+    check(left.size() > 1600 && left[0] == 1000 && left[1599] == 1000, "the samples already in hand keep the start of the file");
+    size_t second_at = 1600;
+    while (second_at < left.size() && left[second_at] != 2000) ++second_at;
+    check(second_at < left.size() && left[second_at - 1] == 0 && second_at >= 3600 && second_at <= 5600, "the later samples come after the gap's silence, where the clock had got to");
+    std::filesystem::remove_all(dir);
+}
 void a_rate_change_in_the_middle_keeps_the_time_axis() {
     auto dir = std::filesystem::temp_directory_path() / "ksip-recorder-test-change";
     std::filesystem::create_directories(dir);
@@ -565,6 +587,7 @@ int main() {
     a_gap_in_the_far_end_leaves_this_side_in_place();
     a_rate_change_in_the_middle_keeps_the_time_axis();
     a_side_that_starts_late_is_placed_where_the_clock_says();
+    silence_for_a_gap_goes_after_the_samples_already_in_hand();
     std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

@@ -33,7 +33,7 @@ void Recorder::header() {
     fwrite("data", 1, 4, file);
     le32(file, (uint32_t)bytes);
 }
-Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), started(std::chrono::steady_clock::now()), slack(sr / 5) {
+Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(path), started(std::chrono::steady_clock::now()), slack(sr / 5) {
     file = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
     if (!file) return;
     writing = true;
@@ -41,17 +41,13 @@ Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), started(std
     worker = std::thread([this] { run(); });
 }
 bool Recorder::writable() const {
-    return (remote.available() && local.available()) || remote.available() > slack || local.available() > slack;
+    return (remote.count && local.count) || remote.count > slack || local.count > slack;
 }
 uint64_t Recorder::clock_frames() const {
     auto passed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
     return uint64_t(passed) * rate / 1000000;
 }
 int16_t Recorder::take(Side &side) {
-    if (side.silence) {
-        --side.silence;
-        return 0;
-    }
     int16_t v = side.ring[side.rd];
     side.rd = (side.rd + 1) % side.ring.size();
     --side.count;
@@ -64,19 +60,12 @@ void Recorder::run() {
         {
             std::unique_lock<std::mutex> lock(mutex);
             wake.wait(lock, [this] { return done || writable(); });
-            if (done) {
-                // Silence owed at the very end, with no samples behind it on
-                // either side, would only lengthen the file: it is let go.
-                if (!remote.count) remote.silence = 0;
-                if (!local.count) local.silence = 0;
-                if (!remote.available() && !local.available()) break;
-            }
-            // The two sides pair up as far as both have come, each giving
-            // the silence it owes before its samples. A side alone waits the
-            // slack for the other, then goes with silence on the other
-            // channel; at the end, whatever is left goes that way.
+            if (done && !remote.count && !local.count) break;
+            // The two sides pair up as far as both have come. A side alone
+            // waits the slack for the other, then goes with silence on the
+            // other channel; at the end, whatever is left goes that way.
             bool take_far, take_near;
-            const size_t far_have = remote.available(), near_have = local.available();
+            const size_t far_have = remote.count, near_have = local.count;
             if (far_have && near_have) {
                 n = std::min(far_have, near_have);
                 take_far = take_near = true;
@@ -107,18 +96,26 @@ void Recorder::run() {
     if (ferror(file) || fflush(file) != 0) failed = true;
 }
 // Into the side's ring, under the lock; what does not fit is counted. First
-// the side is placed on the clock: the frames it has accounted for (written,
-// owed as silence or in hand) are compared with the frames the clock has
-// counted, and a shortfall beyond the slack is owed as silence in front of
-// these samples. Arrival jitter stays within the slack and moves nothing; a
-// real gap is filled to the clock, so that the side comes back where the
-// other side is by then. Samples that were dropped for want of room are
-// made up the same way, as silence.
+// the side is placed on the clock: the frames it has accounted for (written
+// or in hand) are compared with the frames the clock has counted, and a
+// shortfall beyond the slack goes into the ring as silence, in stream
+// order: after what is in hand, before these samples. Arrival jitter stays
+// within the slack and moves nothing; a real gap is filled to the clock, so
+// that the side comes back where the other side is by then. Samples that
+// were dropped for want of room are made up the same way. The silence never
+// takes more than half the ring, so that it cannot crowd the samples out;
+// a gap longer than that is placed short by the difference.
 void Recorder::append(Side &side, const int16_t *samples, size_t frames) {
     std::lock_guard<std::mutex> lock(mutex);
     if (done) return;
-    const uint64_t accounted = written + side.available(), now = clock_frames();
-    if (now > accounted + slack) side.silence += size_t(now - accounted);
+    const uint64_t accounted = written + side.count, now = clock_frames();
+    size_t gap = now > accounted + slack ? size_t(now - accounted) : 0;
+    gap = std::min(gap, side.ring.size() / 2);
+    for (size_t i = 0; i < gap && side.count < side.ring.size(); ++i) {
+        side.ring[side.wr] = 0;
+        side.wr = (side.wr + 1) % side.ring.size();
+        ++side.count;
+    }
     for (size_t i = 0; i < frames; ++i) {
         if (side.count == side.ring.size()) {
             dropped += frames - i;

@@ -12,12 +12,15 @@
 // What the app is told, and how: the commands answer at once (started,
 // reserved, switched, stopped; EIO from stop for a file that is incomplete),
 // and the moments the commands cannot answer for come as module events
-// (BEVENT_MODULE, param "ksip_audio_filter,recording,<what>"): "active"
-// when a reserved file is opened and being written, "failed reserved" when
-// that could not be done, and "closed complete|incomplete <bytes> <dropped>"
-// whenever a file is closed, by a stop, a switch or the module's end. The
-// event is the word that counts when a command's answer was lost; the log
-// lines are for reading, not parsing.
+// (BEVENT_MODULE, param "ksip_audio_filter,recording,<what>"), each naming
+// the file so that the app can tell which recording it is about, whatever
+// it has heard back so far: "active <path>" when a file is opened and being
+// written (a start's own file too, before the start answers), "failed
+// <path>" when a reserved file could not be opened, and "closed
+// complete|incomplete <bytes> <dropped> <path>" whenever a file is closed,
+// by a stop, a switch or the module's end. The event is the word that
+// counts when a command's answer was lost; the log lines are for reading,
+// not parsing.
 #pragma once
 #include <cmath>
 #include <algorithm>

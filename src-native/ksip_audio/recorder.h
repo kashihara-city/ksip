@@ -9,12 +9,14 @@
 // interpolation. Both sides are placed on one clock, the one that started
 // with the file: a side whose samples fall short of the time that has
 // passed by more than the slack (a far end that stopped sending, this side
-// before the microphone opened) has the missing stretch put in as silence
-// before its next samples, so the two channels keep their places against
-// each other to within the slack, and a side that never comes back is
-// written as silence against the other. The clock is wall time at arrival,
-// not the packets' own stamps: a side that is late by a whole slack is
-// placed late by that much.
+// before the microphone opened) has the missing stretch put into its
+// stream as silence, in its place: after the samples already in hand and
+// before the ones that have just come, so what was heard before the gap
+// keeps its place and what comes after it lands where the clock has got
+// to. The two channels thus keep their places against each other to within
+// the slack, and a side that never comes back is written as silence against
+// the other. The clock is wall time at arrival, not the packets' own stamps:
+// a side that is late by a whole slack is placed late by that much.
 //
 // Threads: push_far and push_near are each called from one audio thread;
 // the constructor, finish and the destructor from the thread that owns the
@@ -42,6 +44,8 @@ public:
     Recorder &operator=(const Recorder &) = delete;
     bool opened() const { return writing; }
     uint32_t file_rate() const { return rate; }
+    // The path the file was opened under: the recording's name to the app.
+    const std::string &path() const { return file_path; }
     // What the far end sent: `frames` samples at `rate`, brought to the
     // file's rate. What does not fit in the buffer is dropped and counted.
     void push_far(const int16_t *samples, size_t frames, uint32_t rate);
@@ -62,13 +66,9 @@ private:
     // One direction: its ring of samples at the file's rate, and the state
     // of the resampler that fills it (touched only by the pushing thread).
     struct Side {
+        // Samples at the file's rate, gap silence included, in stream order.
         std::array<int16_t, 48000 * 10> ring{};
         size_t rd = 0, wr = 0, count = 0;
-        // Silence owed before the ring's samples: the stretch of the clock
-        // this side had nothing for. Written first, as zeros.
-        size_t silence = 0;
-        // Samples in hand, silence included: what the writer may take.
-        size_t available() const { return silence + count; }
         // The input rate seen last, the place of the next output sample
         // between the input samples (index -1 is `last`, the last sample of
         // the chunk before), and that sample.
@@ -82,8 +82,7 @@ private:
     void append(Side &side, const int16_t *samples, size_t frames);
     // Frames the clock has counted since the file opened, at the file's rate.
     uint64_t clock_frames() const;
-    // The next frame of a side, silence first; the caller has seen to it
-    // that there is one.
+    // The next frame of a side; the caller has seen to it that there is one.
     int16_t take(Side &side);
     // Something can go to the file: both sides have samples, or one side has
     // waited longer than the slack for the other.
@@ -95,6 +94,7 @@ private:
     // ("far" and "near" are macros in the Windows headers.)
     Side remote, local;
     uint32_t rate = 0;
+    std::string file_path;
     std::chrono::steady_clock::time_point started;
     // Frames written to the file so far, both channels alike.
     uint64_t written = 0;
