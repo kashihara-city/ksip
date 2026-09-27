@@ -36,7 +36,12 @@ TARGET = f'''{BEGIN}
 rtc_static_library("ksip_webrtc_audio") {{
   visibility = [ "*" ]
   allow_poison = [ "environment_construction" ]
-  sources = [ "ksip_bridge/ksip_audio_bridge.cc" ]
+  sources = [
+    "ksip_bridge/apm.cc",
+    "ksip_bridge/device_selection.cc",
+    "ksip_bridge/ksip_audio_bridge.cc",
+    "ksip_bridge/pcm_processing.cc",
+  ]
   complete_static_lib = true
   suppressed_configs += [ "//build/config/compiler:thin_archive" ]
   deps = [
@@ -167,7 +172,9 @@ def main():
     bridge = source / "ksip_bridge"
     bridge.mkdir(exist_ok=True)
     for name in ["ksip_audio_bridge.h", "ksip_audio_bridge_internal.h",
-                 "ksip_audio_bridge.cc"]:
+                 "bridge_state.h", "callback_gate.h",
+                 "ksip_audio_bridge.cc", "apm.cc", "device_selection.cc",
+                 "pcm_processing.cc"]:
         shutil.copy2(ROOT / "src-native/webrtc" / name, bridge / name)
     build = source / "BUILD.gn"
     text = build.read_text(encoding="utf-8")
