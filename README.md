@@ -260,7 +260,7 @@ ksip.exe ksip:ANSWER
 
 ### グループポリシー（ADMX）
 
-**このテンプレートはテスト中です。** GPMC・gpedit への読み込みと、配布した値での動作はまだ確認していません。
+**このテンプレートはテスト中です。** Windows サンドボックスの中で gpedit に読み込み、代表的なポリシーの有効・無効・未構成で書かれる値を確かめています（下の `scripts/test/sandbox-admx.py`）。ドメインの GPMC から配布した場合の動作は、まだ確認していません。
 
 `docs/admx/` に管理用テンプレートがあります。`ksip.admx` と言語別の `ja-JP\ksip.adml`・`en-US\ksip.adml` を、ドメインのセントラルストア（`\\<ドメイン>\SYSVOL\<ドメイン>\Policies\PolicyDefinitions\`）か端末の `%WINDIR%\PolicyDefinitions\` に同じ構成で置くと、「ユーザーの構成 > 管理用テンプレート > KSIP」に出ます。
 
@@ -491,6 +491,21 @@ python -X utf8 scripts/test/loopback-call.py
 python -X utf8 scripts/test/loopback-gain.py
 python -X utf8 scripts/test/loopback-silent-mic.py
 ```
+
+### グループポリシー（ADMX）のテスト
+
+**重いテスト（1回6分ほど）で、ローカル専用です。** Windows サンドボックスが要り、CI では動きません。`run.py` の群には入っておらず、テンプレートを変えたときやリリース前に手で流します。
+
+```powershell
+python -X utf8 scripts/test/sandbox-admx.py
+```
+
+サンドボックスを起動し、中で `docs/admx` を `PolicyDefinitions` に置いて gpedit（ローカル グループ ポリシー エディター）を UIAutomation で操作します（中の台本は `scripts/test/sandbox-admx.ps1`）。確かめるのは次のとおりです。
+
+- 読み込み時にエラーが出ず、KSIP の各カテゴリに61のポリシーがそろって並ぶこと
+- 真偽（`aec`）・数値（`sip_port`）・選択（`transport`）・文字列（`server`）・カスタムボタン（`button_1` の5値）を有効・無効・未構成にして `gpupdate` したとき、`HKCU\Software\KashiharaCity\ksip` に期待どおりの型と値が書かれる（無効で消える、未構成では残る）こと
+
+1回6分ほどかかります。サンドボックスは同時に1つしか動かないので、開いているときは閉じてから流してください。実行中はサンドボックスの画面を操作しないでください（キー入力で項目を選んでいます）。結果は `temp/reports/sandbox-admx.json` に残ります。
 
 ## ライセンス
 
