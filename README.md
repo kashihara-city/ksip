@@ -312,7 +312,7 @@ deps/                ネイティブ原本のロックと、取得したまま�
                      ハッシュ固定済みアーカイブ。どちらもGit管理する
 licenses/            Rust依存の補完ライセンス
 docs/                READMEに載せる画面の画像
-src-web/             HTML・CSS・vanilla JavaScriptの画面
+src-web/             HTML・CSS・vanilla JavaScriptの画面（app.js を入口に ES modules で分割。npm なし）
 src-web/locales/     言語ファイル
 src-tauri/           Rust/Tauriのソースと固定設定
 src-native/          KSIP固有のC/C++ソースとビルド定義

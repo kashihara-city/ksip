@@ -64,18 +64,22 @@ def names():
     page = (ROOT / "src-web/index.html").read_text(encoding="utf-8")
     for name in re.findall(r'data-i18n(?:-placeholder|-title|-label)?="(%s)"' % NAME, page):
         note(name, False)
-    app = (ROOT / "src-web/app.js").read_text(encoding="utf-8")
-    for arguments in call_arguments(app, "t"):
-        for name in re.findall(r"'(%s)'" % NAME, arguments):
-            note(name, False)
-    for arguments in call_arguments(app, "fill"):
-        chosen = re.findall(r"'(%s)'" % NAME, arguments)
-        first = re.match(r"\s*'(%s)'" % NAME, arguments)
-        if first:
-            note(first.group(1), True)
-            chosen = chosen[1:]
-        for name in chosen:
-            note(name, False)
+    # Every script of the page (the locales are the tables themselves).
+    scripts = sorted((ROOT / "src-web").glob("*.js"))
+    assert len(scripts) >= 5, f"only {len(scripts)} page scripts found"
+    for path in scripts:
+        app = path.read_text(encoding="utf-8")
+        for arguments in call_arguments(app, "t"):
+            for name in re.findall(r"'(%s)'" % NAME, arguments):
+                note(name, False)
+        for arguments in call_arguments(app, "fill"):
+            chosen = re.findall(r"'(%s)'" % NAME, arguments)
+            first = re.match(r"\s*'(%s)'" % NAME, arguments)
+            if first:
+                note(first.group(1), True)
+                chosen = chosen[1:]
+            for name in chosen:
+                note(name, False)
     return found
 
 
