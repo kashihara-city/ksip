@@ -33,7 +33,7 @@ int NoiseLevel(const char *level) {
 }
 int module_init() {
     uint32_t delay = 20;
-    bool aec = true, high_pass = true, agc = true, detail = false;
+    bool aec = true, high_pass = true, agc = false, detail = false;
     char level[24] = "high";
     conf_get_u32(conf_cur(), "webrtc_aec_delay_ms", &delay);
     conf_get_bool(conf_cur(), "ksip_aec_enabled", &aec);

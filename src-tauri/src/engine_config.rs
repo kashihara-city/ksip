@@ -326,7 +326,7 @@ mod tests {
             assert!(config.contains("ksip_aec_enabled yes"));
             assert!(config.contains("ksip_high_pass yes"));
             assert!(config.contains("ksip_noise_suppression high"));
-            assert!(config.contains("ksip_agc yes"));
+            assert!(config.contains("ksip_agc no"));
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
             let mut link = EngineLink::start(prepared.plan, generation, tx.clone()).unwrap();

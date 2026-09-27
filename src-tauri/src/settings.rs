@@ -164,7 +164,9 @@ impl Default for Settings {
             aec_delay_ms: 20,
             high_pass: true,
             noise_suppression: "high".into(),
-            agc: true,
+            // Off unless asked for: the digital gain lifts quiet rooms and their
+            // noise alike, and the microphone volume is the person's own to set.
+            agc: false,
             register_interval: 300,
             detail_log: false,
             browser_integration: false,
@@ -760,7 +762,7 @@ mod tests {
         assert_eq!(settings.aec_delay_ms, 20);
         assert!(settings.high_pass);
         assert_eq!(settings.noise_suppression, "high");
-        assert!(settings.agc);
+        assert!(!settings.agc, "the automatic gain is off unless asked for");
         assert_eq!(settings.register_interval, 300);
         assert_eq!(settings.tray_after_call, -1);
         assert!(!settings.detail_log);
