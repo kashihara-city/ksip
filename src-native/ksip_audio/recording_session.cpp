@@ -13,9 +13,10 @@ namespace {
 // Every entry here is taken under the gate; the audio threads take it for
 // every frame, so nothing slow happens under it: a Recorder (a file, a
 // writer thread, its buffers) is made before the gate is taken and only put
-// in place under it. The commands and the decoder events all come on
-// baresip's main thread, so between a command's two takes of the gate only
-// the audio threads run, and they change nothing here.
+// in place under it, and finished after it is let go. The commands and the
+// decoder events all come on baresip's main thread, so between a command's
+// two takes of the gate only the audio threads run, and they change nothing
+// here. The Recorder's own lock, under the gate, is the only nesting.
 std::mutex gate;
 std::unique_ptr<Recorder> current;
 // The calls carrying audio, with the rate their decoder runs at.
@@ -53,7 +54,9 @@ void install(std::unique_ptr<Recorder> r, const audio *stream) {
 // it happens outside the gate; the words are the ones the app reads.
 Recorder::Summary end(std::unique_ptr<Recorder> finished) {
     auto summary = finished->finish();
-    info("ksip_audio_filter: receive WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
+    // For the log only; the app learns how the file ended from the stop
+    // command's answer.
+    info("ksip_audio_filter: WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
     return summary;
 }
 bool readable(const auframe *f) { return f->fmt == AUFMT_S16LE || f->fmt == AUFMT_FLOAT; }
@@ -84,7 +87,7 @@ void decoder_created(const audio *stream, uint32_t rate) {
         if (current && !recording_audio && detached_audio == stream) {
             recording_audio = stream;
             detached_audio = nullptr;
-            info("ksip_audio_filter: receive recording goes on with the call's new decoder\n");
+            info("ksip_audio_filter: recording goes on with the call's new decoder\n");
         }
         if (!reserved_call.empty()) {
             auto c = uag_call_find(reserved_call.c_str());
@@ -92,7 +95,7 @@ void decoder_created(const audio *stream, uint32_t rate) {
                 if (reserved_path.empty()) {
                     recording_audio = stream;
                     reserved_call.clear();
-                    info("ksip_audio_filter: receive recording bound to the reserved call\n");
+                    info("ksip_audio_filter: recording bound to the reserved call\n");
                 } else path = reserved_path;
             }
         }
@@ -102,7 +105,7 @@ void decoder_created(const audio *stream, uint32_t rate) {
     std::lock_guard<std::mutex> lock(gate);
     if (r) {
         install(std::move(r), stream);
-        info("ksip_audio_filter: receive recording bound to the reserved call\n");
+        info("ksip_audio_filter: recording bound to the reserved call\n");
     } else warning("ksip_audio_filter: cannot open the reserved WAV file\n");
     reserved_call.clear();
     reserved_path.clear();
@@ -153,7 +156,7 @@ int start(re_printf *pf, const char *prm) {
             if (id.empty()) return re_hprintf(pf, "Call audio is not active\n"), EAGAIN;
             reserved_call = id;
             reserved_path = path;
-            return re_hprintf(pf, "Receive-only recording reserved\n");
+            return re_hprintf(pf, "Recording reserved\n");
         }
         rate = found->second;
     }
@@ -183,7 +186,7 @@ int stop(re_printf *pf) {
             return EIO;
         }
     }
-    return re_hprintf(pf, "Receive-only recording stopped\n");
+    return re_hprintf(pf, "Recording stopped\n");
 }
 int select(re_printf *pf, const char *prm) {
     if (!str_isset(prm)) return EINVAL;
@@ -197,7 +200,7 @@ int select(re_printf *pf, const char *prm) {
         if (strcmp(prm, "-") == 0) {
             recording_audio = nullptr;
             reserved_call.clear();
-            return re_hprintf(pf, "Receive recording input paused\n");
+            return re_hprintf(pf, "Recording input paused\n");
         }
         auto c = uag_call_find(prm);
         if (!c) return ENOENT;
@@ -207,12 +210,12 @@ int select(re_printf *pf, const char *prm) {
             // The call exists but is not carrying audio yet; bind it once it does.
             recording_audio = nullptr;
             reserved_call = prm;
-            return re_hprintf(pf, "Receive recording input reserved\n");
+            return re_hprintf(pf, "Recording input reserved\n");
         }
         if (reserved_path.empty()) {
             recording_audio = target;
             reserved_call.clear();
-            return re_hprintf(pf, "Receive recording input switched\n");
+            return re_hprintf(pf, "Recording input switched\n");
         }
         // The reserved file is for this call: opened outside the gate.
         path = reserved_path;
@@ -224,7 +227,7 @@ int select(re_printf *pf, const char *prm) {
     install(std::move(r), target);
     reserved_path.clear();
     reserved_call.clear();
-    return re_hprintf(pf, "Receive recording input switched\n");
+    return re_hprintf(pf, "Recording input switched\n");
 }
 void close() {
     std::unique_ptr<Recorder> finished;

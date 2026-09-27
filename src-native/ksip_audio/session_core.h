@@ -4,6 +4,10 @@
 // device bridge, the timers and the fallback thread are asked for through
 // the interfaces below, so that the module can put the WebRTC bridge and
 // libre's timers behind them, and a test can put fakes.
+//
+// Threads: the Core is not thread-safe; it is called on one thread (baresip's
+// main thread in the module, the test's thread in the tests), and the
+// callbacks the Adm runs on the audio threads never call back into it.
 #pragma once
 #include <algorithm>
 #include <cerrno>

@@ -640,10 +640,6 @@ impl Phone {
             v.aec_active = false;
             changed = true;
         }
-        if s.contains("ksip_audio_filter: receive WAV closed") && !s.contains("0 dropped samples, error=0") {
-            v.error = message("RECORDING_WRITE_PROBLEM");
-            changed = true;
-        }
         // The engine only warns when it cannot load the trust list, and then
         // fails every TLS registration with nothing else to show for it.
         if s.contains("tls_add_ca() failed") {
@@ -1394,15 +1390,21 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
 }
 async fn stop_recording(s: &Shared) -> Result<(), String> {
     let recording = s.borrow().view.recording;
-    if recording {
-        request(s, "ksip_record_stop", "").await?;
-    }
+    // The engine's answer says how the file ended: an error is a recording
+    // that lost samples or could not be written whole. Either way it is
+    // closed now, so what there is goes on to become an MP3, and the
+    // window is told that the recording has a problem.
+    let outcome = if recording { request(s, "ksip_record_stop", "").await.map(|_| ()) } else { Ok(()) };
     let mut p = s.borrow_mut();
     p.view.recording = false;
     p.view.recording_call.clear();
     if recording {
         let wav = PathBuf::from(p.view.recording_path.clone());
         p.services.convert_recording(wav);
+    }
+    if let Err(e) = outcome {
+        p.services.log(LOG_APP, format!("ksip: the recording did not end cleanly ({e})"));
+        p.view.error = message("RECORDING_WRITE_PROBLEM");
     }
     Ok(())
 }

@@ -95,9 +95,9 @@ int gain(re_printf *pf, void *arg) {
 }
 aufilt filter = {};
 const cmd commands[] = {
-    {"ksip_record", 0, CMD_PRM, "Record receive-only WAV", start},
-    {"ksip_record_select", 0, CMD_PRM, "Select the call appended to the current WAV", select_recording},
-    {"ksip_record_stop", 0, 0, "Finish receive WAV", stop},
+    {"ksip_record", 0, CMD_PRM, "Record a call to a WAV, the far end left and this side right", start},
+    {"ksip_record_select", 0, CMD_PRM, "Select the call the current WAV follows", select_recording},
+    {"ksip_record_stop", 0, 0, "Finish the WAV; an error means it is incomplete", stop},
     {"ksip_gain", 0, CMD_PRM, "Set microphone/speaker software gain", gain},
 };
 int init() {

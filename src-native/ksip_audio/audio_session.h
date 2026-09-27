@@ -4,6 +4,17 @@
 // that will not open is replaced by timed silence, and streams nobody uses
 // close after a while. The device module registers with baresip and asks
 // here; the streams themselves are the WebRTC bridge's.
+//
+// Threads: open, close and the allocations run on baresip's main thread, as
+// do the destructors of a player or a source and the timers; the bridge's
+// render and capture callbacks run on WebRTC's audio threads and only ever
+// see the player or source they were installed with, through the bridge's
+// CallbackGate. A player or source is therefore detached from the bridge
+// (which drains a callback in flight) before it is freed; the fallback
+// thread of a source that could not open its microphone is joined when the
+// fallback stops, before the source is freed. Lifetime: one bridge for the
+// module's lifetime, open() at module load and close() at unload; not
+// re-opened.
 #pragma once
 #include <cmath>
 #include <algorithm>

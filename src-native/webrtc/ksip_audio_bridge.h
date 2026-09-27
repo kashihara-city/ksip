@@ -1,3 +1,16 @@
+/* The C ABI of the WebRTC audio bridge: one ksip_audio object holds the
+   device module and the audio processing, plays the frames its render
+   callback asks for and hands the captured, processed frames to its capture
+   callback.
+
+   Threads: create, destroy, start, stop, detach and the stats are called
+   from one thread (baresip's main thread); the render and capture callbacks
+   run on WebRTC's audio threads, each on its own, and return quickly. A
+   detach or stop returns only when no callback with the old argument is
+   still running, so the argument may be freed afterwards; a callback must
+   not detach or stop its own stream. Lifetime: one object per process in
+   KSIP, created at module load and destroyed at unload; a running stream is
+   stopped by destroy. */
 #ifndef KSIP_AUDIO_BRIDGE_H_
 #define KSIP_AUDIO_BRIDGE_H_
 

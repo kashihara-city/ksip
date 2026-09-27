@@ -5,6 +5,14 @@
 // running, and may then free what the argument points to. Cleared from the
 // callback's own thread it only clears, since the call in flight is the
 // caller itself. Nothing here knows WebRTC or baresip.
+//
+// The contract for the user: Set replaces the pair without waiting for a
+// call in flight, so a slot is cleared (ClearAndDrain) before the thing its
+// argument points to is freed, and only then set again for the next; a
+// clear from inside the callback returns at once, so the callback must not
+// free its own argument before it returns. One gate per callback slot; the
+// audio thread holds the in-flight lock for the whole of a call, so nothing
+// slow belongs in a callback.
 #pragma once
 #include <atomic>
 #include <mutex>

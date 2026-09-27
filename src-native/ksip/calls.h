@@ -2,6 +2,10 @@
 // them blind, send digits), what happens to the others when one changes,
 // the identity a PBX asserts for a caller, and the two switches that refuse
 // incoming calls (do not disturb, maintenance).
+//
+// Threads: baresip's main thread only (commands and call events). Lifetime:
+// module-static state (the identities, the two switches); close() at module
+// unload, first of the ksip parts (ksip.cpp), and no re-initialisation.
 #pragma once
 #include <cmath>
 #include <algorithm>

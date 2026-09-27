@@ -1,7 +1,15 @@
 // Which call is being recorded, and into which file: the recording follows
 // the call the app names, waits for a call that has no audio yet, and stays
 // with a call whose decoder baresip remakes for a codec change. The samples
-// go to the Recorder; the filters bring them here.
+// of both sides go to the Recorder; the filters bring them here.
+//
+// Threads: far_frame and near_frame come from baresip's audio threads (one
+// each) and take the gate for the length of a push; everything else comes
+// on baresip's main thread. Lifetime: module-static state for the one
+// module instance; close() finishes whatever is being recorded and is the
+// last call, after the filter is unregistered so no frame follows it. The
+// outcome of a recording (bytes, dropped samples, a write error) is the
+// stop command's answer; the log line beside it is for reading, not parsing.
 #pragma once
 #include <cmath>
 #include <algorithm>

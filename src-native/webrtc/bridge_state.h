@@ -5,6 +5,14 @@
 // start, stop, detach, destroy), device_selection.cc (which endpoint the
 // ADM opens), pcm_processing.cc (the frames the ADM hands over and asks
 // for) and apm.cc (echo cancellation and its statistics).
+//
+// Threads: the ABI functions run on the owner's one thread; the ADM's
+// callbacks run on WebRTC's audio threads (render and capture, one each)
+// and reach the module's code only through the two CallbackGates. The APM's
+// render and capture entry points are each called from their own audio
+// thread, as WebRTC allows. Lifetime: the struct lives from create to
+// destroy; a gate is cleared and drained before its callback's argument is
+// dropped, and destroy stops both streams first.
 #ifndef KSIP_AUDIO_BRIDGE_STATE_H_
 #define KSIP_AUDIO_BRIDGE_STATE_H_
 

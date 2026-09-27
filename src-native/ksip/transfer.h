@@ -2,6 +2,10 @@
 // the holds to be answered, the retry the other way round, the leftover
 // call the server is left to end, and the outcome the window shows. It owns
 // its timers and clears itself when the module closes.
+//
+// Threads: baresip's main thread only (commands, call events, its timers).
+// Lifetime: module-static state for one transfer at a time; init() after the
+// account, close() before it (ksip.cpp), and no re-initialisation.
 #pragma once
 #include <cmath>
 #include <algorithm>

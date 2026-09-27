@@ -2,6 +2,10 @@
 // (the registrar, the transport, the media encryption), and how the
 // registration stands. It owns the credential handling of the login and the
 // register events; nothing else touches the user agent's registration.
+//
+// Threads: baresip's main thread only. Lifetime: module-static state;
+// init() is the first of the ksip parts and close() the last (ksip.cpp),
+// since the others read the account and the registration through it.
 #pragma once
 #include <cmath>
 #include <algorithm>
