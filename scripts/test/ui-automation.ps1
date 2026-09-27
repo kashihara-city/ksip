@@ -26,11 +26,11 @@ function Move-Mouse([int]$x, [int]$y, [string]$button = '') {
     if ($button -eq 'up') { [KsipWindow]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) }
     Start-Sleep -Milliseconds 120
 }
-function Set-KsipForeground {
+# Keys typed with SendKeys go to the window in front, so a window that is
+# typed into is brought there first, and it is checked that it is.
+function Set-Foreground([IntPtr]$handle, [string]$what) {
     # Windows lets a process bring a window to the front only if it has the
     # person's attention; a tap of Alt, the old way round that, counts as such.
-    $script:KsipApp.Refresh()
-    $handle = $script:KsipApp.MainWindowHandle
     [KsipWindow]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 300
     if ([KsipWindow]::GetForegroundWindow() -ne $handle) {
@@ -38,7 +38,11 @@ function Set-KsipForeground {
         [KsipWindow]::SetForegroundWindow($handle) | Out-Null
         Start-Sleep -Milliseconds 300
     }
-    if ([KsipWindow]::GetForegroundWindow() -ne $handle) { throw "The KSIP window could not be brought to the front (foreground is $([KsipWindow]::GetForegroundWindow()), KSIP is $handle)" }
+    if ([KsipWindow]::GetForegroundWindow() -ne $handle) { throw "$what could not be brought to the front (foreground is $([KsipWindow]::GetForegroundWindow()), $what is $handle)" }
+}
+function Set-KsipForeground {
+    $script:KsipApp.Refresh()
+    Set-Foreground $script:KsipApp.MainWindowHandle 'The KSIP window'
 }
 function Click-At([string]$id) {
     Set-KsipForeground

@@ -56,9 +56,11 @@ pub struct EngineReport {
     #[serde(default)]
     pub tls_trust_certificates: Option<u64>,
 }
-/// The audio module's state as the engine reports it: how things stand now
-/// (read off the module's own records, never off its log), and the device
-/// starts that failed, counted so that one between two reports is still seen.
+/// The audio module's state as the engine reports it
+/// (src-native/ksip_audio/audio_state.h): how things stand now, read off the
+/// module's own records and never off its log, and for each side the device
+/// starts that failed, counted on their own so that one between two reports
+/// is still seen and one side's failure is not hidden by the other's.
 #[derive(Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct AudioState {
@@ -66,21 +68,28 @@ pub struct AudioState {
     pub ready: bool,
     /// Echo cancellation, the high-pass filter, the noise suppression or the AGC is on.
     pub processing: bool,
-    /// Where the current call's microphone comes from: "device", "silence"
-    /// (a device that would not start, replaced by timed silence) or "none".
-    pub input: String,
-    /// A player has the speaker.
-    pub output: bool,
-    pub failures: u64,
-    pub last_failure: Option<AudioFailure>,
+    pub microphone: MicrophoneState,
+    pub speaker: SpeakerState,
 }
 #[derive(Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
-pub struct AudioFailure {
-    /// "speaker" or "microphone".
-    pub side: String,
-    /// The bridge's start result.
-    pub result: i64,
+pub struct MicrophoneState {
+    /// Where the current call's microphone comes from: "device", "silence"
+    /// (a device that would not start, replaced by timed silence) or "none".
+    pub input: String,
+    pub failures: u64,
+    /// The bridge's result for the last failed start, once there is one.
+    pub last_result: Option<i64>,
+}
+#[derive(Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct SpeakerState {
+    /// A player has the stream. False while nothing plays, which is not a failure.
+    pub playing: bool,
+    /// Every start that failed: a new player, the old one put back after it,
+    /// or the stream handed back to the player left.
+    pub failures: u64,
+    pub last_result: Option<i64>,
 }
 /// Everything a start needs, worked out before the process exists: the
 /// executable, the profile folder with the config already written, and the

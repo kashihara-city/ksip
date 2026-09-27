@@ -18,18 +18,29 @@ function Use-FileDialog([string]$title, [string]$path) {
         if(!$dialog){Start-Sleep -Milliseconds 200}
     }
     if(!$dialog){throw "No file dialog titled $title"}
-    # The file name box holds the focus when the dialog opens, but Windows 11
-    # does not let UIAutomation set its value: the path is pasted (not typed,
-    # so that the input method cannot turn it into something else), and Enter
-    # takes it.
+    # Windows 11 does not let UIAutomation set the file name box's value: the
+    # path is pasted (not typed, so that the input method cannot turn it into
+    # something else), and Enter takes it. The keys go to the window in front,
+    # and in the dialog to what has the focus, which is not always the box
+    # (the file list, say, where Ctrl+A and Ctrl+V mean files): so the dialog
+    # is brought to the front and the box chosen by its access key, Alt+N
+    # (ファイル名(N)), each time; a dialog still open after that is tried
+    # again, up to three times.
     Start-Sleep -Milliseconds 500
     Set-Clipboard -Value ([IO.Path]::GetFullPath($path))
-    [System.Windows.Forms.SendKeys]::SendWait('^a')
-    [System.Windows.Forms.SendKeys]::SendWait('^v')
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-    $gone=[DateTime]::UtcNow.AddSeconds(10)
-    while([Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$name) -and [DateTime]::UtcNow -lt $gone){Start-Sleep -Milliseconds 200}
+    for($attempt=1; $attempt -le 3; $attempt++){
+        Set-Foreground ([IntPtr]$dialog.Current.NativeWindowHandle) "The file dialog '$title'"
+        [System.Windows.Forms.SendKeys]::SendWait('%n')
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        [System.Windows.Forms.SendKeys]::SendWait('^v')
+        Start-Sleep -Milliseconds 300
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        $gone=[DateTime]::UtcNow.AddSeconds(5)
+        while([Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$name) -and [DateTime]::UtcNow -lt $gone){Start-Sleep -Milliseconds 200}
+        if(![Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Descendants,$name)){return}
+    }
+    throw "The file dialog '$title' did not take the path"
 }
 function Open-Settings { Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null }
 function Export-Saved {

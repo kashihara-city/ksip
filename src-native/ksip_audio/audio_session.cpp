@@ -120,19 +120,27 @@ void close() {
     g_audio = nullptr;
 }
 ksip_audio *bridge() { return g_audio; }
+namespace {
+void AddFailures(odict *side, const Core<auplay_st, ausrc_st>::Failures &failures) {
+    odict_entry_add(side, "failures", ODICT_INT, static_cast<int64_t>(failures.count));
+    if (failures.count) odict_entry_add(side, "last_result", ODICT_INT, static_cast<int64_t>(failures.last_result));
+}
+} // namespace
 void add_state(odict *audio) {
     static const char *const inputs[] = {"none", "device", "silence"};
-    odict_entry_add(audio, "input", ODICT_STRING, inputs[static_cast<int>(g_core.input())]);
-    odict_entry_add(audio, "output", ODICT_BOOL, g_core.playout() != nullptr);
-    odict_entry_add(audio, "failures", ODICT_INT, static_cast<int64_t>(g_core.failures()));
-    if (!g_core.failures()) return;
-    odict *last = nullptr;
-    if (odict_alloc(&last, 4)) return;
-    const auto failure = g_core.last_failure();
-    odict_entry_add(last, "side", ODICT_STRING, failure.playout ? "speaker" : "microphone");
-    odict_entry_add(last, "result", ODICT_INT, static_cast<int64_t>(failure.result));
-    odict_entry_add(audio, "last_failure", ODICT_OBJECT, last);
-    mem_deref(last);
+    odict *microphone = nullptr, *speaker = nullptr;
+    if (!odict_alloc(&microphone, 4)) {
+        odict_entry_add(microphone, "input", ODICT_STRING, inputs[static_cast<int>(g_core.input())]);
+        AddFailures(microphone, g_core.microphone_failures());
+        odict_entry_add(audio, "microphone", ODICT_OBJECT, microphone);
+    }
+    if (!odict_alloc(&speaker, 4)) {
+        odict_entry_add(speaker, "playing", ODICT_BOOL, g_core.playout() != nullptr);
+        AddFailures(speaker, g_core.speaker_failures());
+        odict_entry_add(audio, "speaker", ODICT_OBJECT, speaker);
+    }
+    mem_deref(microphone);
+    mem_deref(speaker);
 }
 
 int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handler, void *arg) {

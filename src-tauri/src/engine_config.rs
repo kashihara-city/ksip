@@ -300,7 +300,7 @@ mod tests {
     #[test]
     #[ignore = "requires scripts/build/native.ps1; uses isolated temp/build/rust-engine-test"]
     fn real_engine_starts_stops_and_restarts() {
-        use crate::engine_link::{AudioState, EngineLink, EngineReport};
+        use crate::engine_link::{AudioState, EngineLink, EngineReport, MicrophoneState, SpeakerState};
         use crate::phone_message::{LinkBody, Message};
         let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -382,7 +382,15 @@ mod tests {
                 }
             };
             let audio = state.audio.expect("the audio module's state");
-            assert_eq!(audio, AudioState { ready: true, processing: true, input: "none".into(), output: false, failures: 0, last_failure: None });
+            assert_eq!(
+                audio,
+                AudioState {
+                    ready: true,
+                    processing: true,
+                    microphone: MicrophoneState { input: "none".into(), failures: 0, last_result: None },
+                    speaker: SpeakerState { playing: false, failures: 0, last_result: None },
+                }
+            );
             let report = link.stop().map_err(|back| back.1).unwrap();
             assert!(!report.forced, "the engine quits when asked");
             // The reader thread says the connection is gone once the engine has.

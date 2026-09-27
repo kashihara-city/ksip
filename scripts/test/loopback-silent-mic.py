@@ -159,7 +159,7 @@ def main():
         receiver.command("ksip_record_stop")
         sender.command("hangup")
         receiver.event("CALL_CLOSED")
-        after = sender.audio(lambda audio: audio["input"] == "none")
+        after = sender.audio(lambda audio: audio["microphone"]["input"] == "none")
     finally:
         for phone in reversed(phones):
             phone.close()
@@ -174,9 +174,10 @@ def main():
     # signed PCM unit, rather than necessarily to exactly zero.
     assert rms < 2, rms
     assert "ksip: microphone fallback active" in log, log
-    assert during["ready"] and during["input"] == "silence", during
-    assert during["failures"] >= 1 and during["last_failure"]["side"] == "microphone", during
-    assert after["input"] == "none" and after["failures"] == during["failures"], after
+    assert during["ready"] and during["microphone"]["input"] == "silence", during
+    assert during["microphone"]["failures"] >= 1 and "last_result" in during["microphone"], during
+    assert during["speaker"]["failures"] == 0, during
+    assert after["microphone"]["input"] == "none" and after["microphone"]["failures"] == during["microphone"]["failures"], after
     print(json.dumps({"during": during, "after": after}, indent=2))
     print(json.dumps({"samples": len(samples), "rate": rate, "rms": rms}, indent=2))
     print("PASS: unavailable WebRTC ADM microphone produced continuous silent RTP")

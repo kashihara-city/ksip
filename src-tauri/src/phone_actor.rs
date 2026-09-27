@@ -362,7 +362,8 @@ struct Actor {
 struct EngineNotices {
     audio_down: bool,
     no_trust: bool,
-    failures: u64,
+    /// The speaker's failed starts already said, by the speaker's own count.
+    speaker_failures: u64,
 }
 impl EngineNotices {
     /// What a report has to say that was not said: the audio module is not up,
@@ -375,11 +376,10 @@ impl EngineNotices {
                 self.audio_down = true;
                 said.push(message("AUDIO_DEVICE_INIT_FAILED"));
             }
-            if audio.failures > self.failures {
-                self.failures = audio.failures;
-                if let Some(failure) = audio.last_failure.as_ref().filter(|f| f.side == "speaker") {
-                    said.push(message_with("AUDIO_SPEAKER_START_FAILED", [failure.result.to_string()]));
-                }
+            if audio.speaker.failures > self.speaker_failures {
+                self.speaker_failures = audio.speaker.failures;
+                let result = audio.speaker.last_result.map(|r| r.to_string()).unwrap_or_default();
+                said.push(message_with("AUDIO_SPEAKER_START_FAILED", [result]));
             }
         }
         // baresip only warns when it cannot load the trust list, and then
@@ -967,7 +967,7 @@ impl Phone {
         // in the next report, and nothing the log said stands against them.
         if let Some(audio) = &report.audio {
             v.aec_active = audio.ready && audio.processing;
-            v.microphone_fallback = audio.input == "silence";
+            v.microphone_fallback = audio.microphone.input == "silence";
         }
         v.transfer = report.transfer;
         v.parking = report.parking;
@@ -2054,38 +2054,71 @@ mod tests {
     fn the_audio_state_follows_the_reports_through_failure_and_recovery() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
-        let audio = |input: &str, failures: u64, last: Value| json!({"ready": true, "processing": true, "input": input, "output": true, "failures": failures, "last_failure": last});
-        p.apply_report(1, report_with(audio("device", 0, Value::Null), None));
+        // The module's state as audio_state.h writes it: the microphone's input
+        // and failures, the speaker's failures.
+        let audio = |input: &str, microphone: u64, speaker: u64| {
+            json!({"ready": true, "processing": true,
+                   "microphone": {"input": input, "failures": microphone, "last_result": -5},
+                   "speaker": {"playing": true, "failures": speaker, "last_result": -3}})
+        };
+        p.apply_report(1, report_with(audio("device", 0, 0), None));
         assert!(p.view.aec_active && !p.view.microphone_fallback && p.view.error.is_empty());
         // The microphone would not start: silence stands in, and says so by the
         // notice, not by a banner.
-        p.apply_report(2, report_with(audio("silence", 1, json!({"side": "microphone", "result": -3})), None));
+        p.apply_report(2, report_with(audio("silence", 1, 0), None));
         assert!(p.view.microphone_fallback && p.view.aec_active && p.view.error.is_empty());
         // Silence replaced by silence is still silence; the device back is the device.
-        p.apply_report(3, report_with(audio("silence", 2, json!({"side": "microphone", "result": -3})), None));
+        p.apply_report(3, report_with(audio("silence", 2, 0), None));
         assert!(p.view.microphone_fallback);
-        p.apply_report(4, report_with(audio("device", 2, json!({"side": "microphone", "result": -3})), None));
+        p.apply_report(4, report_with(audio("device", 2, 0), None));
         assert!(!p.view.microphone_fallback, "the microphone that came back is shown as back");
         // A speaker that would not start is said once, and the processing stays
         // on: the stream was handed back.
-        p.apply_report(5, report_with(audio("device", 3, json!({"side": "speaker", "result": -3})), None));
+        p.apply_report(5, report_with(audio("device", 2, 1), None));
         assert_eq!(p.view.error, message_with("AUDIO_SPEAKER_START_FAILED", ["-3"]));
         assert!(p.view.aec_active, "a failed start does not turn the processing off");
         p.view.error.clear();
-        p.apply_report(6, report_with(audio("device", 3, json!({"side": "speaker", "result": -3})), None));
+        p.apply_report(6, report_with(audio("device", 2, 1), None));
         assert!(p.view.error.is_empty(), "a failure already said is not said again by the next report");
         // A report older than one applied changes nothing.
-        p.apply_report(5, report_with(audio("silence", 3, json!({"side": "speaker", "result": -3})), None));
+        p.apply_report(5, report_with(audio("silence", 2, 1), None));
         assert!(!p.view.microphone_fallback);
         // Calls gone and the source with them: the module says none.
-        p.apply_report(7, report_with(audio("none", 3, Value::Null), None));
+        p.apply_report(7, report_with(audio("none", 2, 1), None));
         assert!(!p.view.microphone_fallback);
+    }
+    #[test]
+    fn a_speaker_failure_is_said_though_the_microphone_failed_after_it_before_the_report() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let report = |microphone: u64, speaker: u64, input: &str| {
+            report_with(
+                json!({"ready": true, "processing": true,
+                       "microphone": {"input": input, "failures": microphone, "last_result": -5},
+                       "speaker": {"playing": false, "failures": speaker, "last_result": -3}}),
+                None,
+            )
+        };
+        p.apply_report(1, report(0, 0, "none"));
+        // Between two reports the speaker failed and then the microphone: both
+        // are in the next report, each counted on its own.
+        p.apply_report(2, report(1, 1, "silence"));
+        assert_eq!(p.view.error, message_with("AUDIO_SPEAKER_START_FAILED", ["-3"]));
+        assert!(p.view.microphone_fallback);
+        // The microphone recovering does not take the speaker's failure back,
+        // and a later failure of the speaker (a hand-back, say) is said again.
+        p.view.error.clear();
+        p.apply_report(3, report(1, 1, "device"));
+        assert!(p.view.error.is_empty() && !p.view.microphone_fallback);
+        p.apply_report(4, report(1, 2, "device"));
+        assert_eq!(p.view.error, message_with("AUDIO_SPEAKER_START_FAILED", ["-3"]));
     }
     #[test]
     fn a_module_that_is_not_up_and_an_empty_trust_store_are_said_once() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
-        let down = json!({"ready": false, "processing": false, "input": "none", "output": false, "failures": 0});
+        let down = json!({"ready": false, "processing": false,
+                          "microphone": {"input": "none", "failures": 0}, "speaker": {"playing": false, "failures": 0}});
         p.apply_report(1, report_with(down.clone(), Some(0)));
         assert!(!p.view.aec_active);
         assert_eq!(p.view.error, message("TRUST_STORE_UNUSABLE"), "the last thing said stands");

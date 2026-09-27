@@ -79,15 +79,18 @@ public:
         const bool running = adm.playout_running();
         const int result = adm.start_playout(fresh->device(), fresh);
         if (result) {
-            hooks.start_failed(true, fresh->device(), result);
-            note_failure(true, result);
-            if (previous && adm.start_playout(previous->device(), previous) == 0) {
-                previous->started = true;
-                active_playout = previous;
-                hooks.log("ksip_audio: WebRTC ADM playout handed back after a failed start\n");
-            } else {
-                keep_warm();
+            failed(true, fresh->device(), result);
+            if (previous) {
+                const int restored = adm.start_playout(previous->device(), previous);
+                if (restored == 0) {
+                    previous->started = true;
+                    active_playout = previous;
+                    hooks.log("ksip_audio: WebRTC ADM playout handed back after a failed start\n");
+                    return ENODEV;
+                }
+                failed(true, previous->device(), restored);
             }
+            keep_warm();
             return ENODEV;
         }
         players.push_back(fresh);
@@ -112,12 +115,14 @@ public:
         if (active_playout) return;
         if (!players.empty()) {
             Play *previous = players.back();
-            if (adm.start_playout(previous->device(), previous) == 0) {
+            const int result = adm.start_playout(previous->device(), previous);
+            if (result == 0) {
                 previous->started = true;
                 active_playout = previous;
                 hooks.log("ksip_audio: WebRTC ADM playout handed back\n");
                 return;
             }
+            failed(true, previous->device(), result);
         }
         keep_warm();
     }
@@ -147,8 +152,7 @@ public:
         const bool running = adm.recording_running();
         const int result = adm.start_recording(device, fresh);
         if (result) {
-            hooks.start_failed(false, device, result);
-            note_failure(false, result);
+            failed(false, device, result);
             hooks.start_fallback(fresh);
         } else {
             fresh->started = true;
@@ -172,23 +176,30 @@ public:
     // disagree with them: a source that started has the device, one that did
     // not runs on the fallback's silence, and a new source replaces either.
     Input input() const { return !active_source ? Input::None : active_source->started ? Input::Device : Input::Silence; }
-    // A device start that failed, the newest of them. Counted, so that one
-    // that happened between two reports is still seen, whatever came after.
-    struct Failure {
-        bool playout = false;
-        int result = 0;
+    // The device starts that failed on one side: how many, and the bridge's
+    // result for the last of them. Each side is kept on its own, so that a
+    // failure of the speaker is not hidden by a later one of the microphone,
+    // and counted, so that one between two reports is still seen.
+    struct Failures {
+        unsigned count = 0;
+        int last_result = 0;
     };
-    unsigned failures() const { return failure_count; }
-    Failure last_failure() const { return failure; }
+    Failures speaker_failures() const { return speaker; }
+    Failures microphone_failures() const { return microphone; }
 
 private:
     void keep_warm() { clock.start(Timer::Linger, kLingerMs); }
-    void note_failure(bool playout, int result) {
-        ++failure_count;
-        failure = {playout, result};
+    // Every start that fails comes here, whichever path tried it: a new
+    // player or source, the old player put back after a new one failed, the
+    // stream handed back to the player left. Logged and counted in one place,
+    // so that no path is left out of either.
+    void failed(bool playout, const char *device, int result) {
+        hooks.start_failed(playout, device, result);
+        Failures &side = playout ? speaker : microphone;
+        ++side.count;
+        side.last_result = result;
     }
-    unsigned failure_count = 0;
-    Failure failure;
+    Failures speaker, microphone;
     Adm &adm;
     Clock &clock;
     Hooks hooks;
