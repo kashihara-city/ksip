@@ -138,6 +138,9 @@ try {
     $end=[DateTime]::UtcNow.AddSeconds(5)
     while((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \[' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
     if((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \['){throw "Clipboard has $(Get-Clipboard) instead of log lines"}
+    # A reconnect writes log lines while the selection holds the display:
+    # registered, the switch unregisters first (and asks), then connects again.
+    Click-Id 'unregister';Wait-Text 'confirm' '着信しません' | Out-Null;Click-Id 'confirm-ok';Wait-Class 'registration' 'reg-unregistered'
     Click-Id 'reconnect';Start-Sleep -Seconds 3;Wait-Class 'registration' 'reg-register_ok'
     if(!(Find-Id 'logs-paused')){throw 'The log display resumed while the selection was still there'}
     if((Text-Id 'logs') -ne $held){throw 'The log display changed while it was held'}

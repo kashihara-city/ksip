@@ -28,7 +28,7 @@ use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
 use crate::phone_state::{automatic_recording_target, MaintenanceRefused, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
-use crate::settings::{connect_prerequisites, dial_target, validate, CustomButton, Settings, SAVE_MARK};
+use crate::settings::{connect_prerequisites, dial_target, validate, validate_buttons, CustomButton, Settings, SAVE_MARK};
 use crate::storage::Account;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -206,8 +206,15 @@ enum Job {
     Save {
         settings: Box<Settings>,
         account: Account,
+        reply: Reply<String>,
+    },
+    SaveButtons {
+        buttons: Vec<CustomButton>,
         reply: Reply<()>,
     },
+    /// Settings the engine takes only at a start were saved while a call was
+    /// up or ringing: now that none is left, the engine is started on them.
+    ApplySaved,
     SelectDevice {
         kind: String,
         device: String,
@@ -242,16 +249,17 @@ impl Job {
     fn refuse(self, why: String) {
         match self {
             Job::Connect(reply) | Job::RefreshDevices(reply) => reply.send(Err(why)),
-            Job::Save { reply, .. } | Job::SelectDevice { reply, .. } => reply.send(Err(why)),
+            Job::Save { reply, .. } => reply.send(Err(why)),
+            Job::SaveButtons { reply, .. } | Job::SelectDevice { reply, .. } => reply.send(Err(why)),
             Job::Action { reply, .. } => reply.send(Err(why)),
             Job::Calibrate { reply, .. } => reply.send(Err(why)),
             Job::SetVolume { reply, .. } => reply.send(Err(why)),
-            Job::Poll | Job::Initialize | Job::Reconnect | Job::Recover | Job::MaintenanceOff | Job::Stop => {}
+            Job::Poll | Job::Initialize | Job::Reconnect | Job::ApplySaved | Job::Recover | Job::MaintenanceOff | Job::Stop => {}
         }
     }
     /// Whether the job may be dropped for waiting too long.
     fn expires(&self) -> bool {
-        !matches!(self, Job::Poll | Job::Stop | Job::Initialize | Job::Recover | Job::MaintenanceOff)
+        !matches!(self, Job::Poll | Job::Stop | Job::Initialize | Job::Recover | Job::MaintenanceOff | Job::ApplySaved)
     }
     /// Whether the job still has to run when the app is leaving.
     fn survives_closing(&self) -> bool {
@@ -282,6 +290,10 @@ struct Phone {
     /// The engine refused or did not answer the end of maintenance: told
     /// again at the next look, so that it does not go on refusing calls.
     maintenance_off_owed: bool,
+    /// Settings the engine reads only at a start were saved while a call was
+    /// up or ringing: the engine is started on them once no call is left
+    /// (Job::ApplySaved). Any start takes them, and clears this.
+    reconnect_owed: bool,
     /// The WAV the engine has open for the recording, once it has said so
     /// (a start answered "started", or the "active" event of a reservation
     /// that came true). Converted to an MP3 exactly once, when the file is
@@ -410,6 +422,7 @@ impl Actor {
             starting_lost: false,
             lost: None,
             maintenance_off_owed: false,
+            reconnect_owed: false,
             notices: EngineNotices::default(),
             open_recording: None,
             recording_refused: None,
@@ -544,12 +557,18 @@ impl Actor {
                 }
             }
         }
+        // A reconnect owed to a save made during a call is queued once the
+        // last call has gone, whatever message said so.
+        if self.shared.borrow().reconnect_due() && !self.queue.iter().any(|(_, job)| matches!(job, Job::ApplySaved)) {
+            self.queue.push_back((Instant::now(), Job::ApplySaved));
+        }
     }
     /// Answers a command that will not be carried out.
     fn refuse(command: Command, why: String) {
         match command {
             Command::Connect(reply) | Command::RefreshDevices(reply) | Command::Shutdown(reply) => reply.send(Err(why)),
-            Command::SaveConfiguration { reply, .. } | Command::SelectAudioDevice { reply, .. } => reply.send(Err(why)),
+            Command::SaveConfiguration { reply, .. } => reply.send(Err(why)),
+            Command::SaveButtons { reply, .. } | Command::SelectAudioDevice { reply, .. } => reply.send(Err(why)),
             Command::Action { reply, .. } => reply.send(Err(why)),
             Command::CalibrateAec { reply, .. } => reply.send(Err(why)),
             Command::SetVolume { reply, .. } => reply.send(Err(why)),
@@ -590,6 +609,7 @@ impl Actor {
             Command::Connect(reply) => Job::Connect(reply),
             Command::Action { name, id, value, line, reply } => Job::Action { name, id, value, line, reply },
             Command::SaveConfiguration { settings, account, reply } => Job::Save { settings, account, reply },
+            Command::SaveButtons { buttons, reply } => Job::SaveButtons { buttons, reply },
             Command::SelectAudioDevice { kind, device, reply } => Job::SelectDevice { kind, device, reply },
             Command::RefreshDevices(reply) => Job::RefreshDevices(reply),
             Command::CalibrateAec { microphone, speaker, careful, reply } => Job::Calibrate { microphone, speaker, careful, reply },
@@ -682,6 +702,27 @@ impl Actor {
                 s.borrow().answer(reply, result);
             }),
             Job::Save { settings, account, reply } => Box::pin(save_configuration(s, *settings, account, reply)),
+            Job::SaveButtons { buttons, reply } => Box::pin(save_buttons(s, buttons, reply)),
+            Job::ApplySaved => Box::pin(async move {
+                // A call may have come in since this was queued; then the
+                // reconnect stays owed until it too has gone. One the person
+                // stopped by unregistering is not made for them either: the
+                // saved settings are used at their next connect.
+                let go = {
+                    let mut p = s.borrow_mut();
+                    if !p.reconnect_due() {
+                        false
+                    } else {
+                        p.reconnect_owed = false;
+                        !p.view.unregistered_by_choice
+                    }
+                };
+                if go {
+                    if let Err(e) = connect(&s).await {
+                        s.borrow_mut().report_error(e);
+                    }
+                }
+            }),
             Job::SelectDevice { kind, device, reply } => Box::pin(async move {
                 let result = select_audio_device(&s, &kind, device).await;
                 s.borrow().answer(reply, result);
@@ -1034,15 +1075,18 @@ impl Phone {
         // The same check the export reports on: the mark again, the
         // credential, the account, and the settings read and checked.
         let (account, settings) = connect_prerequisites(&self.services.store)?;
-        // The engine takes thirty comma-separated numbers to watch, empty ones included.
-        let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
-        watched.resize(CustomButton::COUNT, String::new());
-        Ok((account, settings, watched.join(",")))
+        let watched = watch_list(&settings);
+        Ok((account, settings, watched))
     }
     /// The window's view of a phone that is connecting, and the new
     /// generation: the calls of the old engine are gone, and what the old
     /// one may still say is told apart by generation.
+    /// Whether the owed start can be made now: no call is left.
+    fn reconnect_due(&self) -> bool {
+        self.reconnect_owed && self.phone.calls().is_empty() && !self.closing
+    }
     fn begin_start(&mut self, settings: &Settings) -> u64 {
+        self.reconnect_owed = false;
         self.services.logs.lock().unwrap().set_detail(settings.detail_log);
         // The window shows what the engine is actually running with, so a
         // reconnect brings the saved settings forward as well.
@@ -1697,54 +1741,186 @@ async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mu
 /// Saves the settings and the account, and answers; whether the engine then
 /// comes up on the new settings is a separate matter, told in the window's
 /// own error line, so that the dialog can close on what did succeed.
-async fn save_configuration(s: Shared, settings: Settings, mut account: Account, reply: Reply<()>) {
+/// The dialog's settings and account, checked and made whole: the CA file
+/// is there, a ringback tone is one the call's player takes, an empty
+/// extension is the authentication user, and an empty password is the one
+/// stored for this user. Answers whether the account is another than the
+/// one the phone registers with (another address or user, a password typed
+/// in, or none stored yet).
+fn check_configuration(p: &Phone, settings: &Settings, account: &mut Account) -> Result<bool, String> {
+    validate(settings)?;
+    let ca = settings.ca_file.trim();
+    if !ca.is_empty() && !Path::new(ca).is_file() {
+        return Err(message("SETTINGS_CA_FILE_MISSING"));
+    }
+    // The ringback tone plays through the call's player, which takes
+    // 48 kHz mono only, so a chosen file is refused here rather than
+    // found silent later. A file that is not there falls back to the
+    // built-in tone, as every sound does.
+    let ringback = settings.sound_ringback.trim();
+    if !ringback.is_empty() {
+        if let Ok(bytes) = std::fs::read(ringback) {
+            if crate::wav::layout(&bytes)? != (48000, 1) {
+                return Err(message("SETTINGS_SOUND_RINGBACK_FORMAT"));
+            }
+        }
+    }
+    // An empty extension registers under the authentication user.
+    if account.extension.trim().is_empty() {
+        account.extension = account.auth_user.trim().into();
+    }
+    let known = &p.view.account;
+    let changed = !account.password.is_empty()
+        || !known.has_password
+        || account.server != known.server
+        || account.port != known.port
+        || account.extension != known.extension
+        || account.auth_user != known.auth_user;
+    if account.password.is_empty() {
+        account.password = p.services.password_for(account)?;
+    }
+    account.validate()?;
+    Ok(changed)
+}
+/// The settings dialog was saved. What the engine reads only at a start (see
+/// Settings::RESTART), or another account, needs the engine started again;
+/// everything else is taken in at once, with the engine left running and a
+/// call up or not. A start would end the calls up or ringing, so while there
+/// are any the settings are saved and the start is owed until none is left.
+/// The answer is a notice for the window, empty when there is nothing to say.
+async fn save_configuration(s: Shared, settings: Settings, mut account: Account, reply: Reply<String>) {
+    let checked = {
+        let p = s.borrow();
+        check_configuration(&p, &settings, &mut account)
+    };
+    let account_changed = match checked {
+        Ok(changed) => changed,
+        Err(e) => return s.borrow().answer(reply, Err(e)),
+    };
+    let (old, restart, calls_up) = {
+        let p = s.borrow();
+        let old = p.view.settings.clone();
+        let restart = account_changed || old.needs_restart(&settings);
+        (old, restart, !p.phone.calls().is_empty())
+    };
+    if !restart {
+        let saved = {
+            let mut p = s.borrow_mut();
+            p.services.persist_settings(&settings).map(|()| {
+                p.view.settings = settings.clone();
+                p.services.apply_browser_integration();
+                p.view.error.clear();
+            })
+        };
+        match saved {
+            Err(e) => s.borrow().answer(reply, Err(e)),
+            Ok(()) => {
+                s.borrow().answer(reply, Ok(String::new()));
+                if let Err(e) = apply_live(&s, &old, &settings).await {
+                    s.borrow_mut().show_error(e);
+                }
+            }
+        }
+        return;
+    }
+    if calls_up {
+        let saved = {
+            let mut p = s.borrow_mut();
+            p.services.persist_configuration(&settings, &account).map(|()| {
+                p.view.settings = settings;
+                p.view.account = account.public();
+                p.services.apply_browser_integration();
+                p.view.error.clear();
+                p.reconnect_owed = true;
+            })
+        };
+        let notice = saved.map(|()| message("SETTINGS_RECONNECT_AFTER_CALLS"));
+        return s.borrow().answer(reply, notice);
+    }
     let owner = match enter_maintenance(&s).await {
         Ok(owner) => owner,
         Err(e) => return s.borrow().answer(reply, Err(e)),
     };
     let saved = {
         let mut p = s.borrow_mut();
-        (|| -> Result<(), String> {
-            validate(&settings)?;
-            let ca = settings.ca_file.trim();
-            if !ca.is_empty() && !Path::new(ca).is_file() {
-                return Err(message("SETTINGS_CA_FILE_MISSING"));
-            }
-            // The ringback tone plays through the call's player, which takes
-            // 48 kHz mono only, so a chosen file is refused here rather than
-            // found silent later. A file that is not there falls back to the
-            // built-in tone, as every sound does.
-            let ringback = settings.sound_ringback.trim();
-            if !ringback.is_empty() {
-                if let Ok(bytes) = std::fs::read(ringback) {
-                    if crate::wav::layout(&bytes)? != (48000, 1) {
-                        return Err(message("SETTINGS_SOUND_RINGBACK_FORMAT"));
-                    }
-                }
-            }
-            // An empty extension registers under the authentication user.
-            if account.extension.trim().is_empty() {
-                account.extension = account.auth_user.trim().into();
-            }
-            if account.password.is_empty() {
-                account.password = p.services.password_for(&account)?;
-            }
-            account.validate()?;
-            p.services.persist_configuration(&settings, &account)?;
+        p.services.persist_configuration(&settings, &account).map(|()| {
             p.view.settings = settings;
             p.view.account = account.public();
             p.services.apply_browser_integration();
             p.view.error.clear();
-            Ok(())
-        })()
+        })
     };
     leave_maintenance(&s, owner).await;
     match saved {
         Err(e) => s.borrow().answer(reply, Err(e)),
         Ok(()) => {
-            s.borrow().answer(reply, Ok(()));
+            s.borrow().answer(reply, Ok(String::new()));
             if let Err(e) = connect(&s).await {
                 s.borrow_mut().report_error(e);
+            }
+        }
+    }
+}
+/// What changed of the settings the running engine is told of, told to it;
+/// the window's own settings need nothing more than the snapshot. The sound
+/// files are replaced in place, as a start does: the engine reads each file
+/// when it plays it.
+async fn apply_live(s: &Shared, old: &Settings, new: &Settings) -> Result<(), String> {
+    s.borrow().services.logs.lock().unwrap().set_detail(new.detail_log);
+    if old.sounds() != new.sounds() {
+        let notes = s.borrow().services.prepare_sounds(new).1;
+        for note in notes {
+            s.borrow().services.log(LOG_APP, note);
+        }
+    }
+    if s.borrow().link.is_none() {
+        return Ok(());
+    }
+    if old.detail_log != new.detail_log {
+        request(s, "ksip_detail_log", if new.detail_log { "on" } else { "off" }).await?;
+    }
+    for (kind, before, after) in [("microphone", old.microphone_gain, new.microphone_gain), ("speaker", old.speaker_gain, new.speaker_gain)] {
+        if before != after {
+            request(s, "ksip_gain", &format!("{kind} {after}")).await?;
+        }
+    }
+    let watched = watch_list(new);
+    if watch_list(old) != watched {
+        request(s, "ksip_parking", &watched).await?;
+    }
+    Ok(())
+}
+/// The numbers the engine watches, as ksip_parking takes them: thirty,
+/// comma-separated, empty ones included.
+fn watch_list(settings: &Settings) -> String {
+    let mut watched: Vec<String> = settings.watched_numbers().iter().map(|n| n.to_string()).collect();
+    watched.resize(CustomButton::COUNT, String::new());
+    watched.join(",")
+}
+/// The custom buttons alone, from the window's button editing: checked as
+/// the buttons, saved whole or not at all, taken in at once, a call up or
+/// not; the engine watches the numbers they name from now on.
+async fn save_buttons(s: Shared, buttons: Vec<CustomButton>, reply: Reply<()>) {
+    let saved = {
+        let mut p = s.borrow_mut();
+        (|| -> Result<Settings, String> {
+            if buttons.len() != CustomButton::COUNT {
+                return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
+            }
+            validate_buttons(&buttons)?;
+            p.services.save_buttons(&buttons)?;
+            let old = p.view.settings.clone();
+            p.view.settings.buttons = buttons;
+            Ok(old)
+        })()
+    };
+    match saved {
+        Err(e) => s.borrow().answer(reply, Err(e)),
+        Ok(old) => {
+            s.borrow().answer(reply, Ok(()));
+            let new = s.borrow().view.settings.clone();
+            if let Err(e) = apply_live(&s, &old, &new).await {
+                s.borrow_mut().show_error(e);
             }
         }
     }
@@ -2221,6 +2397,32 @@ mod tests {
         assert_eq!(first_rx.recv().unwrap(), Err(message("ACTION_UNSUPPORTED")));
         assert_eq!(second_rx.recv().unwrap(), Err(message("ACTION_ARGUMENT_INVALID")));
         assert!(a.current.is_none() && a.queue.is_empty());
+    }
+    #[test]
+    fn a_reconnect_owed_waits_for_the_last_call_and_is_queued_once() {
+        let mut a = actor();
+        busy(&mut a);
+        let transfer = serde_json::to_value(Transfer::default()).unwrap();
+        let report = |calls: Value| -> EngineReport {
+            serde_json::from_value(json!({"registration": "REGISTER_OK", "calls": calls, "transfer": transfer.clone()})).unwrap()
+        };
+        let ringing = json!([{"id": "c1", "peer": "sip:1002@pbx.example", "state": "INCOMING", "held": false, "duration": 0, "line": 1}]);
+        let owed = |a: &Actor| a.queue.iter().filter(|(_, job)| matches!(job, Job::ApplySaved)).count();
+        {
+            let mut p = a.shared.borrow_mut();
+            p.apply_report(1, report(ringing));
+            p.reconnect_owed = true;
+            assert!(!p.reconnect_due(), "not while a call rings");
+        }
+        a.handle(Message::Command(Command::WindowVisible(true)));
+        assert_eq!(owed(&a), 0, "nothing is queued while a call is left");
+        a.shared.borrow_mut().apply_report(2, report(json!([])));
+        a.handle(Message::Command(Command::WindowVisible(true)));
+        a.handle(Message::Command(Command::WindowVisible(true)));
+        assert_eq!(owed(&a), 1, "queued once the last call has gone, and only once");
+        // Any start takes the saved settings, and clears what was owed.
+        a.shared.borrow_mut().begin_start(&Settings::default());
+        assert!(!a.shared.borrow().reconnect_owed);
     }
     #[test]
     fn an_operation_that_waited_too_long_is_dropped() {

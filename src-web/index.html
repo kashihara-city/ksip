@@ -19,7 +19,7 @@
             <div class="connection-server" id="connection-server"><span id="server-label"></span><span id="transport-label" role="status"></span></div>
           </div>
         </div>
-        <nav class="header-actions" aria-label="" data-i18n-label="HEADER_ACTIONS"><button id="settings-button" class="text" data-i18n="SETTINGS_OPEN"></button><button id="reconnect" class="text" data-i18n="RECONNECT"></button><button id="unregister" class="text" data-i18n="UNREGISTER"></button><button id="quit" class="text" data-i18n="QUIT"></button></nav>
+        <nav class="header-actions" aria-label="" data-i18n-label="HEADER_ACTIONS"><button id="settings-button" class="text" data-i18n="SETTINGS_OPEN"></button><button id="edit-buttons" class="text" aria-pressed="false" data-i18n="BUTTONS_EDIT"></button><button id="reconnect" class="text" data-i18n="RECONNECT"></button><button id="unregister" class="text" data-i18n="UNREGISTER"></button><button id="quit" class="text" data-i18n="QUIT"></button></nav>
       </header>
       <section class="phone">
         <div class="lines"><button id="line-1" aria-label="" aria-describedby="line-1-status" class="line selected" aria-pressed="true" data-i18n-label="LINE_1"><span class="line-title"><strong data-i18n="LINE_1"></strong><time id="line-1-duration">00:00</time></span><small id="line-1-status"></small><small id="line-1-peer" class="line-peer">—</small></button><button id="line-2" aria-label="" aria-describedby="line-2-status" class="line" aria-pressed="false" data-i18n-label="LINE_2"><span class="line-title"><strong data-i18n="LINE_2"></strong><time id="line-2-duration">00:00</time></span><small id="line-2-status"></small><small id="line-2-peer" class="line-peer">—</small></button><button id="transfer" aria-label="" class="transfer" disabled data-i18n-label="TRANSFER"><span data-i18n="TRANSFER"></span><br><small data-i18n="TRANSFER_DIRECTION"></small></button></div>
@@ -170,7 +170,7 @@
         <p class="hint" data-i18n="SETTINGS_FILE_HINT"></p>
         <p id="settings-file-note" class="hint" role="status" hidden></p>
         <p class="hint" data-i18n="SETTINGS_SAVE_HINT"></p>
-        <div id="settings-error" class="alert" role="alert" hidden></div><button id="save-settings" class="primary wide" data-i18n="SETTINGS_SAVE"></button>
+        <div id="settings-error" class="alert" role="alert" hidden></div><button id="save-settings" class="primary wide" data-i18n="SETTINGS_SAVE_ONLY"></button>
       </form>
     </dialog>
     <dialog id="confirm" class="confirm">

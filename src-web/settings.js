@@ -2,7 +2,7 @@
 // each other, the echo calibration, and what it saves.
 import {$, invoke, logUi} from './ui.js';
 import {t, fill} from './i18n.js';
-import {state, busy, run} from './session.js';
+import {state, busy, run, setError} from './session.js';
 import {BUTTON_MAIN, BUTTON_INDEXES, defaultTitle} from './buttons.js';
 
 // The codecs the setting can name, in the order offered when it names none.
@@ -11,6 +11,10 @@ const CODEC_NAMES=['opus','G722','PCMU','PCMA'];
 // recording are set on the phone itself): a value an imported file brings
 // is carried here until the dialog is saved or closed.
 let carried={};
+// The settings a save needs the engine started again for (from the app),
+// and the button the dialog is trimmed to, 0 when it shows everything.
+let restartNames=[];
+let trimmedTo=0;
 
 async function fillAdapters(selected){
   // The list is read when the dialog opens: what is plugged in can change.
@@ -54,6 +58,48 @@ function setChoice(select,value){
   if(![...select.options].some(option=>option.value===text)){const option=document.createElement('option');option.value=text;option.textContent=fill('SETTINGS_CHOICE_UNKNOWN',text);option.dataset.unknown='';select.append(option);}
   select.value=text;
 }
+// The dialog trimmed to one button, from the button editing: the title with
+// its close, that button's row, and a save that keeps the phone as it is.
+// Saving it saves the buttons alone.
+export function openButtonSettings(n){
+  openSettings();
+  trimmedTo=n;
+  const dialog=$('configuration'),row=$('button_'+n+'_kind').closest('.button-set');
+  dialog.classList.add('trimmed');
+  for(const set of dialog.querySelectorAll('.button-set'))set.classList.toggle('kept',set===row);
+  for(const fold of dialog.querySelectorAll('.button-fold'))fold.open=fold.contains(row);
+  updateSaveLabel();
+}
+// Back to the whole dialog, whenever it closes.
+function untrim(){
+  trimmedTo=0;
+  $('configuration').classList.remove('trimmed');
+  for(const set of document.querySelectorAll('.button-set.kept'))set.classList.remove('kept');
+}
+// A call has started (by any way: a key, the automatic answer, a link):
+// the dialog closes without saving, trimmed or not, and says so.
+export function closeSettingsForCall(){
+  const dialog=$('configuration');
+  if(!dialog.open)return false;
+  $('password').value='';carried={};
+  dialog.close();
+  return true;
+}
+// What the account fields hold, as the save sends them.
+function collectAccount(){
+  return {server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
+}
+// Whether saving what the dialog holds starts the engine again: another
+// account, a password typed, or a change to a setting the engine reads only
+// at a start. The app decides the same way when it saves.
+function needsRestart(){
+  const a=collectAccount(),known=state.account,s=collectSettings();
+  const accountChanged=!!a.password||!known.has_password||a.server!==(known.server??'')||a.port!==known.port||a.extension!==(known.extension??'')||a.auth_user!==(known.auth_user??'');
+  return accountChanged||restartNames.some(name=>JSON.stringify(s[name])!==JSON.stringify(state.settings[name]));
+}
+function updateSaveLabel(){
+  $('save-settings').textContent=t(trimmedTo?'BUTTON_SAVE_CONTINUE':needsRestart()?'SETTINGS_SAVE_RECONNECT':'SETTINGS_SAVE_ONLY');
+}
 export function openSettings(){
   carried={};$('settings-file-note').hidden=true;
   for(const key of ['server','port','extension','auth_user'])$(key).value=state.account[key]??'';
@@ -75,6 +121,7 @@ export function openSettings(){
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
   $('settings-error').hidden=true;$('configuration').showModal();
+  updateSaveLabel();
 }
 // SDES and OSRTP carry their keys in the signalling, so they are offered only
 // while the signalling is TLS; the note under the choice says so. One already
@@ -189,7 +236,9 @@ function collectSettings(){
     pbx_only:$('pbx_only').checked,program_integration:$('program_integration').checked,
     browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,
     transport:$('transport').value,media_encryption:$('media_encryption').value,
-    codecs:tickedCodecs(),
+    // Every codec in the usual order is what an empty setting means: the
+    // empty one is kept, so that a save that changed nothing changes nothing.
+    codecs:tickedCodecs()===CODEC_NAMES.join(',')&&!state.settings.codecs?'':tickedCodecs(),
     ca_file:$('ca_file').value.trim(),
     sound_ring:$('sound_ring').value.trim(),sound_ringback:$('sound_ringback').value.trim(),sound_busy:$('sound_busy').value.trim(),sound_notfound:$('sound_notfound').value.trim(),sound_error:$('sound_error').value.trim(),
   };
@@ -197,6 +246,12 @@ function collectSettings(){
 export function init(){
   $('settings-button').addEventListener('click',openSettings);
   $('close-settings').addEventListener('click',()=>{$('password').value='';carried={};$('configuration').close();});
+  // The close event comes a moment after the dialog closed: one that opened
+  // again meanwhile (trimmed, from the button editing) is left as it is.
+  $('configuration').addEventListener('close',()=>{if(!$('configuration').open)untrim();});
+  // The save says whether it reconnects, as the dialog is changed.
+  for(const type of ['input','change'])$('settings-form').addEventListener(type,()=>{if($('configuration').open)updateSaveLabel();});
+  invoke('restart_settings').then(names=>{restartNames=names;}).catch(e=>logUi('restart settings',e));
   // A codec moves one row up or down; the rows' order is the order offered.
   $('codec-list').addEventListener('click',e=>{const button=e.target.closest('button[data-move]');if(!button)return;const row=button.closest('li'),list=row.parentElement;if(button.dataset.move==='-1'){if(row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);}else if(row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);});
   $('configuration').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});
@@ -232,10 +287,19 @@ export function init(){
   $('settings-form').addEventListener('submit',async e=>{
     e.preventDefault();$('settings-error').hidden=true;
     const settings=collectSettings();
+    // Trimmed to a button: the buttons alone are saved, taken in at once.
+    if(trimmedTo){
+      try{await run(()=>invoke('save_buttons',{buttons:settings.buttons}));$('configuration').close();}
+      catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}
+      return;
+    }
     // No codec ticked is not saved: an empty list would offer all of them.
-    if(!settings.codecs){$('settings-error').textContent=t('SETTINGS_CODECS_INVALID');$('settings-error').hidden=false;return;}
-    const account={server:$('server').value.trim(),port:Number($('port').value),extension:$('extension').value.trim(),auth_user:$('auth_user').value.trim(),password:$('password').value};
-    try{await run(()=>invoke('save_configuration',{settings,account}));$('password').value='';$('configuration').close();}
+    if(!tickedCodecs()){$('settings-error').textContent=t('SETTINGS_CODECS_INVALID');$('settings-error').hidden=false;return;}
+    const account=collectAccount();
+    // The save answers with a notice when it has something to say (the
+    // reconnect waits for the calls to end).
+    let notice='';
+    try{await run(async()=>{notice=await invoke('save_configuration',{settings,account});});$('password').value='';$('configuration').close();if(notice)setError(notice);}
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;}
     finally{account.password='';}
   });

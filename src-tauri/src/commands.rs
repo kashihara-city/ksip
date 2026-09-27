@@ -86,7 +86,7 @@ pub async fn save_configuration(
     account: Account,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let phone = state.phone.clone();
     let previous = state.snapshot().settings;
     let language = settings.language.clone();
@@ -109,6 +109,30 @@ pub async fn save_configuration(
         desktop::fit_window(&app, &layout);
     }
     saved
+}
+/// The custom buttons alone, from the window's button editing; saved and
+/// taken in at once, a call up or not.
+#[tauri::command]
+pub async fn save_buttons(buttons: Vec<crate::settings::CustomButton>, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let phone = state.phone.clone();
+    let saved = blocking(move || phone.call(|reply| Command::SaveButtons { buttons, reply })).await;
+    if saved.is_ok() {
+        desktop::fit_window(&app, &state.snapshot().settings);
+    }
+    saved
+}
+/// The window's button editing began or ended: while it lasts, the window
+/// is wide enough for the panel's empty slots too.
+#[tauri::command]
+pub fn set_button_editing(editing: bool, app: tauri::AppHandle, state: State<'_, AppState>) {
+    desktop::set_button_editing(editing);
+    desktop::fit_window(&app, &state.snapshot().settings);
+}
+/// The settings a save needs the engine started again for, by name, so that
+/// the window can say which save reconnects.
+#[tauri::command]
+pub fn restart_settings() -> Vec<&'static str> {
+    crate::settings::Settings::RESTART.to_vec()
 }
 #[tauri::command]
 pub async fn action(

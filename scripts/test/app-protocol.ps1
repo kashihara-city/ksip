@@ -16,8 +16,13 @@ function Send-Link([string]$command) {
     if($sender.ExitCode -ne 0){throw "The link failed ($($sender.ExitCode)): $command"}
 }
 function Restart-Connection {
-    # The label still says registered while the engine is being restarted, so
-    # the reconnect is given time before anything is sent to it.
+    # One switch for the connection: registered, it offers to unregister, and
+    # only then to connect again, which starts the engine on the stored
+    # settings. The reconnect is given time before anything is sent to it.
+    Click-Id 'unregister'
+    Wait-Text 'confirm' '着信しません' | Out-Null
+    Click-Id 'confirm-ok'
+    Wait-Class 'registration' 'reg-unregistered'
     Click-Id 'reconnect'
     Start-Sleep -Seconds 3
     Wait-Class 'registration' 'reg-register_ok'

@@ -430,6 +430,44 @@ impl Settings {
     /// The transport the setting names. The setting is checked by `validate`
     /// before the engine is started, so an unknown value is never reached here;
     /// were it, UDP is what the historic empty value meant.
+    /// The settings the engine reads only when it starts or registers, so
+    /// that a change to any of them needs the engine started again. The rest
+    /// take effect at once: the window's own, and the engine's it is told of
+    /// while running (the watched numbers, the gains, the sounds, the detail
+    /// log). The window gets the list, to say which save reconnects.
+    pub const RESTART: [&'static str; 16] = [
+        "network_adapter",
+        "sip_port",
+        "rtp_port",
+        "microphone",
+        "speaker",
+        "transport",
+        "ca_file",
+        "media_encryption",
+        "codecs",
+        "aec",
+        "aec_delay_ms",
+        "high_pass",
+        "noise_suppression",
+        "agc",
+        "register_interval",
+        "pbx_only",
+    ];
+    /// Whether going from these settings to `other` needs the engine started
+    /// again: whether any of the RESTART values differs, compared as stored.
+    pub fn needs_restart(&self, other: &Settings) -> bool {
+        let before = self.stored_values();
+        let after = other.stored_values();
+        Self::RESTART.iter().any(|name| {
+            let value = |values: &[(String, StoredValue)]| values.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+            value(&before) != value(&after)
+        })
+    }
+    /// The registry values of the custom buttons alone, as stored_values
+    /// writes them.
+    pub fn button_values(&self) -> Vec<(String, StoredValue)> {
+        self.stored_values().into_iter().filter(|(name, _)| name.starts_with("button_")).collect()
+    }
     /// Whether `ksip:` is registered for the browser: only while other
     /// programs may operate the phone at all, the browser being one of them.
     /// The browser switch keeps its own value while program links are off;
@@ -914,12 +952,18 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     if s.ca_file.len() > 400 || s.ca_file.chars().any(char::is_control) {
         return Err(message("SETTINGS_CA_FILE_INVALID"));
     }
+    validate_buttons(&s.buttons)
+}
+/// The custom buttons' own checks, which validate makes and a save of the
+/// buttons alone makes too: the rest of the settings are not the buttons'
+/// to answer for.
+pub fn validate_buttons(buttons: &[CustomButton]) -> Result<(), String> {
     // A button whose kind is empty is simply not shown; the rest need a
     // number the engine can put in a SIP URI.
-    if s.buttons.len() > CustomButton::COUNT {
+    if buttons.len() > CustomButton::COUNT {
         return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
     }
-    for button in &s.buttons {
+    for button in buttons {
         if !button.kind.is_empty() && !CustomButton::KINDS.contains(&button.kind.as_str()) {
             return Err(message("SETTINGS_BUTTON_KIND_INVALID"));
         }
@@ -946,7 +990,7 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     }
     // The engine subscribes to each watched number once, so two buttons
     // cannot watch the same one.
-    let watched: Vec<&str> = s.buttons.iter().filter_map(CustomButton::dial_target).collect();
+    let watched: Vec<&str> = buttons.iter().filter_map(CustomButton::dial_target).collect();
     if watched.iter().enumerate().any(|(i, n)| watched[i + 1..].contains(n)) {
         return Err(message("SETTINGS_BUTTON_NUMBER_DUPLICATE"));
     }
@@ -1001,16 +1045,52 @@ impl Services {
     /// mark away only if this save put it there: values that were suspect
     /// before this save are no less suspect for having been put back.
     pub fn persist_configuration(&self, settings: &Settings, account: &Account) -> Result<(), String> {
+        self.persist(&settings.stored_values(), Some(account))
+    }
+    /// Every setting, saved as a whole or not at all, and not the account:
+    /// what a save that leaves the account as it is writes.
+    pub fn persist_settings(&self, settings: &Settings) -> Result<(), String> {
+        self.persist(&settings.stored_values(), None)
+    }
+    /// The custom buttons alone, saved as a whole or not at all, the way
+    /// persist_configuration saves the dialog: what else is stored (a policy's
+    /// values, one that cannot be read) is not touched.
+    pub fn save_buttons(&self, buttons: &[CustomButton]) -> Result<(), String> {
+        let mut set = CustomButton::empty_set();
+        for (slot, button) in set.iter_mut().zip(buttons) {
+            *slot = button.clone();
+        }
+        let values = Settings { buttons: set, ..Settings::default() }.button_values();
+        self.persist(&values, None)
+    }
+    /// Writes `values`, and the account when one is given, as a whole: the
+    /// save mark stands while they are written, and if any cannot be, what
+    /// was there before (the credential too, when the account was written)
+    /// is put back.
+    fn persist(&self, values: &[(String, StoredValue)], account: Option<&Account>) -> Result<(), String> {
         let marked_before = !self.store.read_text(SAVE_MARK).is_empty();
-        let old_secret = self.store.read_secret()?;
-        let names = settings.stored_values().into_iter().map(|(name, _)| name).chain(ACCOUNT_VALUES.iter().map(|name| name.to_string()));
+        let old_secret = if account.is_some() { self.store.read_secret()? } else { None };
+        let account_names = account.map(|_| ACCOUNT_VALUES.iter().map(|name| name.to_string())).into_iter().flatten();
+        let names = values.iter().map(|(name, _)| name.clone()).chain(account_names);
         let mut old_values = Vec::new();
         for name in names {
             let value = self.store.read_raw(&name)?;
             old_values.push((name, value));
         }
         self.store.write_text(SAVE_MARK, "1")?;
-        let written = self.store.write_account(account).and_then(|()| self.save_settings(settings));
+        let write_values = || {
+            let mut first = None;
+            for (name, value) in values {
+                if let Err(e) = self.store.write_value(name, value) {
+                    first.get_or_insert(e);
+                }
+            }
+            first.map_or(Ok(()), Err)
+        };
+        let written = match account {
+            Some(account) => self.store.write_account(account).and_then(|()| write_values()),
+            None => write_values(),
+        };
         let Err(e) = written else {
             // Saved whole: the mark goes. If it cannot go, the next start
             // would refuse to connect on values that are in fact whole, so
@@ -1018,13 +1098,15 @@ impl Services {
             return self.store.delete_value(SAVE_MARK).map_err(|e| message_with("ACCOUNT_ROLLBACK_FAILED", [e]));
         };
         let mut failures = Vec::new();
-        failures.extend(
-            match &old_secret {
-                Some((user, password)) => self.store.write_secret(user, password),
-                None => self.store.delete_account(),
-            }
-            .err(),
-        );
+        if account.is_some() {
+            failures.extend(
+                match &old_secret {
+                    Some((user, password)) => self.store.write_secret(user, password),
+                    None => self.store.delete_account(),
+                }
+                .err(),
+            );
+        }
         for (name, value) in &old_values {
             failures.extend(
                 match value {
@@ -1234,6 +1316,68 @@ mod tests {
         assert!(validate(&s).is_err(), "a codec named twice is refused");
         s.codecs = "G729".into();
         assert!(validate(&s).is_err(), "a codec the app does not have is refused");
+    }
+    #[test]
+    fn only_what_the_engine_reads_at_a_start_needs_it_started_again() {
+        let base = Settings::default();
+        let with = |change: &dyn Fn(&mut Settings)| {
+            let mut s = Settings::default();
+            change(&mut s);
+            s
+        };
+        for (what, changed) in [
+            ("transport", with(&|s| s.transport = "tls".into())),
+            ("codecs", with(&|s| s.codecs = "PCMU".into())),
+            ("sip_port", with(&|s| s.sip_port = 5070)),
+            ("aec", with(&|s| s.aec = false)),
+            ("pbx_only", with(&|s| s.pbx_only = false)),
+        ] {
+            assert!(base.needs_restart(&changed), "{what}");
+        }
+        for (what, changed) in [
+            ("language", with(&|s| s.language = "en".into())),
+            ("buttons", with(&|s| s.buttons[0] = CustomButton { title: "B".into(), kind: "dial".into(), number: "1001".into(), transfer: String::new(), pickup: String::new() })),
+            ("detail_log", with(&|s| s.detail_log = true)),
+            ("gain", with(&|s| s.microphone_gain = 150)),
+            ("sound", with(&|s| s.sound_ring = r"C:\ring.wav".into())),
+            ("program_integration", with(&|s| s.program_integration = true)),
+            ("tray_after_call", with(&|s| s.tray_after_call = 10)),
+        ] {
+            assert!(!base.needs_restart(&changed), "{what}");
+        }
+        // Every name in the list is a setting that is stored.
+        let names: Vec<String> = base.stored_values().into_iter().map(|(n, _)| n).collect();
+        assert!(Settings::RESTART.iter().all(|n| names.iter().any(|m| m == n)));
+    }
+    #[test]
+    fn the_buttons_alone_are_saved_whole_and_nothing_else_is_touched() {
+        let _one_at_a_time = store_tests_one_at_a_time();
+        let guard = StoreGuard::new("test-buttons");
+        let mut app = Services::open().0;
+        app.store = guard.store();
+        let result = (|| -> Result<(), String> {
+            app.store.write_text("language", "en")?;
+            app.store.write_text("sip_port", "often")?;
+            let mut buttons = CustomButton::empty_set();
+            buttons[2] = CustomButton { title: "Park".into(), kind: "park".into(), number: "701".into(), transfer: "*701".into(), pickup: String::new() };
+            // A write that fails (the last button's, after the rest have
+            // landed) puts back what was there: here nothing, so every button
+            // value written is taken away again.
+            crate::storage::fail_next_write_of("button_30_pickup");
+            assert!(app.save_buttons(&buttons).is_err());
+            crate::storage::fail_next_write_of("");
+            assert!(app.store.read_raw("button_3_kind")?.is_none(), "what landed before the failure is taken back");
+            assert!(app.store.read_text(SAVE_MARK).is_empty(), "put back whole, the mark goes");
+            // Then saved whole.
+            app.save_buttons(&buttons)?;
+            let (read, unreadable) = Settings::read_stored(|name| app.store.read_value(name));
+            assert_eq!(read.buttons[2].kind, "park");
+            assert_eq!(read.language, "en", "a value that is not a button is not touched");
+            assert_eq!(unreadable, vec!["sip_port".to_string()], "not even one that cannot be read");
+            Ok(())
+        })();
+        drop(guard);
+        result.unwrap();
     }
     #[test]
     fn browser_links_work_only_while_program_links_are_on() {

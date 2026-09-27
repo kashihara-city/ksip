@@ -5,7 +5,7 @@
 use crate::audio::{Calibration, Device, Volume};
 use crate::engine_config::AudioEndpoints;
 use crate::engine_link::{EngineLink, StopReport};
-use crate::settings::Settings;
+use crate::settings::{CustomButton, Settings};
 use crate::storage::Account;
 use serde_json::Value;
 use std::sync::mpsc;
@@ -38,11 +38,17 @@ pub enum Command {
         line: u8,
         reply: Reply<String>,
     },
-    /// The settings dialog was saved.
+    /// The settings dialog was saved. The answer is a notice for the window,
+    /// empty when there is nothing to say.
     SaveConfiguration {
         /// Boxed: the settings are the largest thing a command carries.
         settings: Box<Settings>,
         account: Account,
+        reply: Reply<String>,
+    },
+    /// The custom buttons alone, from the window's button editing.
+    SaveButtons {
+        buttons: Vec<CustomButton>,
         reply: Reply<()>,
     },
     SelectAudioDevice {

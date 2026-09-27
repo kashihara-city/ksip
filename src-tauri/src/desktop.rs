@@ -34,15 +34,22 @@ pub fn show(app: &tauri::AppHandle) {
 /// The window is twice as wide while the panel beside the phone has buttons,
 /// and back to its own width once it has none. A width the person chose in
 /// between is left alone: only a change of state moves it.
+/// Whether the window's button editing is on: then the panel is shown with
+/// its empty slots, and the window is wide enough for it.
+static BUTTON_EDITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn set_button_editing(editing: bool) {
+    BUTTON_EDITING.store(editing, std::sync::atomic::Ordering::Relaxed);
+}
 pub fn fit_window(app: &tauri::AppHandle, settings: &Settings) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let extended = settings
-        .buttons
-        .iter()
-        .skip(settings::CustomButton::MAIN)
-        .any(|b| b.configured());
+    let extended = BUTTON_EDITING.load(std::sync::atomic::Ordering::Relaxed)
+        || settings
+            .buttons
+            .iter()
+            .skip(settings::CustomButton::MAIN)
+            .any(|b| b.configured());
     let scale = window.scale_factor().unwrap_or(1.0);
     let Ok(size) = window.inner_size() else {
         return;
@@ -78,6 +85,9 @@ pub fn run(state: AppState) {
             commands::snapshot,
             commands::reconnect,
             commands::save_configuration,
+            commands::save_buttons,
+            commands::set_button_editing,
+            commands::restart_settings,
             commands::ui_ready,
             commands::action,
             commands::open_recordings,

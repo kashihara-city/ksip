@@ -71,6 +71,24 @@ pub fn endpoint_notes(s: &Settings, endpoints: &AudioEndpoints, devices: &[Devic
     notes
 }
 impl Services {
+    /// The sounds folder as the settings want it: the built-in sounds written
+    /// out, and each chosen one over its built-in namesake. baresip only treats
+    /// a path starting with "/" as absolute, so a chosen file cannot be named
+    /// directly on Windows; the sounds are replaced in place instead. The
+    /// engine reads a sound when it plays it, so this also changes the sounds
+    /// of a running engine. With the folder, what could not be replaced.
+    pub fn prepare_sounds(&self, s: &Settings) -> (Option<PathBuf>, Vec<String>) {
+        let mut notes = Vec::new();
+        let dir = crate::native::sounds();
+        if let Some(dir) = &dir {
+            for (key, chosen) in Settings::SOUND_KEYS.iter().zip(s.sounds()) {
+                if let Err(e) = self.replace_sound(dir, key, chosen) {
+                    notes.push(format!("ksip: {key} sound not replaced, {e}"));
+                }
+            }
+        }
+        (dir, notes)
+    }
     /// Writes the chosen file over the built-in sound, converted to what the
     /// engine can play. A missing or unreadable file leaves the built-in one.
     pub fn replace_sound(&self, dir: &std::path::Path, key: &str, chosen: &str) -> Result<(), String> {
@@ -268,14 +286,9 @@ impl Services {
             put(format!("sip_cafile {trust}"));
             put("sip_verify_server yes".into());
         }
-        // baresip only treats a path starting with "/" as absolute, so a chosen file
-        // cannot be named directly on Windows. The sounds are replaced in place instead.
-        if let Some(dir) = crate::native::sounds() {
-            for (key, chosen) in Settings::SOUND_KEYS.iter().zip(s.sounds()) {
-                if let Err(e) = self.replace_sound(&dir, key, chosen) {
-                    notes.push(format!("ksip: {key} sound not replaced, {e}"));
-                }
-            }
+        let (sounds, sound_notes) = self.prepare_sounds(s);
+        notes.extend(sound_notes);
+        if let Some(dir) = sounds {
             put(format!("audio_path {}", dir.to_string_lossy().replace('\\', "/")));
         }
         std::fs::write(profile.join("config"), config).map_err(err)?;
@@ -390,6 +403,22 @@ mod tests {
                     }
                 }
             };
+            // The detail log is switched while the engine runs, on and off.
+            for value in ["on", "off"] {
+                let token = link.send("ksip_detail_log", value).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(8);
+                loop {
+                    let message = rx.recv_timeout(deadline - Instant::now().min(deadline)).expect("an answer to the detail log");
+                    if let Message::Link(delivered) = message {
+                        if let LinkBody::Response { token: t, value: answer } = delivered.body {
+                            if t == token {
+                                assert_eq!(answer["ok"], true, "ksip_detail_log {value}: {answer}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             let audio = state.audio.expect("the audio module's state");
             assert_eq!(
                 audio,

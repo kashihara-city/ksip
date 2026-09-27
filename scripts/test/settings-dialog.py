@@ -9,23 +9,30 @@ TYPES = {'.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.s
 # The checks, run in the page as a module beside the app's own. The app's
 # modules are the real ones; only window.__TAURI__ is the test's.
 CHECKS = r"""
-import {buildButtonSets} from './buttons.js';
-import {init, openSettings} from './settings.js';
+import {buildButtonSets, setEditing} from './buttons.js';
+import * as buttons from './buttons.js';
+import {init, openSettings, openButtonSettings} from './settings.js';
 import {state} from './session.js';
+import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null;
+let answers={},saved=null,savedButtons=null,editingWindow=null;
 window.__invoke=async(command,args)=>{
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
+  if(command==='save_buttons'){savedButtons=JSON.parse(JSON.stringify(args.buttons));throw 'TEST_SAVE_STOPPED';}
+  if(command==='set_button_editing'){editingWindow=args.editing;return null;}
+  if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','register_interval','pbx_only'];
   if(command==='list_adapters')return [];
   if(command in answers)return answers[command];
   throw 'TEST_UNEXPECTED '+command;
 };
 const settle=()=>new Promise(r=>setTimeout(r,30));
 const account={server:'pbx.example',port:5061,extension:'1001',auth_user:'1001',has_password:true};
+// Every setting there, as the app's snapshot always has them.
 const base={transport:'tls',media_encryption:'sdes',codecs:'opus',sip_port:5060,rtp_port:10000,register_interval:300,tray_after_call:-1,
-  aec:true,aec_delay_ms:20,noise_suppression:'high',incoming_action:'show',language:'',microphone_gain:100,speaker_gain:100,buttons:[]};
+  aec:true,aec_delay_ms:20,high_pass:false,noise_suppression:'high',agc:false,incoming_action:'show',language:'',microphone_gain:100,speaker_gain:100,
+  network_adapter:'',ca_file:'',pbx_only:true,buttons:[]};
 async function open(settings={}){
   if($('configuration').open)$('configuration').close();
   state.settings={...base,...settings};state.account={...account};
@@ -40,7 +47,7 @@ const shown=id=>!$(id).hidden;
 const text=id=>$(id).textContent;
 
 async function checks(){
-  buildButtonSets();init();
+  buildButtonSets();init();initPhone();await settle();
 
   await open();
   await importFile({settings:{transport:'tls',media_encryption:'dtls'}});
@@ -149,6 +156,105 @@ async function checks(){
   const b=s&&s.settings.buttons[1];
   check(s&&s.settings.microphone_gain===150&&s.settings.auto_record===true&&s.settings.tray_after_call===30&&s.settings.ca_file==='C:\\ca\\pbx.pem'&&b.kind==='park'&&b.number==='701'&&b.transfer==='*701'
     &&s.account.server==='192.0.2.10'&&s.account.port===5060&&s.account.extension==='1002','settings, a button, the account and values the dialog has no field for all come in',s&&[s.settings,s.account]);
+
+  // The save says whether it reconnects, from what was changed.
+  const label=()=>$('save-settings').textContent;
+  await open({codecs:''});
+  const unchanged=label();
+  $('language').value='en';$('language').dispatchEvent(new Event('change',{bubbles:true}));
+  const windowOnly=label();
+  $('sip_port').value='5070';$('sip_port').dispatchEvent(new Event('input',{bubbles:true}));
+  const engine=label();
+  check(unchanged==='保存'&&windowOnly==='保存'&&engine==='保存して再接続','the save says it reconnects only for a setting the engine reads at a start',[unchanged,windowOnly,engine]);
+  s=await save();
+  check(s&&s.settings.codecs==='','every codec ticked in the usual order stays the empty setting, so that saving it changes nothing',s&&s.settings.codecs);
+  await open();
+  $('password').value='new';$('password').dispatchEvent(new Event('input',{bubbles:true}));
+  check(label()==='保存して再接続','a password typed in reconnects',label());
+
+  // The dialog trimmed to one button: only its row is there, and saving saves the buttons alone.
+  const visible=id=>{const e=$(id);return !!e&&e.getClientRects().length>0;};
+  if($('configuration').open)$('configuration').close();
+  state.settings={...base,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{title:'B',kind:'dial',number:'1002',transfer:'',pickup:''}]};state.account={...account};
+  openButtonSettings(2);await settle();
+  check(visible('button_2_kind')&&!visible('button_1_kind')&&!visible('button_8_kind')&&!visible('server')&&!visible('language')&&visible('close-settings')&&label()==='保存して継続',
+    'trimmed to one button, the dialog shows that row, its close and "save and go on", and nothing else',[visible('button_2_kind'),visible('button_1_kind'),visible('server'),label()]);
+  $('button_2_title').value='Bee';
+  saved=null;savedButtons=null;$('settings-form').requestSubmit();await settle();
+  check(saved===null&&savedButtons&&savedButtons.length===30&&savedButtons[1].title==='Bee'&&savedButtons[0].title==='A','the trimmed dialog saves the buttons alone',[saved,savedButtons&&savedButtons.slice(0,2)]);
+  $('configuration').close();await settle();
+  check(!$('configuration').classList.contains('trimmed')&&visible('button_1_kind')===false,'closed, the dialog is whole again for the next opening',$('configuration').className);
+
+  // A call ringing leaves the dialog open; a call that starts closes it without saving, and says so.
+  state.registration='REGISTER_OK';
+  await open();
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'INCOMING',held:false,duration:0,line:1}];render();
+  const openWhileRinging=$('configuration').open;
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];saved=null;render();
+  check(openWhileRinging&&!$('configuration').open&&saved===null&&text('error').includes('保存せずに閉じました'),'ringing leaves the settings open; a call that starts closes them unsaved and says so',[openWhileRinging,$('configuration').open,text('error')]);
+  check($('settings-button').disabled&&$('edit-buttons').disabled,'in a call neither the settings nor the button editing can be entered',[$('settings-button').disabled,$('edit-buttons').disabled]);
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:true,duration:1,line:1}];render();
+  check($('settings-button').disabled,'a call on hold counts as a call',$('settings-button').disabled);
+  state.calls=[];render();
+
+  // The connection switch shows one of its two sides.
+  state.registration='REGISTER_OK';render();
+  const whileRegistered=[$('unregister').hidden,$('reconnect').hidden];
+  state.registration='REGISTER_FAIL';render();
+  const whileFailed=[$('unregister').hidden,$('reconnect').hidden];
+  check(!whileRegistered[0]&&whileRegistered[1]&&whileFailed[0]&&!whileFailed[1],'registered it offers to unregister, otherwise to connect again',[whileRegistered,whileFailed]);
+  const markedAfterFailure=$('reconnect').classList.contains('on');
+  state.registration='UNREGISTERED';render();
+  check(!markedAfterFailure&&$('reconnect').classList.contains('on'),'the reconnect stands out after an unregister, not after a failure',[markedAfterFailure,$('reconnect').className]);
+  state.registration='REGISTER_OK';render();
+
+  // Button editing: every slot is shown with its tools, the rest of the phone is inert.
+  state.settings={...base,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{title:'B',kind:'park',number:'701',transfer:'*701',pickup:''}]};
+  render();await settle();
+  const size=id=>{const e=$(id),r=e.getBoundingClientRect(),style=getComputedStyle(e.querySelector('strong'));return [Math.round(r.height*10)/10,style.fontSize];};
+  const before=size('custom-1');
+  // Each button in the place of its slot: the empty slot before a set one
+  // keeps its place, the rows after the last set one are left out.
+  const places=box=>[...$(box).children].map(e=>e.id||'gap');
+  const mainPlaces=places('custom-actions');
+  state.settings={...state.settings,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{},{title:'C',kind:'dial',number:'1003',transfer:'',pickup:''},{},{title:'E',kind:'dial',number:'1005',transfer:'',pickup:''}]};render();
+  const secondRow=places('custom-actions');
+  const panel=[{},{},{},{},{},{},{title:'P',kind:'dial',number:'1007',transfer:'',pickup:''},{},{},{},{},{},{title:'Q',kind:'dial',number:'1013',transfer:'',pickup:''}];
+  state.settings={...state.settings,buttons:panel};render();
+  const panelPlaces=places('extended-actions');
+  // An empty slot is as tall as a button, so that a row of them does not close up.
+  const gapHeight=$('extended-actions').querySelector('.button-gap').getBoundingClientRect().height,buttonHeight=$('custom-7').getBoundingClientRect().height;
+  const thirteenTop=$('custom-13').getBoundingClientRect().top-$('custom-7').getBoundingClientRect().top;
+  check(Math.abs(gapHeight-buttonHeight)<0.5&&thirteenTop>buttonHeight*3,'an empty slot is as tall as a button, so a button keeps its row',[gapHeight,buttonHeight,thirteenTop]);
+  check(JSON.stringify(mainPlaces)===JSON.stringify(['custom-1','custom-2','gap'])
+    &&JSON.stringify(secondRow)===JSON.stringify(['custom-1','gap','custom-3','gap','custom-5','gap'])
+    &&JSON.stringify(panelPlaces)===JSON.stringify(['custom-7','gap','gap','gap','gap','gap','custom-13','gap']),
+    'each button is in the place of its slot; the rows after the last set one are left out',[mainPlaces,secondRow,panelPlaces]);
+  state.settings={...base,buttons:[{title:'A',kind:'dial',number:'1001',transfer:'',pickup:''},{title:'B',kind:'park',number:'701',transfer:'*701',pickup:''}]};render();await settle();
+  setEditing(true);await settle();
+  const after=size('custom-1'),second=$('custom-1').querySelector('small').textContent;
+  check(JSON.stringify(before)===JSON.stringify(after)&&second==='1001'&&$('custom-1').textContent.includes('#1'),
+    'a slot while editing has the height and font of the button itself, shows the number without the BLF state, and its place by the icons',[before,after,second]);
+  const slots=document.querySelectorAll('.button-slot').length;
+  check(slots===30&&editingWindow===true&&!!$('custom-2-delete')&&!$('custom-3-delete')&&!!$('custom-3-edit')&&!!$('dial').closest('[inert]')&&!$('custom-actions').closest('[inert]')&&$('edit-buttons').textContent==='ボタン編集終了',
+    'editing shows all thirty slots with their tools, widens the window, and makes the rest of the phone inert',[slots,editingWindow,!!$('dial').closest('[inert]')]);
+  // Deleting asks first, then saves the buttons without it.
+  savedButtons=null;$('custom-2-delete').click();await settle();
+  const asked=$('confirm').open;$('confirm-ok').click();await settle();
+  check(asked&&savedButtons&&savedButtons[1].kind===''&&savedButtons[0].kind==='dial','deleting asks, then saves the buttons without that one',[asked,savedButtons&&savedButtons.slice(0,2)]);
+  // Dropping onto another slot moves the button; onto a set one, the two change places.
+  const drop=(from,to)=>{const data=new DataTransfer();data.setData('application/x-ksip-button',String(from));$('custom-'+to).dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));};
+  savedButtons=null;drop(2,9);await settle();
+  const moved=savedButtons;
+  savedButtons=null;drop(1,2);await settle();
+  const swapped=savedButtons;
+  check(moved&&moved[8].title==='B'&&moved[1].kind===''&&swapped&&swapped[1].title==='A'&&swapped[0].title==='B','a button dropped on an empty slot moves there; on a set one, the two change places, and nothing else moves',[moved&&[moved[1].kind,moved[8].title],swapped&&[swapped[0].title,swapped[1].title]]);
+  // Ringing keeps the editing on; a call that starts ends it.
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'INCOMING',held:false,duration:0,line:1}];render();
+  const stillEditing=buttons.editing;
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];render();
+  check(stillEditing&&!buttons.editing&&editingWindow===false&&!$('dial').closest('[inert]'),'editing goes on while a call rings, and ends when one starts',[stillEditing,buttons.editing,editingWindow]);
+  state.calls=[];render();
 }
 try{await checks();}catch(e){check(false,'the checks ran to the end',String(e&&e.stack||e));}
 await fetch('/result',{method:'POST',body:JSON.stringify(results)});

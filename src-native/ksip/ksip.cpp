@@ -86,6 +86,19 @@ int action(re_printf *pf, void *arg) {
     if (!a || !ksip_io::parse_action(a->prm, request)) return EINVAL;
     return calls::action(pf, request);
 }
+// The detail log switched while the engine runs, the three parts that
+// ksip_detail_log sets at the start: the SIP messages written out whole,
+// baresip's debug level, and the audio module's device warnings. "on" or "off".
+int detail_log(re_printf *pf, void *arg) {
+    auto a = static_cast<cmd_arg *>(arg);
+    if (!a || !a->prm) return EINVAL;
+    const bool on = !str_casecmp(a->prm, "on");
+    if (!on && str_casecmp(a->prm, "off")) return EINVAL;
+    sip_message_log = on;
+    log_enable_debug(on);
+    ksip_audio_set_log_level(on);
+    return re_hprintf(pf, "Detail log %s\n", on ? "on" : "off");
+}
 // The microphone and speaker for the calls from now on, as endpoint ids, so
 // that a change of device does not need the engine restarted. baresip reads
 // the devices out of its configuration when a call's audio starts, so the
@@ -113,6 +126,7 @@ const cmd commands[] = {
     {"ksip_parking", 0, CMD_PRM, "Watch up to thirty numbers through dialog-state subscriptions", subscriptions::configure},
     {"ksip_shutdown", 0, 0, "Release KSIP subscriptions before quit", subscriptions::shutdown},
     {"ksip_audio_devices", 0, CMD_PRM, "Use these microphone and speaker endpoint ids from the next call on", audio_devices},
+    {"ksip_detail_log", 0, CMD_PRM, "Turn the detail log on or off while running", detail_log},
 };
 int init() {
     sip_account::init();

@@ -1030,3 +1030,78 @@ footer.aec-status {
 #codec-label.unencrypted {
   color:#a84035;
 }
+
+/* Button editing: everything but the buttons is dimmed, and inert (buttons.js). */
+body.editing-buttons [inert],
+body.editing-buttons .connection-summary,
+body.editing-buttons .aec-status {
+  opacity:.5;
+}
+/* An empty slot before a set button keeps its place in the grid (buttons.js). */
+.button-gap {
+  visibility:hidden;
+}
+/* The editing switch while it is on, and the reconnect after an unregister;
+   the same under the pointer, where the lighter hover would leave the white
+   words unreadable. */
+.header-actions .on,
+.header-actions .on:hover:enabled {
+  background:#246650;
+  color:white;
+  border-color:#246650;
+}
+/* A slot while editing is the button's own size: the same padding, font and
+   lines as .custom-actions button, so that nothing moves. */
+.button-slot {
+  position:relative;
+  border:1px solid #d4dfdb;
+  background:#fff;
+  color:#264a42;
+  border-radius:8px;
+  padding:7px 10px;
+  font-size:13px;
+  min-width:0;
+  cursor:grab;
+}
+.button-slot.empty {
+  border-style:dashed;
+  background:transparent;
+  color:#718079;
+  cursor:default;
+}
+/* The title leaves room for the place and the icons at its right. */
+.custom-actions .button-slot > strong {
+  padding-right:58px;
+}
+.button-slot.drop-target {
+  outline:2px solid #246650;
+  outline-offset:1px;
+}
+.custom-actions .button-tools {
+  position:absolute;
+  top:4px;
+  right:4px;
+  display:flex;
+  align-items:center;
+  gap:2px;
+}
+.custom-actions .button-tools .slot-place {
+  display:inline;
+  margin:0 3px 0 0;
+}
+.custom-actions .button-tools button {
+  padding:0 4px;
+  font-size:10px;
+  line-height:15px;
+  border-radius:4px;
+  text-align:center;
+}
+/* The settings dialog trimmed to one button (settings.js): its title with the
+   close, that button's row, the error and the save. */
+#configuration.trimmed #settings-form > :not(.dialog-title):not(.button-fold):not(#settings-error):not(#save-settings),
+#configuration.trimmed .button-fold:not(:has(.kept)),
+#configuration.trimmed .button-fold > summary,
+#configuration.trimmed .button-fold > .hint,
+#configuration.trimmed .button-set:not(.kept) {
+  display:none;
+}

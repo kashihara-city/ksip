@@ -5,7 +5,8 @@
 import {$, invoke, logUi, ask} from './ui.js';
 import {t, fill, texts, language} from './i18n.js';
 import {state, ready, busy, selected, error, callAt, current, peerNumber, run, act, dial, answer, hangup, setSelected, setError} from './session.js';
-import {renderButtons} from './buttons.js';
+import {renderButtons, editing, setEditing} from './buttons.js';
+import {closeSettingsForCall} from './settings.js';
 import {renderLogs} from './logs.js';
 import {activePanel} from './panel.js';
 import {kinds, volumes} from './audio.js';
@@ -55,8 +56,29 @@ export function render({clearNotices=false}={}){
   $('registration').textContent=((state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting)+(state.dnd&&registered?' · '+t('DND_ACTIVE'):'');
   $('registration').className='reg-'+String(state.registration||'').toLowerCase();$('status-light').className=registered?'online':paused?'paused':state.registration==='REGISTER_FAIL'?'fault':'';
   $('transport-label').textContent=registered?state.transport||'':'';
-  $('settings-button').disabled=!ready||busy||state.calls.length>0;
-  $('reconnect').disabled=!ready||busy||state.calls.length>0||!state.account.has_password;
+  // In a call (connected to the other end, on hold too) the settings and
+  // the button editing cannot be entered; while a call only rings they can.
+  // A call that starts closes them, by whatever way it started (a key, the
+  // automatic answer, a link), without saving, and says so.
+  const talking=state.calls.some(call=>call.state==='ESTABLISHED');
+  if(talking){
+    const closed=closeSettingsForCall();
+    const ended=editing;
+    if(ended)setEditing(false);
+    if(closed||ended)setError(t('SETTINGS_CLOSED_FOR_CALL'));
+  }
+  $('settings-button').disabled=!ready||busy||talking;
+  $('edit-buttons').textContent=t(editing?'BUTTONS_EDIT_END':'BUTTONS_EDIT');$('edit-buttons').setAttribute('aria-pressed',String(editing));$('edit-buttons').classList.toggle('on',editing);
+  $('edit-buttons').disabled=editing?busy:!ready||busy||talking;
+  // One switch for the connection: to unregister while registered, to
+  // connect again otherwise; neither while a call is up or ringing, which
+  // either would end, nor while a registration is under way.
+  const connecting=['CONNECTING','REGISTERING'].includes(state.registration);
+  $('unregister').hidden=!registered;$('reconnect').hidden=registered;
+  // Unregistered on purpose, the switch stands out, as the editing switch
+  // does while it is on: the phone is off until it is pressed.
+  $('reconnect').classList.toggle('on',state.registration==='UNREGISTERED');
+  $('reconnect').disabled=!ready||busy||state.calls.length>0||!state.account.has_password||connecting;
   // Unregistering is for a meeting: it stops calls arriving without closing KSIP.
   $('unregister').disabled=!ready||busy||state.calls.length>0||!state.running||state.registration==='UNREGISTERED';
   for(let n=1;n<=2;n++){
@@ -139,6 +161,7 @@ export function init(){
   $('record').addEventListener('click',()=>act('auto_record','',state.settings.auto_record?'off':'on'));
   $('open-recordings').addEventListener('click',()=>invoke('open_recordings').catch(e=>{setError(String(e));logUi('open recordings',e);render();}));
   $('reconnect').addEventListener('click',()=>run(()=>invoke('reconnect')).catch(()=>{}));
+  $('edit-buttons').addEventListener('click',()=>setEditing(!editing));
   $('unregister').addEventListener('click',async()=>{
     if(!await ask(t('UNREGISTER_CONFIRM')))return;
     act('unregister','','',selected);

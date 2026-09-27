@@ -36,8 +36,9 @@ try {
     Wait-Text 'confirm' '着信しません' | Out-Null
     Click-Id 'confirm-ok'
     Wait-Class 'registration' 'reg-unregistered'
-    # Nothing to unregister twice.
-    if((Find-Id 'unregister').Current.IsEnabled){throw 'The unregister button is still enabled'}
+    # Nothing to unregister twice: the switch now offers to connect again.
+    if(Find-Id 'unregister'){throw 'The unregister button is still offered'}
+    if(!(Find-Id 'reconnect')){throw 'Connecting again is not offered'}
     'PASS: 確認のうえ登録を解除する'
 
     # Where the phone is connected means nothing while it is not registered.
