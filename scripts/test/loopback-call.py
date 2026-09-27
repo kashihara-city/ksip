@@ -39,7 +39,7 @@ rtp_ports {rtp}-{rtp+20}
 ctrl_tcp_listen 127.0.0.1:{ctrl}
 module g711.dll
 module aufile.dll
-module postlab.dll
+module ksip_audio_filter.dll
 module auconv.dll
 module auresamp.dll
 module ctrl_tcp.dll
@@ -114,9 +114,9 @@ def main():
         b.command('dial','sip:a@127.0.0.1:15060');a.event('CALL_INCOMING');a.command('accept')
         a.event('CALL_ESTABLISHED');b.event('CALL_ESTABLISHED')
         time.sleep(1)
-        for p in phones:p.command('lab_record',str(p.dir/'receive.wav'))
+        for p in phones:p.command('ksip_record',str(p.dir/'receive.wav'))
         time.sleep(4)
-        for p in phones:p.command('lab_stop')
+        for p in phones:p.command('ksip_record_stop')
         b.command('hangup');a.event('CALL_CLOSED');b.event('CALL_CLOSED')
     finally:
         for p in reversed(phones):p.close()

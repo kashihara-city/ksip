@@ -44,7 +44,7 @@ bool begin(const std::string &path, uint32_t rate, const audio *stream) {
 // it happens outside the gate; the words are the ones the app reads.
 Recorder::Summary end(std::unique_ptr<Recorder> finished) {
     auto summary = finished->finish();
-    info("postlab: receive WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
+    info("ksip_audio_filter: receive WAV closed (%llu bytes, %llu dropped samples, error=%d)\n", summary.bytes, summary.dropped, summary.failed);
     return summary;
 }
 bool readable(const auframe *f) { return f->fmt == AUFMT_S16LE || f->fmt == AUFMT_FLOAT; }
@@ -71,14 +71,14 @@ void decoder_created(const audio *stream, uint32_t rate) {
     if (current && !recording_audio && detached_audio == stream) {
         recording_audio = stream;
         detached_audio = nullptr;
-        info("postlab: receive recording goes on with the call's new decoder\n");
+        info("ksip_audio_filter: receive recording goes on with the call's new decoder\n");
     }
     if (!reserved_call.empty()) {
         auto c = uag_call_find(reserved_call.c_str());
         if (c && call_audio(c) == stream) {
             bool ok = reserved_path.empty() ? (recording_audio = stream, true) : begin(reserved_path, rate, stream);
-            if (ok) info("postlab: receive recording bound to the reserved call\n");
-            else warning("postlab: cannot open the reserved WAV file\n");
+            if (ok) info("ksip_audio_filter: receive recording bound to the reserved call\n");
+            else warning("ksip_audio_filter: cannot open the reserved WAV file\n");
             reserved_call.clear();
             reserved_path.clear();
         }

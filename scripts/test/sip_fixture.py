@@ -209,7 +209,7 @@ rtp_ports {rtp_port}-{rtp_port+20}
 ctrl_tcp_listen 127.0.0.1:{ctrl}
 {codec_modules}
 module aufile.dll
-module postlab.dll
+module ksip_audio_filter.dll
 module auconv.dll
 module auresamp.dll
 module ctrl_tcp.dll

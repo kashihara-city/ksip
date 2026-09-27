@@ -42,7 +42,7 @@ ctrl_tcp_listen 127.0.0.1:{ctrl}
 module g711.dll
 module ksip_audio.dll
 module aufile.dll
-module postlab.dll
+module ksip_audio_filter.dll
 module auconv.dll
 module auresamp.dll
 module ctrl_tcp.dll
@@ -141,9 +141,9 @@ def main():
         receiver.command("accept")
         receiver.event("CALL_ESTABLISHED")
         sender.event("CALL_ESTABLISHED")
-        receiver.command("lab_record", str(receiver.directory / "received.wav"))
+        receiver.command("ksip_record", str(receiver.directory / "received.wav"))
         time.sleep(6)
-        receiver.command("lab_stop")
+        receiver.command("ksip_record_stop")
         sender.command("hangup")
         receiver.event("CALL_CLOSED")
     finally:

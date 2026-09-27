@@ -95,10 +95,10 @@ int gain(re_printf *pf, void *arg) {
 }
 aufilt filter = {};
 const cmd commands[] = {
-    {"lab_record", 0, CMD_PRM, "Record receive-only WAV", start},
-    {"lab_record_select", 0, CMD_PRM, "Select the call appended to the current WAV", select_recording},
-    {"lab_stop", 0, 0, "Finish receive WAV", stop},
-    {"lab_gain", 0, CMD_PRM, "Set microphone/speaker software gain", gain},
+    {"ksip_record", 0, CMD_PRM, "Record receive-only WAV", start},
+    {"ksip_record_select", 0, CMD_PRM, "Select the call appended to the current WAV", select_recording},
+    {"ksip_record_stop", 0, 0, "Finish receive WAV", stop},
+    {"ksip_gain", 0, CMD_PRM, "Set microphone/speaker software gain", gain},
 };
 int init() {
     uint32_t mic = 100, speaker = 100;
@@ -106,7 +106,7 @@ int init() {
     (void)conf_get_u32(conf_cur(), "ksip_speaker_gain", &speaker);
     microphone_gain.store(std::clamp(mic, 100u, 200u) / 100.f);
     speaker_gain.store(std::clamp(speaker, 100u, 200u) / 100.f);
-    filter.name = "postlab";
+    filter.name = "ksip_audio_filter";
     filter.encupdh = update_encode;
     filter.ench = process_encode;
     filter.decupdh = update_decode;
@@ -121,4 +121,4 @@ int close() {
     return 0;
 }
 } // namespace
-extern "C" const struct mod_export DECL_EXPORTS(postlab) = {"postlab", "aufilt", init, close};
+extern "C" const struct mod_export DECL_EXPORTS(ksip_audio_filter) = {"ksip_audio_filter", "aufilt", init, close};

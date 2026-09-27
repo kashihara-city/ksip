@@ -1,7 +1,7 @@
 # The filter module (recording and software gain) is built from the sources
 # beside the device module: one folder of audio code, two registrations with
 # baresip. patch-baresip.py puts this file where baresip looks for the module.
-project(postlab)
+project(ksip_audio_filter)
 list(APPEND MODULES_DETECTED ${PROJECT_NAME})
 set(MODULES_DETECTED ${MODULES_DETECTED} PARENT_SCOPE)
 add_library(${PROJECT_NAME} OBJECT

@@ -221,7 +221,7 @@ impl Services {
         put("rtp_timeout 60".into());
         put(format!("ctrl_tcp_listen 127.0.0.1:{ctrl}"));
         for module in [
-            "g711", "libg722", "opus", "wasapi", "ksip_audio", "postlab", "auconv", "auresamp",
+            "g711", "libg722", "opus", "wasapi", "ksip_audio", "ksip_audio_filter", "auconv", "auresamp",
             "ctrl_tcp", "menu", "srtp", "dtls_srtp", "ksip",
         ] {
             put(format!("module {module}.dll"));
@@ -333,7 +333,7 @@ mod tests {
             assert_eq!(link.generation(), generation);
             // A request is answered on the queue, under this engine's generation
             // and the request's token, in receive order.
-            let token = link.send("lab_stop", "").unwrap();
+            let token = link.send("ksip_record_stop", "").unwrap();
             let deadline = Instant::now() + Duration::from_secs(8);
             let mut last_seq = 0;
             loop {

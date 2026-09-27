@@ -13,7 +13,7 @@ def main():
         callee = Phone('switch-c', third, 18588, 19260)
         first, remote = connect(recorder, callee, third['extension'])
         path = recorder.dir / 'switch.wav'
-        recorder.command('lab_record', first + ' ' + path.as_posix())
+        recorder.command('ksip_record', first + ' ' + path.as_posix())
         time.sleep(1)
 
         # The second call rings without carrying audio, which is where the old build
@@ -21,7 +21,7 @@ def main():
         second = recorder.action('dial', value=third['extension'])
         recorder.wait(lambda s: any(c['id'] == second and c['state'] in ('RINGING', 'EARLY')
                                     for c in s['calls']))
-        reply = recorder.command('lab_record_select', second).strip()
+        reply = recorder.command('ksip_record_select', second).strip()
         assert 'reserved' in reply, 'the ringing call was not reserved: ' + reply
         print('PASS: 音声が始まっていない通話への切替が予約された', flush=True)
 
@@ -43,7 +43,7 @@ def main():
         assert path.stat().st_size > reserved, 'the reserved call never took over the recording'
         print('PASS: 応答後に予約された通話へ録音が引き継がれた', flush=True)
 
-        recorder.command('lab_stop')
+        recorder.command('ksip_record_stop')
         with wave.open(str(path), 'rb') as wav:
             assert wav.getnframes() > 0, 'the recording holds no audio'
         for call in (second, first):

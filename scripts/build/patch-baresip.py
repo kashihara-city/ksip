@@ -106,9 +106,9 @@ shutil.copytree(ROOT / "src-native/ksip_audio",
                 baresip / "modules/ksip_audio", dirs_exist_ok=True)
 # The filter module lives in the same folder as the device module; baresip
 # wants a folder per module, so it gets one holding only the CMakeLists.
-(baresip / "modules/postlab").mkdir(parents=True, exist_ok=True)
+(baresip / "modules/ksip_audio_filter").mkdir(parents=True, exist_ok=True)
 shutil.copy2(ROOT / "src-native/ksip_audio/filter/CMakeLists.txt",
-             baresip / "modules/postlab/CMakeLists.txt")
+             baresip / "modules/ksip_audio_filter/CMakeLists.txt")
 shutil.copytree(ROOT / "src-native/ksip",
                 baresip / "modules/ksip", dirs_exist_ok=True)
 

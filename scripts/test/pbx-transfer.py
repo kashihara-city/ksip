@@ -26,13 +26,13 @@ def main():
         b.action('select',remote)
         time.sleep(.5)
         recording=a.dir/'first-call.wav'
-        a.command('lab_record',first+' '+str(recording))
+        a.command('ksip_record',first+' '+str(recording))
         time.sleep(.5)
         b.action('hangup',remote2)
         a.wait(lambda s:len(s['calls'])==1)
         header=recording.read_bytes()
         assert len(header)>=44 and header[40:44]==b'\0\0\0\0', 'Closing the other call ended this recording'
-        a.command('lab_stop')
+        a.command('ksip_record_stop')
         import wave
         with wave.open(str(recording),'rb') as wav:assert wav.getnframes()>0
         second=a.action('dial',value=configured[1]['extension'])

@@ -580,7 +580,7 @@ impl Phone {
             v.aec_active = false;
             changed = true;
         }
-        if s.contains("postlab: receive WAV closed") && !s.contains("0 dropped samples, error=0") {
+        if s.contains("ksip_audio_filter: receive WAV closed") && !s.contains("0 dropped samples, error=0") {
             v.error = message("RECORDING_WRITE_PROBLEM");
             changed = true;
         }
@@ -1013,7 +1013,7 @@ async fn restart(s: &Shared) -> Result<(), String> {
 /// takes it out of the phone. The process is the caller's to end.
 async fn release_link(s: &Shared) -> Option<EngineLink> {
     if s.borrow().link.is_some() {
-        let _ = request(s, "lab_stop", "").await;
+        let _ = request(s, "ksip_record_stop", "").await;
         // Parking dialog subscriptions keep baresip's SIP stack alive.
         // Release them before quit so shutdown does not hit the kill timeout.
         let _ = request(s, "ksip_shutdown", "").await;
@@ -1168,7 +1168,7 @@ async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mu
     };
     let gain = level.max(100);
     if s.borrow().link.is_some() {
-        request(s, "lab_gain", &format!("{kind} {gain}")).await?;
+        request(s, "ksip_gain", &format!("{kind} {gain}")).await?;
     }
     let mut p = s.borrow_mut();
     let mut settings = p.services.settings()?;
@@ -1256,7 +1256,7 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         (folder.join(&name), name)
     };
     let text = path.to_str().ok_or(message("RECORDING_PATH_INVALID"))?.to_string();
-    request(s, "lab_record", &format!("{id} {text}")).await?;
+    request(s, "ksip_record", &format!("{id} {text}")).await?;
     let mut p = s.borrow_mut();
     p.phone.note_recording(id, &name);
     let v = &mut p.view;
@@ -1268,7 +1268,7 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
 async fn stop_recording(s: &Shared) -> Result<(), String> {
     let recording = s.borrow().view.recording;
     if recording {
-        request(s, "lab_stop", "").await?;
+        request(s, "ksip_record_stop", "").await?;
     }
     let mut p = s.borrow_mut();
     p.view.recording = false;
@@ -1295,7 +1295,7 @@ async fn sync_auto_record(s: &Shared) -> Result<(), String> {
         return stop_recording(s).await;
     }
     if recording && target.as_deref() != Some(recording_call.as_str()) {
-        request(s, "lab_record_select", target.as_deref().unwrap_or("-")).await?;
+        request(s, "ksip_record_select", target.as_deref().unwrap_or("-")).await?;
         let mut p = s.borrow_mut();
         // The file goes on with the call it was switched to.
         if let Some(id) = &target {

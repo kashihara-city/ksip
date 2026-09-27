@@ -28,17 +28,17 @@ def main():
         phones.append(sender)
         establish(receiver, sender, 19060)
 
-        sender.command("lab_gain", "microphone 100")
+        sender.command("ksip_gain", "microphone 100")
         base = receiver.dir / "gain-100.wav"
-        receiver.command("lab_record", str(base))
+        receiver.command("ksip_record", str(base))
         time.sleep(5)
-        receiver.command("lab_stop")
+        receiver.command("ksip_record_stop")
 
-        sender.command("lab_gain", "microphone 200")
+        sender.command("ksip_gain", "microphone 200")
         boosted = receiver.dir / "gain-200.wav"
-        receiver.command("lab_record", str(boosted))
+        receiver.command("ksip_record", str(boosted))
         time.sleep(5)
-        receiver.command("lab_stop")
+        receiver.command("ksip_record_stop")
         sender.command("hangup")
         receiver.event("CALL_CLOSED")
     finally:
@@ -61,11 +61,11 @@ def main():
         )
         phones.append(speaker_sender)
         establish(speaker_receiver, speaker_sender, 19260)
-        speaker_receiver.command("lab_gain", "speaker 200")
+        speaker_receiver.command("ksip_gain", "speaker 200")
         speaker_input = speaker_receiver.dir / "speaker-input.wav"
-        speaker_receiver.command("lab_record", str(speaker_input))
+        speaker_receiver.command("ksip_record", str(speaker_input))
         time.sleep(5)
-        speaker_receiver.command("lab_stop")
+        speaker_receiver.command("ksip_record_stop")
         speaker_sender.command("hangup")
         speaker_receiver.event("CALL_CLOSED")
     finally:

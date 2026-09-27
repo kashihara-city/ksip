@@ -28,10 +28,10 @@ def main():
         print('PASS: 応答前に音声のデコーダーが立つ', flush=True)
         a.wait(lambda s: any(c['id'] == call and c['state'] == 'ESTABLISHED' for c in s['calls']), timeout=15)
         path = a.dir / 'early-single.wav'
-        reply = a.command('lab_record', f'{call} {path.as_posix()}').strip()
+        reply = a.command('ksip_record', f'{call} {path.as_posix()}').strip()
         assert 'started' in reply, 'recording did not start at once: ' + reply
         time.sleep(2)
-        a.command('lab_stop')
+        a.command('ksip_record_stop')
         with wave.open(str(path), 'rb') as wav:
             assert wav.getnframes() > 0, 'the recording holds no audio'
         print('PASS: 応答後に始めた録音は即座に音を取る', flush=True)
@@ -52,10 +52,10 @@ def main():
         b = Phone('early-b', configured[1], 18592, 19300)
         first, remote = connect(a, b, configured[1]['extension'])
         path = a.dir / 'early-switch.wav'
-        a.command('lab_record', f'{first} {path.as_posix()}')
+        a.command('ksip_record', f'{first} {path.as_posix()}')
         time.sleep(1)
         a.action('hold', first)
-        a.command('lab_record_select', '-')
+        a.command('ksip_record_select', '-')
         paused = path.stat().st_size
         second = a.action('dial', value=number)
         a.wait(lambda s: any(c['id'] == second and c['state'] == 'EARLY' for c in s['calls']), timeout=15)
@@ -63,14 +63,14 @@ def main():
         assert path.stat().st_size == paused, 'the ringback leaked into the recording'
         print('PASS: 呼出中のアーリーメディアは録音に混ざらない', flush=True)
         a.wait(lambda s: any(c['id'] == second and c['state'] == 'ESTABLISHED' for c in s['calls']), timeout=15)
-        reply = a.command('lab_record_select', second).strip()
+        reply = a.command('ksip_record_select', second).strip()
         assert 'switched' in reply or 'reserved' in reply, 'the answered call was not selected: ' + reply
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline and path.stat().st_size == paused:
             time.sleep(.1)
         assert path.stat().st_size > paused, 'the answered call did not take the recording over'
         print('PASS: 応答後は2本目の通話へ録音が続く', flush=True)
-        a.command('lab_stop')
+        a.command('ksip_record_stop')
         for call in (second, first):
             try:
                 a.action('hangup', call)
