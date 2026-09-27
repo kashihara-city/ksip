@@ -40,10 +40,13 @@ fn partial_recording(wav: &Path) -> PathBuf {
     wav.with_extension("converting.mp3")
 }
 /// Tidies a recordings folder from earlier runs and says which WAVs still
-/// want converting: a WAV whose MP3 is there goes (the conversion went
-/// through, the WAV was in use at the time), a partial MP3 goes (its
-/// conversion never finished, and the WAV is still the recording), and a WAV
-/// without an MP3 is handed back. Nothing else is touched.
+/// want converting: a partial MP3 goes (its conversion never finished, and
+/// the WAV is still the recording), and every WAV is handed back, the ones
+/// with an MP3 beside them included. An MP3 next to its WAV may be one an
+/// earlier version wrote straight under the final name and never finished,
+/// so it is not taken as proof of anything: the WAV is converted again, the
+/// MP3 replaced by the new one, and only then does the WAV go. Nothing else
+/// is touched.
 fn sweep_recording_folder(folder: &Path) -> Vec<PathBuf> {
     let mut leftover = Vec::new();
     let Ok(entries) = std::fs::read_dir(folder) else {
@@ -56,11 +59,7 @@ fn sweep_recording_folder(folder: &Path) -> Vec<PathBuf> {
         if name.ends_with(".converting.mp3") {
             let _ = std::fs::remove_file(&path);
         } else if name.ends_with(".wav") {
-            if path.with_extension("mp3").is_file() {
-                let _ = std::fs::remove_file(&path);
-            } else {
-                leftover.push(path);
-            }
+            leftover.push(path);
         }
     }
     leftover
@@ -194,7 +193,8 @@ mod tests {
         let leftover = sweep_recording_folder(&folder);
         assert_eq!(
             leftover,
-            vec![folder.join("2026-09-26_10-05-00_1003.wav"), folder.join("2026-09-26_10-10-00_1004.wav")]
+            vec![folder.join("2026-09-26_10-00-00_1002.wav"), folder.join("2026-09-26_10-05-00_1003.wav"), folder.join("2026-09-26_10-10-00_1004.wav")],
+            "a WAV beside an MP3 is converted again rather than trusted away"
         );
         let mut names: Vec<String> = std::fs::read_dir(&folder)
             .unwrap()
@@ -206,6 +206,7 @@ mod tests {
             names,
             vec![
                 "2026-09-26_10-00-00_1002.mp3",
+                "2026-09-26_10-00-00_1002.wav",
                 "2026-09-26_10-05-00_1003.wav",
                 "2026-09-26_10-10-00_1004.wav",
                 "2026-09-26_10-15-00_1005.mp3"

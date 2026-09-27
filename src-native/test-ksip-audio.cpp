@@ -5,9 +5,11 @@
 // Built and run by scripts/test/audio-module.ps1.
 #include "ksip_audio/recorder.h"
 #include "ksip_audio/session_core.h"
+#include "ksip/ksip_text.h"
 #include "webrtc/callback_gate.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -315,9 +317,83 @@ void finishing_twice_is_once() {
     check(first.bytes == second.bytes && !second.failed, "the second finish reports the same and fails nothing");
     std::filesystem::remove_all(dir);
 }
+
+// ---- the SIP text
+std::vector<std::string> scrubbed(const std::string &text) {
+    return ksip_text::scrubbed_sip_lines(reinterpret_cast<const uint8_t *>(text.data()), text.size());
+}
+bool exposes(const std::vector<std::string> &lines, const char *secret) {
+    for (auto &l : lines) if (l.find(secret) != std::string::npos) return true;
+    return false;
+}
+void digest_headers_are_hidden_however_they_are_written() {
+    const char *names[] = {"Authorization", "Proxy-Authorization", "WWW-Authenticate", "Proxy-Authenticate"};
+    const char *spacings[] = {"", " ", "\t", " \t "};
+    for (auto name : names) {
+        for (auto spacing : spacings) {
+            std::string lower = name;
+            for (auto &c : lower) c = (char)std::tolower((unsigned char)c);
+            for (const std::string &written : {std::string(name), lower}) {
+                std::string text = "REGISTER sip:pbx.example SIP/2.0\r\n" + written + spacing + ": Digest username=\"1001\", response=\"SECRETRESPONSE\",\r\n"
+                                   " nonce=\"SECRETNONCE\"\r\n\tqop=auth\r\nCSeq: 2 REGISTER\r\n";
+                auto lines = scrubbed(text);
+                bool ok = !exposes(lines, "SECRETRESPONSE") && !exposes(lines, "SECRETNONCE") && exposes(lines, "***") && exposes(lines, "CSeq: 2 REGISTER");
+                if (!ok) std::printf("  %s with spacing [%s]\n", written.c_str(), spacing);
+                check(ok, "a digest header and its folded lines are hidden");
+            }
+        }
+    }
+    auto lines = scrubbed("INVITE sip:1002@pbx.example SIP/2.0\r\nFrom: <sip:1001@pbx.example>\r\n\r\nv=0\r\na=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:SECRETKEYSECRETKEY|2^20\r\n");
+    check(!exposes(lines, "SECRETKEY") && exposes(lines, "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:***"), "the SRTP key of a=crypto is hidden");
+    check(exposes(lines, "From: <sip:1001@pbx.example>"), "other headers are kept");
+}
+void a_header_is_found_however_it_is_spaced() {
+    std::string text = "SIP/2.0 200 OK\r\nCSeq : 7 REGISTER\r\nVia: SIP/2.0/UDP 192.0.2.10\r\n\r\n";
+    auto get = [&](const char *name) { return ksip_text::sip_header(reinterpret_cast<const uint8_t *>(text.data()), text.size(), name); };
+    check(get("cseq") == "7 REGISTER", "a name with space before the colon is found, case aside");
+    check(get("Via") == "SIP/2.0/UDP 192.0.2.10", "an ordinary header is found");
+    check(get("Contact").empty(), "a header that is not there is empty");
+}
+void dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off() {
+    using ksip_text::read_dialog_info;
+    auto full = read_dialog_info("<?xml version=\"1.0\"?><dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"3\" state=\"full\" entity=\"sip:701@pbx\">"
+                                 "<dialog id=\"a1\"><state>confirmed</state></dialog><dialog id=\"b2\"><state>early</state></dialog></dialog-info>");
+    check(full.readable && !full.partial && full.dialogs.size() == 2 && full.dialogs[0].first == "a1" && full.dialogs[0].second == "confirmed", "a full report with two dialogs");
+    auto single = read_dialog_info("<dialog-info state='partial' version='4'><dialog id='a1'><state>terminated</state></dialog></dialog-info>");
+    check(single.readable && single.partial && single.dialogs.size() == 1 && single.dialogs[0].first == "a1" && single.dialogs[0].second == "terminated", "single quotes are attribute values too");
+    auto spaced = read_dialog_info("<dialog-info state = \"partial\"><dialog id = 'c3' ><state>trying</state></dialog></dialog-info>");
+    check(spaced.readable && spaced.partial && spaced.dialogs.size() == 1 && spaced.dialogs[0].first == "c3", "spaces around = do not change the reading");
+    auto prefixed = read_dialog_info("<di:dialog-info xmlns:di=\"urn:ietf:params:xml:ns:dialog-info\" state=\"full\"><di:dialog id=\"x\"><di:state>confirmed</di:state></di:dialog></di:dialog-info>");
+    check(prefixed.readable && prefixed.dialogs.size() == 1 && prefixed.dialogs[0].second == "confirmed", "a namespace prefix is skipped");
+    auto empty = read_dialog_info("<dialog-info state=\"full\"/>");
+    check(empty.readable && empty.dialogs.empty(), "an empty full report reads as free");
+    auto truncated = read_dialog_info("<dialog-info state=\"full\"><dialog id=\"a1\"><state>confirmed</state>");
+    check(!truncated.readable && truncated.dialogs.empty(), "a body cut off before its closing tag is not a report");
+    auto other = read_dialog_info("<presence><tuple><status><basic>open</basic></status></tuple></presence>");
+    check(!other.readable, "another format is not a report");
+    check(!read_dialog_info("").readable, "an empty body is not a report");
+}
+void numbers_and_lists_are_checked() {
+    check(ksip_text::sip_uri("sip:sales@pbx.example") && ksip_text::sip_uri("SIPS:a@b") && !ksip_text::sip_uri("701"), "a URI is told by its scheme");
+    check(ksip_text::token("*97#+", "*#+") && !ksip_text::token("70 1", "*#+") && !ksip_text::token("", "*#+"), "a number is digits and the allowed marks");
+    check(ksip_text::escape_user("#31#") == "%2331%23", "the hash is escaped in a user part");
+    check(ksip_text::codec_list("PCMU,opus,bogus,PCMU") == "PCMU/8000/1,opus/48000/1", "the codecs keep the app's order, once each, known ones only");
+    check(ksip_text::codec_list("") == "opus/48000/1,G722/16000/1,PCMU/8000/1,PCMA/8000/1", "no choice means every codec");
+    std::array<std::string, 30> values;
+    check(ksip_text::parse_watch_list("701,,sip:park@pbx", values) && values[0] == "701" && values[1].empty() && values[2] == "sip:park@pbx", "a watch list with an empty slot");
+    check(!ksip_text::parse_watch_list("701,701", values), "a number named twice is refused");
+    check(!ksip_text::parse_watch_list("70 1", values), "a number with a space is refused");
+    std::string mic, spk;
+    check(ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk) && mic == "{mic}" && spk == "{spk}", "the two endpoint ids");
+    check(!ksip_text::parse_audio_devices("{mic}", 160, mic, spk), "one id is not enough");
+}
 } // namespace
 
 int main() {
+    digest_headers_are_hidden_however_they_are_written();
+    a_header_is_found_however_it_is_spaced();
+    dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off();
+    numbers_and_lists_are_checked();
     the_newest_player_has_the_stream_and_the_one_before_gets_it_back();
     a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from();
     a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle();

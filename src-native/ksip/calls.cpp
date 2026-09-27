@@ -151,8 +151,18 @@ int action(re_printf *pf, const ActionRequest &request) {
         dnd = value == "on";
         return 0;
     }
+    // Maintenance is taken in one step: only while no call is up, so that a
+    // call arriving between the app's look at the state and this is not
+    // taken in and then worked around. Leaving it always succeeds.
     if (op == "maintenance") {
-        maintenance = value == "on";
+        if (value != "on") {
+            maintenance = false;
+            return 0;
+        }
+        for (le *u = list_head(uag_list()); u; u = u->next)
+            for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next)
+                if (call_state(static_cast<call *>(l->data)) != CALL_STATE_TERMINATED) return EBUSY;
+        maintenance = true;
         return 0;
     }
     // Unregistering is about the account, not about a call.

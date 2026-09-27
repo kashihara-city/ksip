@@ -70,8 +70,6 @@ pub struct EngineLink {
     child: Child,
     writer: TcpStream,
     threads: Vec<thread::JoinHandle<()>>,
-    /// The receive counter, shared by the threads that deliver to the queue.
-    seq: Arc<AtomicU64>,
     /// Numbers the requests, so that an answer can be told apart from the
     /// others of this engine.
     serial: u64,
@@ -178,7 +176,6 @@ impl EngineLink {
             child,
             writer,
             threads,
-            seq,
             serial: 1,
         })
     }
@@ -228,17 +225,6 @@ impl EngineLink {
     /// The process has already ended: closes the connection and joins the threads.
     pub fn close(mut self) {
         self.close_threads();
-    }
-    /// After the control connection was lost: waits for the process to end,
-    /// on a thread of its own, and reports `Exited` on the queue.
-    pub fn watch_exit(mut self, sink: Sender<Message>) {
-        thread::spawn(move || {
-            let status = self.child.wait();
-            self.close_threads();
-            if let Ok(status) = status {
-                deliver(&sink, self.generation, &self.seq, LinkBody::Exited(status));
-            }
-        });
     }
     fn close_threads(&mut self) {
         let _ = self.writer.shutdown(Shutdown::Both);

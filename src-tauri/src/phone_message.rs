@@ -8,7 +8,6 @@ use crate::engine_link::{EngineLink, StopReport};
 use crate::settings::Settings;
 use crate::storage::Account;
 use serde_json::Value;
-use std::process::ExitStatus;
 use std::sync::mpsc;
 
 /// Where a command's answer goes. A command that carries one is answered
@@ -92,10 +91,9 @@ pub enum LinkBody {
     Event(Value),
     /// A line the engine wrote to its output.
     Log(String),
-    /// The control connection ended: the engine is gone or going.
+    /// The control connection ended. The process may still run: the actor
+    /// ends it before it treats the engine as gone.
     Lost,
-    /// The engine process has ended, some time after `Lost`.
-    Exited(ExitStatus),
 }
 
 /// A started engine, with what its start decided.

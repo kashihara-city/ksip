@@ -166,6 +166,11 @@ enum Job {
     },
     /// The adapter's address moved: connect again.
     Reconnect,
+    /// The control connection was lost: the process is ended before the
+    /// engine counts as gone.
+    Recover,
+    /// The engine did not take the end of maintenance: told again.
+    MaintenanceOff,
     /// The app is leaving: the engine goes.
     Stop,
 }
@@ -178,12 +183,16 @@ impl Job {
             Job::Action { reply, .. } => reply.send(Err(why)),
             Job::Calibrate { reply, .. } => reply.send(Err(why)),
             Job::SetVolume { reply, .. } => reply.send(Err(why)),
-            Job::Poll | Job::Initialize | Job::Reconnect | Job::Stop => {}
+            Job::Poll | Job::Initialize | Job::Reconnect | Job::Recover | Job::MaintenanceOff | Job::Stop => {}
         }
     }
     /// Whether the job may be dropped for waiting too long.
     fn expires(&self) -> bool {
-        !matches!(self, Job::Poll | Job::Stop | Job::Initialize)
+        !matches!(self, Job::Poll | Job::Stop | Job::Initialize | Job::Recover | Job::MaintenanceOff)
+    }
+    /// Whether the job still has to run when the app is leaving.
+    fn survives_closing(&self) -> bool {
+        matches!(self, Job::Recover | Job::Stop)
     }
 }
 
@@ -204,8 +213,12 @@ struct Phone {
     starting: Option<u64>,
     /// The engine being started lost its connection before it was taken.
     starting_lost: bool,
-    /// The generation whose exit is awaited after its connection was lost.
-    watched: Option<u64>,
+    /// An engine whose control connection was lost, until the recovery has
+    /// ended its process: the engine is not gone while this is held.
+    lost: Option<EngineLink>,
+    /// The engine refused or did not answer the end of maintenance: told
+    /// again at the next look, so that it does not go on refusing calls.
+    maintenance_off_owed: bool,
     /// The address the engine bound, to notice when the adapter moves.
     bound: String,
     /// A look at the adapter's address is under way.
@@ -242,7 +255,8 @@ impl Actor {
             link: None,
             starting: None,
             starting_lost: false,
-            watched: None,
+            lost: None,
+            maintenance_off_owed: false,
             bound: String::new(),
             probing: false,
             polling_error: String::new(),
@@ -307,7 +321,7 @@ impl Actor {
     fn finish_shutdown(&mut self) -> bool {
         let done = {
             let p = self.shared.borrow();
-            p.closing && p.link.is_none() && p.starting.is_none() && self.current.is_none() && self.queue.is_empty()
+            p.closing && p.link.is_none() && p.lost.is_none() && p.starting.is_none() && self.current.is_none() && self.queue.is_empty()
         };
         if !done {
             return false;
@@ -320,7 +334,12 @@ impl Actor {
     fn handle(&mut self, message: Message) {
         match message {
             Message::Command(command) => self.handle_command(command),
-            Message::Link(link) => self.shared.borrow_mut().handle_link(link),
+            Message::Link(link) => {
+                self.shared.borrow_mut().handle_link(link);
+                if self.shared.borrow().needs_recovery() && !self.queue.iter().any(|(_, job)| matches!(job, Job::Recover)) {
+                    self.queue.push_front((Instant::now(), Job::Recover));
+                }
+            }
             Message::Work(Work::Address { adapter, address }) => {
                 let reconnect = self.shared.borrow_mut().follow_network(&adapter, address);
                 if reconnect && !self.queue.iter().any(|(_, job)| matches!(job, Job::Reconnect)) {
@@ -364,9 +383,15 @@ impl Actor {
             Command::Shutdown(reply) => {
                 self.shared.borrow_mut().closing = true;
                 self.shutdown = Some(reply);
-                for (_, job) in self.queue.drain(..) {
-                    job.refuse(message("APP_CLOSING"));
+                let mut kept = VecDeque::new();
+                for (since, job) in self.queue.drain(..) {
+                    if job.survives_closing() {
+                        kept.push_back((since, job));
+                    } else {
+                        job.refuse(message("APP_CLOSING"));
+                    }
                 }
+                self.queue = kept;
                 // The flow that runs finishes first (a start reports and its
                 // engine is stopped); then the engine goes.
                 Job::Stop
@@ -401,6 +426,9 @@ impl Actor {
                 }
             }
             p.probe_network();
+        }
+        if self.shared.borrow().maintenance_off_owed && !self.queue.iter().any(|(_, job)| matches!(job, Job::MaintenanceOff)) {
+            self.queue.push_front((Instant::now(), Job::MaintenanceOff));
         }
         // One look at the engine per interval, after whatever runs now: a long
         // flow (a calibration) does not leave the window behind for its whole
@@ -459,6 +487,12 @@ impl Actor {
             Job::Reconnect => Box::pin(async move {
                 if let Err(e) = connect(&s).await {
                     s.borrow_mut().report_error(e);
+                }
+            }),
+            Job::Recover => Box::pin(recover(s)),
+            Job::MaintenanceOff => Box::pin(async move {
+                if tell_maintenance(&s, "off").await.is_ok() {
+                    s.borrow_mut().maintenance_off_owed = false;
                 }
             }),
             Job::Stop => Box::pin(async move {
@@ -520,28 +554,23 @@ impl Phone {
                 if !held {
                     return;
                 }
+                // The connection is gone; the process may not be. Nothing is
+                // said about the calls or the recording until the recovery has
+                // ended the process (Job::Recover, queued by the actor): an
+                // engine still running would otherwise go on with a call the
+                // window shows as over, and fight the next start for its ports.
                 self.services.log(LOG_APP, message("ENGINE_CONTROL_LOST"));
-                let engine = self.link.take().expect("the held link");
-                self.close_calls_on_exit(None);
-                self.watched = Some(link.generation);
-                engine.watch_exit(self.tx.clone());
+                self.lost = self.link.take();
+                self.view.registration = "DISCONNECTED".into();
                 if matches!(&self.waiting, Some(Waiting::Response { generation, .. }) if *generation == link.generation) && self.delivered.is_none() {
                     self.delivered = Some(Delivered::Response(Err(message("ENGINE_DISCONNECTED"))));
                 }
             }
-            LinkBody::Exited(status) => {
-                if self.watched != Some(link.generation) {
-                    return;
-                }
-                self.watched = None;
-                let notice = message_with("ENGINE_EXITED", [status]);
-                // A reconnect may have come first; the exit is still on record.
-                if self.link.is_none() && self.starting.is_none() {
-                    self.view.error = notice.clone();
-                }
-                self.services.log(LOG_APP, notice);
-            }
         }
+    }
+    /// Whether a lost engine waits to be recovered; the actor queues the job.
+    fn needs_recovery(&self) -> bool {
+        self.lost.is_some()
     }
     /// A report nobody waits for: a worker that outlived its flow.
     fn stray(&mut self, work: Work) {
@@ -922,23 +951,61 @@ async fn poll(s: &Shared) -> Result<(), String> {
 async fn enter_maintenance(s: &Shared) -> Result<(), String> {
     poll(s).await?;
     s.borrow_mut().phone.begin_maintenance().map_err(|()| message("CALL_IN_PROGRESS"))?;
-    tell_maintenance(s, "on").await;
+    // The engine takes the maintenance in one step, only while it has no
+    // call: a call that came in after the look above is what its refusal
+    // means, and the maintenance is then not begun.
+    if let Err(e) = tell_maintenance(s, "on").await {
+        s.borrow_mut().phone.end_maintenance();
+        return Err(if e.contains("EBUSY") || e.contains("busy") { message("CALL_IN_PROGRESS") } else { e });
+    }
     Ok(())
 }
 async fn leave_maintenance(s: &Shared) {
-    if s.borrow().phone.in_maintenance() {
-        tell_maintenance(s, "off").await;
+    if s.borrow().phone.in_maintenance() && tell_maintenance(s, "off").await.is_err() {
+        // The engine would go on refusing calls; it is told again at the next look.
+        s.borrow_mut().maintenance_off_owed = true;
     }
     s.borrow_mut().phone.end_maintenance();
 }
-async fn tell_maintenance(s: &Shared, value: &str) {
+/// Tells the engine that maintenance begins or ends. Without an engine there
+/// is nothing to tell, and nothing to refuse.
+async fn tell_maintenance(s: &Shared, value: &str) -> Result<(), String> {
     if s.borrow().link.is_none() {
-        return;
+        return Ok(());
     }
     let payload = json!({"op":"maintenance","id":"","value":value}).to_string();
-    if let Err(e) = request(s, "ksip_action", &payload).await {
-        s.borrow().services.log(LOG_APP, format!("ksip: maintenance {value} not taken by the engine ({e})"));
+    match request(s, "ksip_action", &payload).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            s.borrow().services.log(LOG_APP, format!("ksip: maintenance {value} not taken by the engine ({e})"));
+            Err(e)
+        }
     }
+}
+/// The control connection was lost: the process is ended (asked to quit,
+/// then given three seconds before it is killed) and only then do the calls
+/// that were up get their rows, the recording its conversion, and the window
+/// the notice. A reconnect cannot start meanwhile: this runs as a flow, ahead
+/// of everything that waits.
+async fn recover(s: Shared) {
+    let Some(engine) = s.borrow_mut().lost.take() else {
+        return;
+    };
+    s.borrow().work(move || Work::Stopped(engine.stop()));
+    let report = match await_work(&s).await {
+        Ok(Work::Stopped(report)) => report,
+        _ => Err(message("APP_CLOSING")),
+    };
+    let mut p = s.borrow_mut();
+    let code = match &report {
+        Ok(report) if report.forced => "killed".to_string(),
+        Ok(report) => report.code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+        Err(e) => e.clone(),
+    };
+    p.log_stop(report);
+    let notice = message_with("ENGINE_EXITED", [code]);
+    p.close_calls_on_exit(Some(notice.clone()));
+    p.services.log(LOG_APP, notice);
 }
 /// Starts the engine on the saved settings, stopping the one that runs. The
 /// phone is in maintenance until the start has reported.
