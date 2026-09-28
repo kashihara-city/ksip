@@ -320,6 +320,10 @@ async function checks(){
   check(JSON.stringify(callsSent)==='[["a","1"],["b","3"]]','when a call ends with digits waiting, only its own go; a key pressed on the call that took its place is sent',callsSent);
   state.calls=[];setSelected(1);render();
 
+  // The clear beside the dial button empties the number box and puts the cursor there.
+  $('target').value='1001';$('clear-target').click();
+  check($('target').value===''&&document.activeElement===$('target')&&$('clear-target').type==='button','the clear button empties the number box and puts the cursor in it, without dialling',[$('target').value,document.activeElement&&document.activeElement.id]);
+
   // A button made unused is saved empty, whatever its number was.
   await open({buttons:[{title:'Web',kind:'open',number:'https://pbx.example/',transfer:'',pickup:''},{title:'',kind:'speed',number:'06-1234-5678',transfer:'',pickup:''}]});
   for(const n of [1,2]){$('button_'+n+'_kind').value='';$('button_'+n+'_kind').dispatchEvent(new Event('change',{bubbles:true}));}

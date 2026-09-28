@@ -128,6 +128,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DEVICES_COUNT:'{0}件',
       DEVICES_LOADING:'取得中…',
       DIAL:'発信',
+      DIAL_CLEAR:'クリア',
       DND_ACTIVE:'着信拒否中',
       DND_OFF:'着信拒否をOFFにしました',
       DND_OFF_STATUS:'着信を受けます',

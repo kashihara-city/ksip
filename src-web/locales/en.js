@@ -128,6 +128,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DEVICES_COUNT:'{0} found',
       DEVICES_LOADING:'Loading…',
       DIAL:'Call',
+      DIAL_CLEAR:'Clear',
       DND_ACTIVE:'Do not disturb',
       DND_OFF:'Do not disturb is off',
       DND_OFF_STATUS:'Calls come through',

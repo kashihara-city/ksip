@@ -89,7 +89,7 @@ export function render({clearNotices=false}={}){
     $('line-'+n+'-duration').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
   }
   const c=current();
-  $('target').disabled=busy||!!c;
+  $('target').disabled=busy||!!c;$('clear-target').disabled=$('target').disabled;
   $('dial').disabled=busy||!!c||state.registration!=='REGISTER_OK'||!!state.transfer.pending;
   $('answer').disabled=busy||c?.state!=='INCOMING'||!!state.transfer.pending;
   $('hangup').disabled=busy||!c;
@@ -155,6 +155,9 @@ export function init(){
     try{await run(async()=>{if(state.running)await invoke('action',{name:'select',id:callAt(n)?.id||'',value:'',line:n});setSelected(n);});}catch{}
   });
   $('dial-form').addEventListener('submit',e=>{e.preventDefault();dial($('target').value.trim());});
+  // The number stays in the box after a call (to see what was dialled); this
+  // empties it and puts the cursor there for the next one.
+  $('clear-target').addEventListener('click',()=>{$('target').value='';$('target').focus();});
   $('answer').addEventListener('click',()=>answer());
   $('hangup').addEventListener('click',()=>hangup());
   $('hold').addEventListener('click',()=>act(current()?.held?'resume':'hold'));

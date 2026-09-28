@@ -128,6 +128,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DEVICES_COUNT:'{0} 個',
       DEVICES_LOADING:'讀取中…',
       DIAL:'撥號',
+      DIAL_CLEAR:'清除',
       DND_ACTIVE:'勿擾中',
       DND_OFF:'已關閉勿擾',
       DND_OFF_STATUS:'接受來電',
