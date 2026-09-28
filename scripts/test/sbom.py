@@ -1,5 +1,5 @@
 """Check the CycloneDX SBOM of release/ksip.exe: made only for the exe the build recorded, valid against the official 1.6 schema, the same content each time it is made, and what it lists matches what cargo, the native source lock, the linked WebRTC library and the toolchain say is built in."""
-import hashlib, importlib.util, json, re, subprocess, sys, tomllib
+import hashlib, importlib.util, json, os, re, subprocess, sys, tomllib
 from pathlib import Path
 from json_schema import Schemas
 
@@ -60,6 +60,15 @@ def main():
     wrong.write_text(json.dumps({**built_from, 'version': '0.0.0'}), encoding='utf-8')
     said = refused(EXE, wrong)
     check('says' in said, 'nor one whose version is not what the exe and Cargo.toml say', said)
+    # WebRTC's parts come from the record, not from the WebRTC tree as it is
+    # when the SBOM is made: pointed at a tree that is not there, the SBOM is
+    # made all the same, with the parts the build recorded.
+    elsewhere = subprocess.run([sys.executable, '-X', 'utf8', str(ROOT / 'scripts/build/sbom.py'), '--exe', str(EXE), '--out', str(OUT / 'elsewhere.cdx.json')],
+                               capture_output=True, encoding='utf-8', env={**os.environ, 'KSIP_WEBRTC_SOURCE': str(OUT / 'no-webrtc-here')})
+    moved = json.loads((OUT / 'elsewhere.cdx.json').read_text(encoding='utf-8')) if elsewhere.returncode == 0 else {'components': []}
+    got = sorted((c['name'], c.get('version')) for c in moved['components'] if any(p['name'] == 'ksip:bundled_in' for p in c.get('properties', [])))
+    recorded = sorted((p['name'], p['version']) for p in built_from['webrtc']['parts'])
+    check(elsewhere.returncode == 0 and got == recorded, "WebRTC's parts are the ones the build recorded, whatever tree is there when the SBOM is made", elsewhere.stderr.strip()[-200:] or got)
     bom, again = generate('first.cdx.json'), generate('second.cdx.json')
     fixed = lambda b: {**b, 'serialNumber': None, 'metadata': {**b['metadata'], 'timestamp': None}}
     check(fixed(bom) == fixed(again), 'made twice from the same exe, the SBOMs differ only in the time and the serial number')

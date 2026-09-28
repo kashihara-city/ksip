@@ -1,5 +1,5 @@
-"""Record what release/ksip.exe was built from (its hash, version, commit, inputs, toolchain) in temp/build/build-record.json, for the SBOM; run by app.ps1 in its MSVC shell."""
-import ctypes, hashlib, json, os, subprocess
+"""Record what release/ksip.exe was built from (its hash, version, commit, inputs, toolchain, WebRTC's linked parts) in temp/build/build-record.json, for the SBOM; run by app.ps1 in its MSVC shell."""
+import ctypes, hashlib, importlib.util, json, os, subprocess
 from ctypes import wintypes
 from pathlib import Path
 
@@ -56,6 +56,14 @@ def main():
     if not msvc or not ucrt:
         raise SystemExit('Run from the MSVC shell (app.ps1): VCToolsVersion and UCRTVersion say what the exe was linked with')
     changed = [line for line in run('git', 'status', '--porcelain', '--untracked-files=no').splitlines() if line]
+    # WebRTC's parts, resolved now from the tree the exe was built from (its
+    # README.chromium files, DEPS and license generator), so that the SBOM
+    # takes them from here and never from a tree changed or chosen later.
+    spec = importlib.util.spec_from_file_location('sbom', ROOT / 'scripts/build/sbom.py')
+    sbom = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sbom)
+    webrtc_commit = json.loads((ROOT / 'deps/native-sources.lock.json').read_text(encoding='utf-8'))['google-webrtc']['commit']
+    parts, not_linked = sbom.webrtc_parts(webrtc_commit)
     record = {
         'exe_sha256': sha256(EXE),
         'version': version,
@@ -68,6 +76,7 @@ def main():
             'msvc': msvc, 'ucrt': ucrt,
             'clang': (WEBRTC / 'third_party/llvm-build/Release+Asserts/cr_build_revision').read_text().strip(),
         },
+        'webrtc': {'parts': parts, 'not_linked': not_linked},
     }
     RECORD.parent.mkdir(parents=True, exist_ok=True)
     RECORD.write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8', newline='\n')

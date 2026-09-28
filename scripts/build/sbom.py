@@ -135,7 +135,8 @@ def chromium_license(text, name, known):
 
 
 def webrtc_parts(commit):
-    """What WebRTC's license generator lists for KSIP's target, kept only
+    """Read at the build, by build-record.py, which keeps the result for the
+    SBOM. What WebRTC's license generator lists for KSIP's target, kept only
     where the library KSIP links holds objects built from it (the generator
     also lists what the target merely could use), with the revision each is
     at: its README.chromium, or WebRTC's DEPS where that says DEPS, or the
@@ -296,8 +297,11 @@ def build(exe, record_path=ROOT / 'temp/build/build-record.json'):
             'pedigree': {'notes': f'Patched before it is built, by {PATCHED[name]} in the KSIP repository.'} if name in PATCHED else None,
             'properties': props}, 'excluded' if name == 'depot-tools' else 'required'))
 
-    webrtc_commit = lock['google-webrtc']['commit']
-    parts, unlinked = webrtc_parts(webrtc_commit)
+    # As the build resolved them (build-record.py), not from the WebRTC tree
+    # as it is now: that tree may have been updated, or another one chosen.
+    if 'webrtc' not in record:
+        raise SystemExit('the build record has no WebRTC parts (made by an older build-record.py): build the exe again')
+    parts, unlinked = record['webrtc']['parts'], record['webrtc']['not_linked']
     bundled = []
     for part in parts:
         purl = f"pkg:generic/{part['name']}@{part['version']}"
