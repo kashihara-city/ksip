@@ -48,7 +48,7 @@ try {
     try{$saved=$key.GetValue('aec_delay_ms')}finally{$key.Dispose()}
     if($saved -ne 24){throw "Saved delay is $saved instead of 24"}
     # The engine keeps its profile under the OS temp folder.
-    $config=Get-Content (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config') -Raw
+    $config=Wait-EngineConfig '(?m)^webrtc_aec_delay_ms 24$'
     if($config -notmatch '(?m)^webrtc_aec_delay_ms 24$'){throw 'Generated engine config is missing the saved delay'}
     @{version=$version;recommendationInserted=$true;recommendedMs=$result[0];simpleProbes=$result[1];simpleSpreadMs=$result[2];simpleConfidence=$result[3];simpleStable=$result[4];carefulRecommendedMs=$careful[0];carefulProbes=$careful[1];carefulSpreadMs=$careful[2];carefulConfidence=$careful[3];carefulStable=$careful[4];closeDiscards=$true;savePersists=$true;engineConfigApplied=$true} | ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/ui-aec-calibration-v$version.json"
     "PASS: simple $($result[0]) ms/$($result[1]) probes, careful $($careful[0]) ms/$($careful[1]) probes, discard/save semantics"

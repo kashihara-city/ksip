@@ -43,6 +43,20 @@ function Get-KsipLog {
     @(Get-Content $file -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } |
         Where-Object { [DateTimeOffset]::Parse($_.time) -ge $since })
 }
+# The engine config of the test profile once it says what a save put there. A
+# save is answered before the engine is started again on the new settings, and
+# the registration shown until then is the old engine's, so the file is read
+# until it matches (or the time is up), not once.
+function Wait-EngineConfig([string]$pattern, [int]$seconds = 25) {
+    $path = Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config'
+    $end = [DateTime]::UtcNow.AddSeconds($seconds)
+    do {
+        $config = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+        if ($config -match $pattern) { return $config }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $end)
+    return $config
+}
 function Wait-KsipLog([string]$source, [string]$pattern, [int]$seconds = 15) {
     # The file is written at most once a second, so a line takes a moment to appear.
     $end = [DateTime]::UtcNow.AddSeconds($seconds)

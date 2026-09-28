@@ -45,8 +45,8 @@ try {
         $end=[DateTime]::UtcNow.AddSeconds(25)
         while((Find-Id 'save-settings') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 150}
         if(Find-Id 'save-settings'){throw 'Settings did not save/reconnect without a CA file'}
+        $config=Wait-EngineConfig 'sip_cafile .*windows-trust\.pem'
         Wait-Class 'registration' 'reg-register_ok'
-        $config=Get-Content (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config') -Raw
         if($config -notmatch 'sip_cafile .*windows-trust\.pem'){throw 'Engine config does not use the Windows store'}
         if($config -notmatch 'sip_verify_server yes'){throw 'Engine config does not verify the server'}
         if(!(Test-Path (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/windows-trust.pem'))){throw 'windows-trust.pem was not written'}
