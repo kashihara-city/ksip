@@ -86,6 +86,12 @@ def main():
         evidence['native'].append({'name':name,**p})
     problems=checkout_differences(ROOT/'temp/w/src')
     assert not problems,'\n'.join(problems)
+    # The CycloneDX schemas the SBOM is checked against: kept as fetched, from a release old enough.
+    schema=json.loads((ROOT/'deps/cyclonedx/schema.lock.json').read_text())
+    assert old(schema['source_date']),schema['version']
+    for name,f in schema['files'].items():
+        assert hashlib.sha256((ROOT/'deps/cyclonedx'/name).read_bytes()).hexdigest()==f['sha256'],name
+    evidence['schema']=[{'name':name,**f,'version':schema['version'],'commit':schema['commit']} for name,f in schema['files'].items()]
     (ROOT/'temp/reports/dependency-evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
     print('Age, registry, lock/hash checks passed:',{k:len(v) for k,v in evidence.items() if isinstance(v,list)})
     # cargo-audit reads the same lock and reports RustSec advisories. It is a

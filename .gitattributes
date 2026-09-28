@@ -9,3 +9,6 @@
 *.png binary
 *.wav binary
 *.exe binary
+
+# The CycloneDX schemas are kept byte for byte as fetched: their SHA-256 is pinned.
+deps/cyclonedx/*.json -text

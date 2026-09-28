@@ -412,6 +412,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/app.ps1 -Clean
 python -X utf8 scripts/test/build-paths.py
 ```
 
+部品一覧（SBOM）は `python -X utf8 scripts/build/sbom.py` で、`release/ksip.exe` について CycloneDX 1.6（ECMA-424）の JSON を `temp/build/sbom/ksip.cdx.json` に書きます（`--exe`・`--out` で変えられます）。ネットワークには出ません。載せるのは次のとおりです。
+
+- Windows 向けにビルドされる Rust クレート: `cargo tree` の実際の依存解決から取ります。exe に入るものは `scope: required`、ビルドスクリプトとマクロにだけ使うものは `excluded` です。テスト専用のクレートと、ほかの OS 向けのクレートは載せません。
+- ネイティブの原本: `deps/native-sources.lock.json` の版（git の原本はコミット）・SHA-256・提供者です。baresip はビルド前にパッチを当てるので、そのことを `pedigree` に書きます。
+- WebRTC が同梱する部品: WebRTC 自身のライセンス生成が KSIP のビルド対象について挙げるもののうち、実際にリンクする `ksip_webrtc_audio.lib` にオブジェクトがあるものです。版は各部品の `README.chromium` と WebRTC の `DEPS` から取ります。挙がっていてもリンクされないもの（いまは libc++ と protobuf）は載せず、そう書き残します。
+- ツールチェーンが exe に入れるもの: Rust の標準ライブラリ、MSVC のランタイムと UCRT（静的リンク）、clang のランタイム（`clang_rt.builtins`）です。
+
+SBOM は作るたびに別の文書として、作った日時と新しいシリアル番号を持ちます。どの exe の部品一覧かは、`metadata.component` の SHA-256 で決まります。`test/sbom.py` は次を確かめます。
+
+- 公式の JSON スキーマ（`deps/cyclonedx/` に取得元・版・ハッシュを固定して置いたもの。取得は `scripts/deps/fetch-cyclonedx-schema.py`）で正しいこと。
+- ライセンスの表記が SPDX の識別子でできていること。
+- 同じ exe から2回作ると、日時とシリアル番号のほかは一致すること。
+- 載っている部品が、`cargo tree`、Cargo.lock とネイティブの lock のハッシュ、リンクする WebRTC のライブラリの中身、コンパイラの版と一致すること。
+
 同じコミットをどの環境で組んでも同じexeになるように、ソースの改行は `.gitattributes` でCRLFに固定してあります。`src-web/` はそのままexeへ埋め込まれるため、取り出しの改行が違えば別のexeができます（Rust と C/C++ はコンパイラが改行を正規化するので影響しません）。`test/line-endings.py` が `src-web/` の改行を見ます。
 
 ## テスト
@@ -434,6 +448,7 @@ python -X utf8 scripts/test/no-secrets.py
 python -X utf8 scripts/test/build-paths.py
 python -X utf8 scripts/test/line-endings.py
 python -X utf8 scripts/test/admx.py
+python -X utf8 scripts/test/sbom.py
 ```
 
 `test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。
