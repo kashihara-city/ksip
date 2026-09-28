@@ -655,6 +655,10 @@ double tone_power(const std::vector<double> &samples, double frequency, unsigned
 }
 void an_inband_digit_is_its_two_tones_for_as_long_as_the_rules_ask() {
     const double lows[] = {697, 770, 852, 941}, highs[] = {1209, 1336, 1477, 1633};
+    // What KSIP sends: a 100 ms tone and a 100 ms pause (what the settings
+    // and the ADMX say), whatever the rate.
+    check(inband_dtmf::tone_samples(8000) == 800 && inband_dtmf::period_samples(8000) == 1600 && inband_dtmf::tone_samples(48000) == 4800 && inband_dtmf::period_samples(48000) == 9600,
+          "a digit is a 100 ms tone and a 100 ms pause");
     for (unsigned srate : {8000u, 16000u, 48000u}) {
         // MIC Notice No. 357 of 2024, Appended Table 2: tone 50 ms or more,
         // pause 30 ms or more, period 120 ms or more.

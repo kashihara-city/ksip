@@ -193,7 +193,7 @@ function syncButtonRow(n){
 }
 async function calibrateAec(careful){
   $('calibration-status').textContent=t(careful?'CALIBRATION_RUNNING_CAREFUL':'CALIBRATION_RUNNING_SIMPLE');
-  try{await run(async()=>{const result=await invoke('calibrate_aec',{microphone:state.settings.microphone||'default',speaker:state.settings.speaker||'default',careful});$('aec_delay_ms').value=result.recommended_ms;$('calibration-status').textContent=fill('CALIBRATION_RESULT',t(result.stable?'CALIBRATION_RECOMMENDED':'CALIBRATION_UNSTABLE'),result.recommended_ms,result.samples,result.spread_ms,result.confidence);});}
+  try{await run(async()=>{const result=await invoke('calibrate_aec',{microphone:state.settings.microphone||'default',speaker:state.settings.speaker||'default',careful});$('aec_delay_ms').value=result.recommended_ms;updateSaveLabel();$('calibration-status').textContent=fill('CALIBRATION_RESULT',t(result.stable?'CALIBRATION_RECOMMENDED':'CALIBRATION_UNSTABLE'),result.recommended_ms,result.samples,result.spread_ms,result.confidence);});}
   catch(e){$('calibration-status').textContent=t(String(e));logUi('aec calibration',e);}
 }
 // A settings file's values (as import_settings_file hands them over) go
@@ -275,7 +275,10 @@ function heldSettings(){
     microphone:state.settings.microphone,speaker:state.settings.speaker,
     microphone_gain:carried.microphone_gain??(state.settings.microphone_gain||100),speaker_gain:carried.speaker_gain??(state.settings.speaker_gain||100),
     auto_record:carried.auto_record??!!state.settings.auto_record,
-    buttons:BUTTON_INDEXES.map(n=>({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),
+    // A button made unused is saved empty: its old number (a link, a number
+    // with separators) is no longer what the row is for, and is not held
+    // against the save. One a policy fixes is the policy's (collectSettings).
+    buttons:BUTTON_INDEXES.map(n=>!$('button_'+n+'_kind').value?{title:'',kind:'',number:'',transfer:'',pickup:''}:({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),
     auto_answer:$('auto_answer').checked,
     aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,
     register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,
@@ -327,16 +330,16 @@ export function init(){
   $('program_integration').addEventListener('change',syncIntegration);
   for(const n of BUTTON_INDEXES)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
   $('choose-ca').addEventListener('click',async()=>{
-    try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen)$('ca_file').value=chosen;}
+    try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen){$('ca_file').value=chosen;updateSaveLabel();}}
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi('choose ca file',e);}
   });
   for(const button of document.querySelectorAll('[data-sound]'))button.addEventListener('click',async()=>{
-    try{const chosen=await invoke('choose_sound_file');if(chosen)$('sound_'+button.dataset.sound).value=chosen;}
+    try{const chosen=await invoke('choose_sound_file');if(chosen){$('sound_'+button.dataset.sound).value=chosen;updateSaveLabel();}}
     catch(e){$('settings-error').textContent=t(String(e));$('settings-error').hidden=false;logUi('choose sound file',e);}
   });
   $('import-settings').addEventListener('click',async()=>{
     $('settings-error').hidden=true;$('settings-file-note').hidden=true;
-    try{const file=await invoke('import_settings_file');if(file)applyImport(file);}
+    try{const file=await invoke('import_settings_file');if(file){applyImport(file);updateSaveLabel();}}
     catch(e){showFileError('import settings',e);}
   });
   $('export-settings').addEventListener('click',async()=>{

@@ -4,7 +4,7 @@
 // all of it from the last snapshot.
 import {$, invoke, logUi, ask} from './ui.js';
 import {t, fill, texts, language} from './i18n.js';
-import {state, ready, busy, selected, error, callAt, current, peerNumber, run, act, dial, answer, hangup, setSelected, setError, managed} from './session.js';
+import {state, ready, busy, selected, error, callAt, current, peerNumber, run, act, dial, answer, hangup, setSelected, setError, managed, sendDigit} from './session.js';
 import {renderButtons, editing, setEditing} from './buttons.js';
 import {closeSettingsForCall} from './settings.js';
 import {renderLogs} from './logs.js';
@@ -167,6 +167,6 @@ export function init(){
     if(!await ask(t('UNREGISTER_CONFIRM')))return;
     act('unregister','','',selected);
   });
-  for(const digit of '123456789*0#'){const button=document.createElement('button');button.textContent=digit;button.addEventListener('click',()=>{if(current()?.state==='ESTABLISHED'&&!current().held)act('dtmf',current().id,digit);else if(!current())$('target').value+=digit;});$('keypad').append(button);}
+  for(const digit of '123456789*0#'){const button=document.createElement('button');button.textContent=digit;button.addEventListener('click',()=>{const c=current();if(c?.state==='ESTABLISHED'&&!c.held)sendDigit(c,digit);else if(!c)$('target').value+=digit;});$('keypad').append(button);}
   $('quit').addEventListener('click',async()=>{if(!state.calls.length||await ask(t('QUIT_CONFIRM')))invoke('quit_app');});
 }

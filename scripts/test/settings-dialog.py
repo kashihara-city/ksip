@@ -17,8 +17,10 @@ import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null;
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[];
 window.__invoke=async(command,args)=>{
+  // A digit's request takes a while, as one does when the app waits for the engine.
+  if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);await new Promise(r=>setTimeout(r,240));return '';}
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
   if(command==='save_buttons'){savedButtons=JSON.parse(JSON.stringify(args.buttons));throw 'TEST_SAVE_STOPPED';}
   if(command==='set_button_editing'){editingWindow=args.editing;return null;}
@@ -291,6 +293,34 @@ async function checks(){
   await importFile({settings:{dtmf_mode:'info'}});
   const imported=$('dtmf_mode').value;
   check(shownMode==='info'&&s&&s.settings.dtmf_mode==='inband'&&saveLabel==='保存'&&noneStored==='rtp'&&imported==='info','the DTMF method is shown, saved without a restart, RTP when none is stored, and taken from a file',[shownMode,s&&s.settings.dtmf_mode,saveLabel,noneStored,imported]);
+  $('configuration').close();
+
+  // Keys pressed while a digit is on its way are sent after it, in order; the
+  // ones left when the call ends are not.
+  state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];state.registration='REGISTER_OK';render();
+  const keypad=digit=>[...$('keypad').children].find(b=>b.textContent===digit);
+  digitsSent=[];
+  for(const d of '123'){keypad(d).click();await new Promise(r=>setTimeout(r,60));}
+  await new Promise(r=>setTimeout(r,900));
+  const inOrder=[...digitsSent];
+  digitsSent=[];
+  for(const d of '456'){keypad(d).click();await new Promise(r=>setTimeout(r,20));}
+  state.calls=[];render();
+  await new Promise(r=>setTimeout(r,900));
+  check(JSON.stringify(inOrder)==='["1","2","3"]'&&JSON.stringify(digitsSent)==='["4"]','keys pressed while a digit is on its way are all sent, in order; those left when the call ends are not',[inOrder,digitsSent]);
+
+  // A button made unused is saved empty, whatever its number was.
+  await open({buttons:[{title:'Web',kind:'open',number:'https://pbx.example/',transfer:'',pickup:''},{title:'',kind:'speed',number:'06-1234-5678',transfer:'',pickup:''}]});
+  for(const n of [1,2]){$('button_'+n+'_kind').value='';$('button_'+n+'_kind').dispatchEvent(new Event('change',{bubbles:true}));}
+  s=await save();
+  const empty={title:'',kind:'',number:'',transfer:'',pickup:''};
+  check(s&&JSON.stringify(s.settings.buttons.slice(0,2))===JSON.stringify([empty,empty]),'a button made unused is saved empty, its old link or number not sent',s&&s.settings.buttons.slice(0,2));
+
+  // A settings file that changes what the engine reads at a start says so on the save at once.
+  await open({transport:'tls',media_encryption:'sdes'});
+  const beforeImport=$('save-settings').textContent;
+  await importFile({settings:{transport:'tcp',media_encryption:''}});
+  check(beforeImport==='保存'&&$('save-settings').textContent==='保存して再接続','a settings file that needs a reconnect says so on the save as soon as it is read',[beforeImport,$('save-settings').textContent]);
   $('configuration').close();
 
   // What a policy fixes: its field is locked and says so, whatever else the

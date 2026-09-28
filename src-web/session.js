@@ -57,6 +57,32 @@ export async function run(fn){
 export async function act(name,id=current()?.id||'',value='',line=selected){
   try{await run(()=>invoke('action',{name,id,value,line}));}catch{}
 }
+// Key presses on a call (DTMF): each digit is sent in turn, one request at a
+// time, outside run(), so that a digit pressed while the one before is on its
+// way is kept, not dropped, and the keypad stays usable (the app takes the
+// requests one after another anyway). The digits belong to the call they were
+// pressed on: what is left when that call ends, is put on hold, or another is
+// selected, is not sent. More than DTMF_LIMIT waiting, or a digit the app
+// refuses, is said; the ones after a refused digit are not sent.
+const DTMF_LIMIT=32;
+let digits=[],sendingDigits=false;
+export function sendDigit(call,digit){
+  if(digits.length>=DTMF_LIMIT){error=t('DTMF_TOO_MANY');render();return;}
+  digits.push({id:call.id,line:call.line,digit});
+  if(!sendingDigits)sendDigits();
+}
+async function sendDigits(){
+  sendingDigits=true;
+  try{
+    while(digits.length){
+      const next=digits[0],c=current();
+      if(!c||c.id!==next.id||c.state!=='ESTABLISHED'||c.held){digits=[];break;}
+      try{await invoke('action',{name:'dtmf',id:next.id,value:next.digit,line:next.line});}
+      catch(e){digits=[];error=String(e);logUi('dtmf',e);render();break;}
+      digits.shift();
+    }
+  }finally{sendingDigits=false;}
+}
 // Every way of placing a call ends here: the dial box, a button, the history
 // and a link. The selected line is used while it is free, otherwise the free
 // one; the number goes into the dial box, so that what was dialled can be seen

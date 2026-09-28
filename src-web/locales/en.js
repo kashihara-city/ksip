@@ -243,6 +243,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DTMF_MODE_INFO:'SIP INFO',
       DTMF_MODE_INBAND:'In band (as sound)',
       DTMF_RTP_NOT_OFFERED:'The other side does not take DTMF over RTP, so the digit was not sent. Choose SIP INFO or in-band in the settings',
+      DTMF_TOO_MANY:'Too many keys are waiting to be sent. Wait a moment and press again',
       SETTINGS_DTMF_MODE_INVALID:'The DTMF method is not valid',
       SETTINGS_NS_HIGH:'High',
       SETTINGS_NS_LOW:'Low',

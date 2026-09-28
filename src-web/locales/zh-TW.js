@@ -243,6 +243,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DTMF_MODE_INFO:'SIP INFO',
       DTMF_MODE_INBAND:'頻帶內（以聲音傳送）',
       DTMF_RTP_NOT_OFFERED:'對方不接受 RTP 的 DTMF，因此未送出。請在設定中選擇 SIP INFO 或頻帶內',
+      DTMF_TOO_MANY:'等待送出的按鍵太多。請稍候再按',
       SETTINGS_DTMF_MODE_INVALID:'DTMF 傳送方式的值不正確',
       SETTINGS_NS_HIGH:'強',
       SETTINGS_NS_LOW:'弱',

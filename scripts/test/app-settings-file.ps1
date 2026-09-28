@@ -99,6 +99,9 @@ try {
     $changed.settings.microphone='{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}'
     $changed.settings.agc=$true
     $changed.settings.register_interval='often'
+    # A button in use: an unused one is saved empty, whatever the file gives it.
+    $changed.settings.buttons[1].kind='speed'
+    $changed.settings.buttons[1].number='1003'
     $changed.settings.buttons[1].title='Imported'
     $changed.unreadable=@('agc')
     $changed | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 "$work/changed.json"
@@ -112,7 +115,7 @@ try {
     if(Find-Id 'save-settings'){throw 'The imported settings did not save'}
     Wait-Class 'registration' 'reg-register_ok'
     $saved=Export-Saved
-    if($saved.settings.tray_after_call -ne 15 -or $saved.settings.aec_delay_ms -ne 33 -or $saved.settings.buttons[1].title -ne 'Imported'){throw 'The imported values were not saved'}
+    if($saved.settings.tray_after_call -ne 15 -or $saved.settings.aec_delay_ms -ne 33 -or $saved.settings.buttons[1].title -ne 'Imported' -or $saved.settings.buttons[1].kind -ne 'speed'){throw 'The imported values were not saved'}
     if($saved.settings.microphone -ne $file.settings.microphone){throw 'The microphone of another machine was taken'}
     if($saved.settings.agc -ne $file.settings.agc){throw 'A value the other machine could not read was taken'}
     if($saved.settings.register_interval -ne $file.settings.register_interval){throw 'A value of the wrong type was taken'}

@@ -1489,6 +1489,21 @@ async fn connect(s: &Shared) -> Result<(), String> {
     result
 }
 async fn restart(s: &Shared) -> Result<(), String> {
+    let started = start_engine(s).await;
+    // A start that failed before an engine was taken (it could not be
+    // prepared, launched or reached) leaves no engine: the window says
+    // disconnected, as for one that was lost, so that connecting again is
+    // offered. One that failed later (the login) has already been taken out.
+    if started.is_err() {
+        let mut p = s.borrow_mut();
+        if p.link.is_none() && p.view.registration == "CONNECTING" {
+            p.view.running = false;
+            p.view.registration = "DISCONNECTED".into();
+        }
+    }
+    started
+}
+async fn start_engine(s: &Shared) -> Result<(), String> {
     // A start or stop given up on, or a lost engine not yet confirmed ended,
     // may still hold the ports: no new engine until that is settled.
     if s.borrow().engine_busy() {
@@ -2481,6 +2496,48 @@ mod tests {
         assert_eq!(told, ["ksip_detail_log", "ksip_gain", "ksip_gain", "ksip_parking"], "every command the engine takes while running is sent again");
         assert!(a.shared.borrow().live_owed.is_none() && a.shared.borrow().view.error.is_empty(), "told, the error goes");
         assert!(stopped.is_ok());
+    }
+    /// A start that fails before there is an engine (here the profile folder
+    /// cannot be made, a file being in its place) leaves the phone shown as
+    /// disconnected, not connecting, so that the window offers to connect again.
+    #[test]
+    fn a_start_that_fails_before_there_is_an_engine_leaves_the_phone_disconnected() {
+        let _one_at_a_time = crate::storage::store_tests_one_at_a_time();
+        let mut a = actor();
+        let name = format!("test-failed-start-{}", std::process::id());
+        let store = crate::storage::Store::at(format!(r"Software\KashiharaCity\ksip\Test\{name}"), format!("KSIP/Test/{name}"));
+        let account = Account { server: "pbx.example".into(), port: 5060, extension: "1001".into(), auth_user: "1001".into(), password: "test-only".into() };
+        store.write_account(&account).unwrap();
+        {
+            let mut p = a.shared.borrow_mut();
+            p.services.store = store.clone();
+            p.view.account = account.public();
+            p.view.settings = Settings::default();
+        }
+        let profile = a.shared.borrow().services.profile_dir();
+        std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&profile);
+        std::fs::write(&profile, b"in the way of the engine's profile folder").unwrap();
+        let s = a.shared.clone();
+        let mut future = Box::pin(connect(&s));
+        let mut cx = Context::from_waker(Waker::noop());
+        let result = loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(result) => break result,
+                Poll::Pending => {
+                    let msg = a.rx.recv_timeout(Duration::from_secs(20)).unwrap();
+                    a.handle(msg);
+                }
+            }
+        };
+        let (registration, running, link) = {
+            let p = s.borrow();
+            (p.view.registration.clone(), p.view.running, p.link.is_some())
+        };
+        std::fs::remove_file(&profile).unwrap();
+        store.cleanup_test();
+        assert!(result.is_err(), "the start fails");
+        assert_eq!((registration.as_str(), running, link), ("DISCONNECTED", false, false), "no engine, and shown as disconnected");
     }
     #[test]
     fn a_reconnect_owed_waits_for_the_last_call_and_is_queued_once() {

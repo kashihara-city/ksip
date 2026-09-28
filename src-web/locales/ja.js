@@ -243,6 +243,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       DTMF_MODE_INFO:'SIP INFO',
       DTMF_MODE_INBAND:'帯域内（音声として送る）',
       DTMF_RTP_NOT_OFFERED:'相手が RTP の DTMF を受け付けていないため送れません。設定で SIP INFO か帯域内を選んでください',
+      DTMF_TOO_MANY:'押したキーが多すぎて送れません。少し待ってから押してください',
       SETTINGS_DTMF_MODE_INVALID:'DTMFの送り方の値が正しくありません',
       SETTINGS_NS_HIGH:'強',
       SETTINGS_NS_LOW:'弱',
