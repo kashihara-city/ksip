@@ -317,9 +317,10 @@ export function init(){
   $('codec-list').addEventListener('click',e=>{const button=e.target.closest('button[data-move]');if(!button)return;const row=button.closest('li'),list=row.parentElement;if(button.dataset.move==='-1'){if(row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);}else if(row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);});
   $('configuration').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});
   $('transport').addEventListener('change',()=>{
-    // 既定のポートを使っているときだけ、方式に合わせて入れ替える。
+    // 既定のポートを使っているときだけ、方式に合わせて入れ替える。ポリシーで
+    // 決まったポートは、表示も含めて変えない（保存するのはポリシーの値）。
     const tls=$('transport').value==='tls',port=$('port');
-    if(port.value.trim()===(tls?'5060':'5061'))port.value=tls?'5061':'5060';
+    if(port.dataset.managed!=='1'&&port.value.trim()===(tls?'5060':'5061'))port.value=tls?'5061':'5060';
     syncEncryptionChoices();
   });
   $('media_encryption').addEventListener('change',syncEncryptionChoices);

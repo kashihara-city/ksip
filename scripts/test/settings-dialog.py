@@ -321,6 +321,14 @@ async function checks(){
   const data=new DataTransfer();data.setData('application/x-ksip-button','1');fixedSlot.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));await settle();
   check(!$('custom-3-edit')&&!$('custom-3-delete')&&!fixedSlot.draggable&&savedButtons===null&&!!$('custom-1-edit'),'a fixed button has no tools, is not dragged, and nothing is dropped on it',[!!$('custom-3-edit'),fixedSlot.draggable,savedButtons]);
   setEditing(false);
+  // A fixed port stays as it is when the transport changes, shown and saved alike.
+  managed.clear();managed.add('port');
+  await open({transport:'tls'});
+  $('transport').value='udp';$('transport').dispatchEvent(new Event('change',{bubbles:true}));
+  const shownPort=$('port').value;
+  s=await save();
+  check(shownPort==='5061'&&s&&s.account.port===5061,'a fixed port is not changed with the transport, on screen or in the save',[shownPort,s&&s.account.port]);
+  $('configuration').close();
   managed.add('auto_record');render();
   check($('record').disabled&&$('record').title==='管理者が設定','a fixed automatic recording is not switched on the phone, and says why',$('record').title);
   managed.clear();render();

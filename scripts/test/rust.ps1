@@ -10,7 +10,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Clippy found something' }
     cargo test --locked --manifest-path "$PSScriptRoot/../../src-tauri/Cargo.toml"
     if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed' }
-    cargo test --locked --manifest-path "$PSScriptRoot/../../src-tauri/Cargo.toml" real_engine_starts_stops_and_restarts -- --ignored
+    # The tests that start the real engine (their names begin real_engine), ignored by a plain cargo test.
+    cargo test --locked --manifest-path "$PSScriptRoot/../../src-tauri/Cargo.toml" real_engine -- --ignored --test-threads=1
     if ($LASTEXITCODE -ne 0) { throw 'Rust engine integration test failed' }
     cargo build --locked --manifest-path "$PSScriptRoot/../../src-tauri/Cargo.toml" --example audio-devices
     if ($LASTEXITCODE -ne 0) { throw 'Rust audio diagnostic build failed' }

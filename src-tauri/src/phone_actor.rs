@@ -294,6 +294,13 @@ struct Phone {
     /// up or ringing: the engine is started on them once no call is left
     /// (Job::ApplySaved). Any start takes them, and clears this.
     reconnect_owed: bool,
+    /// A save's settings did not all reach the running engine (a command
+    /// refused or unanswered; unanswered, it may have run or not): the error
+    /// the window was shown. The next save tells the engine everything it
+    /// takes while running again, changed or not, the commands being the
+    /// same whether said once or twice; that going through clears this, and
+    /// the error with it. A new engine reads them all when it starts.
+    live_owed: Option<String>,
     /// The WAV the engine has open for the recording, once it has said so
     /// (a start answered "started", or the "active" event of a reservation
     /// that came true). Converted to an MP3 exactly once, when the file is
@@ -423,6 +430,7 @@ impl Actor {
             lost: None,
             maintenance_off_owed: false,
             reconnect_owed: false,
+            live_owed: None,
             notices: EngineNotices::default(),
             open_recording: None,
             recording_refused: None,
@@ -1112,8 +1120,10 @@ impl Phone {
         for note in ready.notes {
             self.services.log(LOG_APP, note);
         }
-        // A new engine starts outside maintenance; nothing is owed to it.
+        // A new engine starts outside maintenance, and on the saved settings
+        // as a whole; nothing is owed to it.
         self.maintenance_off_owed = false;
+        self.live_owed = None;
         self.bound = ready.address;
         self.take_endpoints(&ready.endpoints);
         self.link = Some(ready.link);
@@ -1816,9 +1826,7 @@ async fn save_configuration(s: Shared, settings: Settings, mut account: Account,
             Err(e) => s.borrow().answer(reply, Err(e)),
             Ok(()) => {
                 s.borrow().answer(reply, Ok(String::new()));
-                if let Err(e) = apply_live(&s, &old, &settings).await {
-                    s.borrow_mut().show_error(e);
-                }
+                apply_live(&s, &old, &settings).await;
             }
         }
         return;
@@ -1861,11 +1869,33 @@ async fn save_configuration(s: Shared, settings: Settings, mut account: Account,
         }
     }
 }
-/// What changed of the settings the running engine is told of, told to it;
-/// the window's own settings need nothing more than the snapshot. The sound
-/// files are replaced in place, as a start does: the engine reads each file
-/// when it plays it.
-async fn apply_live(s: &Shared, old: &Settings, new: &Settings) -> Result<(), String> {
+/// What changed of the settings the running engine is told of, told to it
+/// (all of it, changed or not, while an earlier save's is owed: see
+/// live_owed); the window's own settings need nothing more than the
+/// snapshot. The save itself is done by now: what did not reach the engine
+/// is shown as an error, and is owed to the next save.
+async fn apply_live(s: &Shared, old: &Settings, new: &Settings) {
+    let all = s.borrow().live_owed.is_some();
+    let told = tell_engine(s, old, new, all).await;
+    let mut p = s.borrow_mut();
+    match told {
+        Ok(()) => {
+            // The engine has it all now: the error that said it had not goes.
+            if let Some(shown) = p.live_owed.take() {
+                if p.view.error == shown {
+                    p.view.error.clear();
+                }
+            }
+        }
+        Err(e) => {
+            p.live_owed = Some(e.clone());
+            p.show_error(e);
+        }
+    }
+}
+/// The engine's part of apply_live. The sound files are replaced in place,
+/// as a start does: the engine reads each file when it plays it.
+async fn tell_engine(s: &Shared, old: &Settings, new: &Settings, all: bool) -> Result<(), String> {
     s.borrow().services.logs.lock().unwrap().set_detail(new.detail_log);
     if old.sounds() != new.sounds() {
         let notes = s.borrow().services.prepare_sounds(new).1;
@@ -1876,16 +1906,16 @@ async fn apply_live(s: &Shared, old: &Settings, new: &Settings) -> Result<(), St
     if s.borrow().link.is_none() {
         return Ok(());
     }
-    if old.detail_log != new.detail_log {
+    if all || old.detail_log != new.detail_log {
         request(s, "ksip_detail_log", if new.detail_log { "on" } else { "off" }).await?;
     }
     for (kind, before, after) in [("microphone", old.microphone_gain, new.microphone_gain), ("speaker", old.speaker_gain, new.speaker_gain)] {
-        if before != after {
+        if all || before != after {
             request(s, "ksip_gain", &format!("{kind} {after}")).await?;
         }
     }
     let watched = watch_list(new);
-    if watch_list(old) != watched {
+    if all || watch_list(old) != watched {
         request(s, "ksip_parking", &watched).await?;
     }
     Ok(())
@@ -1919,9 +1949,7 @@ async fn save_buttons(s: Shared, buttons: Vec<CustomButton>, reply: Reply<()>) {
         Ok(old) => {
             s.borrow().answer(reply, Ok(()));
             let new = s.borrow().view.settings.clone();
-            if let Err(e) = apply_live(&s, &old, &new).await {
-                s.borrow_mut().show_error(e);
-            }
+            apply_live(&s, &old, &new).await;
         }
     }
 }
@@ -2404,6 +2432,55 @@ mod tests {
         assert_eq!(first_rx.recv().unwrap(), Err(message("ACTION_UNSUPPORTED")));
         assert_eq!(second_rx.recv().unwrap(), Err(message("ACTION_ARGUMENT_INVALID")));
         assert!(a.current.is_none() && a.queue.is_empty());
+    }
+    /// A save that did not reach the engine (its answer timed out) is told
+    /// again, whole, by the next save, even of the same settings; once that
+    /// goes through, the error it left is gone. With the real engine, as the
+    /// other real_engine test: `cargo test real_engine -- --ignored`.
+    #[test]
+    #[ignore]
+    fn real_engine_live_settings_that_did_not_reach_it_are_told_again_by_the_next_save() {
+        let _one_at_a_time = crate::storage::store_tests_one_at_a_time();
+        let a = actor();
+        let store = crate::storage::Store::at(r"Software\KashiharaCity\ksip\Test\test-live-owed".into(), "KSIP/Test/test-live-owed".into());
+        store.cleanup_test();
+        a.shared.borrow_mut().services.store = store.clone();
+        let settings = Settings { sip_port: 18062, rtp_port: 18102, ..Settings::default() };
+        let account = Account { server: "127.0.0.1".into(), port: 18999, extension: "1001".into(), auth_user: "1001".into(), password: "test-only".into() };
+        let devices = crate::audio::devices().unwrap();
+        let prepared = a.shared.borrow().services.prepare_start(&settings, &account, &devices).unwrap();
+        let (tx, _rx) = mpsc::channel();
+        a.shared.borrow_mut().link = Some(EngineLink::start(prepared.plan, 100, tx).unwrap());
+        a.shared.borrow_mut().view.settings = settings.clone();
+        let mut buttons = settings.buttons;
+        buttons[0] = CustomButton { kind: "dial".into(), number: "1002".into(), ..CustomButton::default() };
+        let mut cx = Context::from_waker(Waker::noop());
+        // The save is answered before the engine is told; the telling times out.
+        let (reply, rx) = Reply::channel();
+        let mut first = Box::pin(save_buttons(a.shared.clone(), buttons.clone(), reply));
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(rx.try_recv().unwrap(), Ok(()), "saved before the engine answers");
+        a.shared.borrow_mut().delivered = Some(Delivered::Response(Err(RequestError::Timeout)));
+        assert!(first.as_mut().poll(&mut cx).is_ready());
+        drop(first);
+        let shown = a.shared.borrow().view.error.clone();
+        assert!(!shown.is_empty() && a.shared.borrow().live_owed.as_deref() == Some(shown.as_str()));
+        // The same buttons saved again: the engine is told everything again.
+        let (reply, _rx) = Reply::channel();
+        let mut retry = Box::pin(save_buttons(a.shared.clone(), buttons, reply));
+        let mut told = Vec::new();
+        while retry.as_mut().poll(&mut cx).is_pending() {
+            assert!(matches!(a.shared.borrow().waiting, Some(Waiting::Response { .. })), "the retry waits for an answer");
+            told.push(a.shared.borrow().link.as_ref().and_then(|l| l.sent.last().cloned()).unwrap_or_default());
+            a.shared.borrow_mut().delivered = Some(Delivered::Response(Ok((1, serde_json::json!({"ok": true, "data": ""})))));
+        }
+        drop(retry);
+        let link = a.shared.borrow_mut().link.take().unwrap();
+        let stopped = link.stop();
+        store.cleanup_test();
+        assert_eq!(told, ["ksip_detail_log", "ksip_gain", "ksip_gain", "ksip_parking"], "every command the engine takes while running is sent again");
+        assert!(a.shared.borrow().live_owed.is_none() && a.shared.borrow().view.error.is_empty(), "told, the error goes");
+        assert!(stopped.is_ok());
     }
     #[test]
     fn a_reconnect_owed_waits_for_the_last_call_and_is_queued_once() {

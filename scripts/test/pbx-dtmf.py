@@ -71,8 +71,10 @@ def main():
                 time.sleep(0.2)
             assert got == DIGITS, f'{mode}: the other phone got {got!r}, not {DIGITS!r}'
             print(f'PASS: {mode} の DTMF が PBX を越えて数字として届いた（{got}）')
-        # In band: queued at once, sounded one after another, each a tone
-        # long enough for the rules (50 ms or more; KSIP sends 100 ms).
+        # In band: queued at once, sounded one after another. KSIP sends each
+        # tone for 100 ms (test-ksip-audio holds it to that); what arrives can
+        # be a little shorter where the far side's jitter buffer drops or
+        # stretches a packet, so the check is the rule's own minimum, 50 ms.
         for digit in DIGITS:
             a.action('dtmf', call, digit, mode='inband')
         time.sleep(len(DIGITS) * 0.2 + 1.5)
@@ -83,8 +85,8 @@ def main():
         found = tones(heard_file)
         digits = ''.join(d for d, _ in found)
         assert digits == DIGITS, f'inband: the other phone heard {found}, not {DIGITS!r}'
-        assert all(80 <= ms <= 130 for _, ms in found), f'inband: tone lengths {found}'
-        print(f'PASS: 帯域内の DTMF が音として届き、1桁ずつ約100ms鳴った（{found}）')
+        assert all(50 <= ms <= 130 for _, ms in found), f'inband: tone lengths {found}'
+        print(f'PASS: 帯域内の DTMF が音として届き、1桁ずつ50ms以上鳴った（{found}）')
     finally:
         if a:
             a.close()

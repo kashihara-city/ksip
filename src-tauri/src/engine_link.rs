@@ -126,6 +126,10 @@ pub struct EngineLink {
     /// Numbers the requests, so that an answer can be told apart from the
     /// others of this engine.
     serial: u64,
+    /// The commands sent, in order, for the tests of what the phone tells
+    /// the engine. Test builds only.
+    #[cfg(test)]
+    pub sent: Vec<String>,
 }
 
 fn next(seq: &AtomicU64) -> u64 {
@@ -228,6 +232,8 @@ impl EngineLink {
             writer,
             threads,
             serial: 1,
+            #[cfg(test)]
+            sent: Vec::new(),
         })
     }
     pub fn generation(&self) -> u64 {
@@ -241,6 +247,8 @@ impl EngineLink {
         let payload = serde_json::to_vec(&json!({"command":command,"params":params,"token":token}))
             .map_err(err)?;
         write_netstring(&mut self.writer, &payload)?;
+        #[cfg(test)]
+        self.sent.push(command.to_string());
         Ok(token)
     }
     /// Whether the process has ended on its own.
