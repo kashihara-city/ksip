@@ -52,3 +52,6 @@ foreach ($name in 'ksip.exe', "ksip-v$($Matches[1]).exe") {
 # The folder keeps a fixed name to run and a versioned copy of the same build.
 Copy-Item -LiteralPath "$root/temp/cargo-target/release/ksip.exe" -Destination "$release/ksip.exe"
 Copy-Item -LiteralPath "$release/ksip.exe" -Destination "$release/ksip-v$($Matches[1]).exe"
+# What this exe was built from, for the SBOM (scripts/build/sbom.py makes one only for an exe it has a record of).
+python -X utf8 scripts/build/build-record.py
+if ($LASTEXITCODE -ne 0) { throw 'Build record failed' }

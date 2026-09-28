@@ -1,4 +1,4 @@
-"""Check the CycloneDX SBOM of release/ksip.exe: valid against the official 1.6 schema, the same content each time it is made, and what it lists matches what cargo, the native source lock, the linked WebRTC library and the toolchain say is built in."""
+"""Check the CycloneDX SBOM of release/ksip.exe: made only for the exe the build recorded, valid against the official 1.6 schema, the same content each time it is made, and what it lists matches what cargo, the native source lock, the linked WebRTC library and the toolchain say is built in."""
 import hashlib, importlib.util, json, re, subprocess, sys, tomllib
 from pathlib import Path
 from json_schema import Schemas
@@ -25,6 +25,13 @@ def generate(name):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
+def refused(exe, record):
+    """What sbom.py says when it will not make the SBOM (empty if it did)."""
+    done = subprocess.run([sys.executable, '-X', 'utf8', str(ROOT / 'scripts/build/sbom.py'), '--exe', str(exe), '--record', str(record),
+                           '--out', str(OUT / 'refused.cdx.json')], capture_output=True, encoding='utf-8')
+    return '' if done.returncode == 0 else (done.stderr.strip().splitlines() or ['?'])[-1]
+
+
 def cargo_tree(edges):
     """The crates cargo itself reports for Windows over these edges, by name@version, ksip aside."""
     return {f'{n}@{v}' for _, n, v in sbom.cargo_tree(edges) if n != 'ksip'}
@@ -37,6 +44,22 @@ def spdx_terms(expression):
 def main():
     if not EXE.is_file():
         raise SystemExit(f'Build the app first: {EXE}')
+    # Only for the exe the build recorded, and only while what it was built from is unchanged.
+    record_path = ROOT / 'temp/build/build-record.json'
+    built_from = json.loads(record_path.read_text(encoding='utf-8'))
+    OUT.mkdir(parents=True, exist_ok=True)
+    other = OUT / 'other.exe'
+    other.write_bytes(EXE.read_bytes() + bytes(1))
+    said = refused(other, record_path)
+    check('not the exe' in said, 'an exe the build did not record (another build, an older version) gets no SBOM', said)
+    stale = OUT / 'stale-record.json'
+    stale.write_text(json.dumps({**built_from, 'inputs': {**built_from['inputs'], 'src-tauri/Cargo.lock': '0' * 64}}), encoding='utf-8')
+    said = refused(EXE, stale)
+    check('changed since' in said and 'Cargo.lock' in said, 'nor one whose inputs changed after it was built', said)
+    wrong = OUT / 'wrong-version.json'
+    wrong.write_text(json.dumps({**built_from, 'version': '0.0.0'}), encoding='utf-8')
+    said = refused(EXE, wrong)
+    check('says' in said, 'nor one whose version is not what the exe and Cargo.toml say', said)
     bom, again = generate('first.cdx.json'), generate('second.cdx.json')
     fixed = lambda b: {**b, 'serialNumber': None, 'metadata': {**b['metadata'], 'timestamp': None}}
     check(fixed(bom) == fixed(again), 'made twice from the same exe, the SBOMs differ only in the time and the serial number')
@@ -112,7 +135,12 @@ def main():
 
     # The runtimes the toolchain puts into the exe.
     rust = dict(line.split(': ', 1) for line in subprocess.check_output(['rustc', '-vV'], encoding='utf-8').splitlines()[1:] if ': ' in line)
-    check(by_name.get('rust-std', {}).get('version') == rust['release'], "Rust's standard library is listed at the compiler's version", rust['release'])
+    check(by_name.get('rust-std', {}).get('version') == rust['release'] == built_from['toolchain']['rustc'], "Rust's standard library is listed at the compiler's version, as the build recorded it", rust['release'])
+    check(by_name.get('msvc-runtime', {}).get('version') == built_from['toolchain']['msvc'] and by_name.get('ucrt', {}).get('version') == built_from['toolchain']['ucrt'],
+          'the MSVC runtime and the UCRT are listed at the versions the build linked with')
+    props = {p['name']: p['value'] for p in top['properties']}
+    check(props.get('ksip:commit') == built_from['commit'] and props.get('ksip:uncommitted_changes') == str(built_from['uncommitted_changes']),
+          'the commit is the one the exe was built from, with whether it had changes not committed')
     for name in ('msvc-runtime', 'ucrt', 'compiler-rt'):
         c = by_name.get(name, {})
         check(c.get('scope') == 'required' and c.get('version') and c.get('supplier'), f'{name} is listed as in the exe, with its version and supplier')

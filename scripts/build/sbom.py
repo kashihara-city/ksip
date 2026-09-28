@@ -1,5 +1,5 @@
-"""Write the CycloneDX 1.6 SBOM of a built ksip.exe (Rust crates, native sources, WebRTC's linked parts, the toolchain's runtime libraries); no network access."""
-import argparse, datetime, hashlib, json, os, re, subprocess, tomllib, uuid
+"""Write the CycloneDX 1.6 SBOM of the ksip.exe app.ps1 last built (Rust crates, native sources, WebRTC's linked parts, the toolchain's runtime libraries), checked against its build record; no network access."""
+import argparse, datetime, hashlib, importlib.util, json, os, re, subprocess, tomllib, uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -171,19 +171,41 @@ def webrtc_parts(commit):
     return parts, unlinked
 
 
-def toolchain():
-    """The runtime libraries the toolchain puts into the exe: Rust's
-    standard library, the MSVC and Universal C runtimes (static: +crt-static
-    and /MT), and the clang runtime WebRTC's toolchain supplies."""
-    rust = dict(line.split(': ', 1) for line in run('rustc', '-vV').splitlines()[1:] if ': ' in line)
-    vs = run(os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'), r'Microsoft Visual Studio\Installer\vswhere.exe'),
-             '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath')
-    msvc = os.environ.get('VCToolsVersion', '').strip('\\') or (Path(vs) / r'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt').read_text().strip()
-    ucrt = os.environ.get('UCRTVersion', '').strip('\\')
-    if not ucrt:
-        kits = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / r'Windows Kits\10\Lib'
-        ucrt = max((p.name for p in kits.iterdir() if (p / 'ucrt/x64/libucrt.lib').exists()), key=lambda v: tuple(map(int, v.split('.'))))
-    clang = (WEBRTC / 'third_party/llvm-build/Release+Asserts/cr_build_revision').read_text().strip()
+def build_record(exe, path):
+    """What the exe was built from, as app.ps1 recorded it (build-record.py),
+    once it is sure to be this exe's and nothing it names has changed since:
+    the SBOM describes the build, and a hash alone would put today's parts
+    on any exe. The exe's own version resource must say the same version."""
+    record = json.loads(Path(path).read_text(encoding='utf-8'))
+    digest = sha256(exe)
+    if record.get('exe_sha256') != digest:
+        raise SystemExit(f'{exe}: not the exe {path} records (that is {record.get("exe_sha256", "?")[:12]}, this {digest[:12]}); '
+                         'an SBOM is made for the exe scripts/build/app.ps1 last built')
+    changed = [name for name, value in record['inputs'].items() if not (ROOT / name).exists() or sha256(ROOT / name) != value]
+    if changed:
+        raise SystemExit(f'changed since {exe} was built: {", ".join(changed)}; build it again before making its SBOM')
+    manifest = tomllib.loads((ROOT / 'src-tauri/Cargo.toml').read_text(encoding='utf-8'))['package']['version']
+    built = exe_version(exe)
+    if not record['version'] == manifest == built:
+        raise SystemExit(f'{exe} says {built}, its record {record["version"]}, Cargo.toml {manifest}')
+    return record
+
+
+def exe_version(path):
+    spec = importlib.util.spec_from_file_location('build_record', ROOT / 'scripts/build/build-record.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.exe_version(path)
+
+
+def toolchain(record):
+    """The runtime libraries the toolchain put into the exe, as the build
+    recorded them: Rust's standard library, the MSVC and Universal C
+    runtimes (static: +crt-static and /MT), and the clang runtime WebRTC's
+    toolchain supplies."""
+    tools = record['toolchain']
+    rust = {'release': tools['rustc'], 'commit-hash': tools['rustc_commit']}
+    msvc, ucrt, clang = tools['msvc'], tools['ucrt'], tools['clang']
     return [
         {'name': 'rust-std', 'version': rust['release'], 'supplier': 'The Rust Project', 'licenses': [{'expression': 'MIT OR Apache-2.0'}],
          'purl': f"pkg:generic/rust-std@{rust['release']}?vcs_url=git%2Bhttps://github.com/rust-lang/rust%40{rust['commit-hash']}",
@@ -220,7 +242,8 @@ def component(c, scope='required'):
     return out
 
 
-def build(exe):
+def build(exe, record_path=ROOT / 'temp/build/build-record.json'):
+    record = build_record(exe, record_path)
     meta = json.loads(run('cargo', 'metadata', '--locked', '--format-version', '1', '--filter-platform', TARGET,
                           '--manifest-path', str(ROOT / 'src-tauri/Cargo.toml')))
     packages = {(p['name'], p['version']): p for p in meta['packages']}
@@ -228,7 +251,7 @@ def build(exe):
     ksip = packages[root]
     checksums = {(p['name'], p['version']): p.get('checksum') for p in tomllib.loads((ROOT / 'src-tauri/Cargo.lock').read_text(encoding='utf-8'))['package']}
     lock = json.loads((ROOT / 'deps/native-sources.lock.json').read_text(encoding='utf-8'))
-    commit = run('git', 'rev-parse', 'HEAD')
+    commit = record['commit']
     top = f"pkg:github/{ksip['repository'].removeprefix('https://github.com/')}@v{ksip['version']}"
 
     components, dependencies, ref_of = [], [], {}
@@ -288,7 +311,7 @@ def build(exe):
         components.append(component({'name': part['name'], 'version': part['version'], 'purl': purl, 'description': part['title'],
                                      'licenses': part['licenses'], 'externalReferences': refs, 'properties': props}))
     runtimes = []
-    for c in toolchain():
+    for c in toolchain(record):
         runtimes.append(c['purl'])
         components.append(component(c))
 
@@ -309,13 +332,15 @@ def build(exe):
         'version': 1,
         'metadata': {
             'timestamp': datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
-            'tools': {'components': [{'type': 'application', 'name': 'ksip scripts/build/sbom.py', 'version': commit}]},
+            'tools': {'components': [{'type': 'application', 'name': 'ksip scripts/build/sbom.py', 'version': run('git', 'rev-parse', 'HEAD')}]},
             'component': {
                 'type': 'application', 'bom-ref': top, 'name': ksip['name'], 'version': ksip['version'],
                 'description': ksip.get('description') or '', 'supplier': {'name': 'Kashihara City'}, 'licenses': crate_license(ksip),
-                'purl': top, 'hashes': [{'alg': 'SHA-256', 'content': sha256(exe)}],
+                'purl': top, 'hashes': [{'alg': 'SHA-256', 'content': record['exe_sha256']}],
                 'externalReferences': [{'type': 'vcs', 'url': ksip['repository']}],
-                'properties': [{'name': 'ksip:commit', 'value': commit}, {'name': 'ksip:target', 'value': TARGET},
+                'properties': [{'name': 'ksip:commit', 'value': commit},
+                               {'name': 'ksip:uncommitted_changes', 'value': str(record['uncommitted_changes'])},
+                               {'name': 'ksip:target', 'value': TARGET},
                                {'name': 'ksip:not_included', 'value': 'Microsoft Edge WebView2 Runtime (part of Windows, not shipped)'},
                                {'name': 'ksip:webrtc_listed_not_linked', 'value': ', '.join(unlinked) or 'none'}],
             },
@@ -329,8 +354,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', default=str(ROOT / 'release/ksip.exe'), help='the ksip.exe the SBOM describes')
     parser.add_argument('--out', default=str(ROOT / 'temp/build/sbom/ksip.cdx.json'))
+    parser.add_argument('--record', default=str(ROOT / 'temp/build/build-record.json'), help='what app.ps1 recorded of the build')
     args = parser.parse_args()
-    bom = build(Path(args.exe))
+    bom = build(Path(args.exe), Path(args.record))
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(bom, indent=2, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')

@@ -419,12 +419,16 @@ python -X utf8 scripts/test/build-paths.py
 - WebRTC が同梱する部品: WebRTC 自身のライセンス生成が KSIP のビルド対象について挙げるもののうち、実際にリンクする `ksip_webrtc_audio.lib` にオブジェクトがあるものです。版は各部品の `README.chromium` と WebRTC の `DEPS` から取ります。挙がっていてもリンクされないもの（いまは libc++ と protobuf）は載せず、そう書き残します。
 - ツールチェーンが exe に入れるもの: Rust の標準ライブラリ、MSVC のランタイムと UCRT（静的リンク）、clang のランタイム（`clang_rt.builtins`）です。
 
+SBOM は `build/app.ps1` が最後にビルドした exe についてだけ作ります。`app.ps1` はビルドの最後に `build/build-record.py` で、exe の SHA-256・版・コミット（まだコミットしていない変更があるか）・読む入力とリンクするライブラリの SHA-256・ツールチェーンの版を `temp/build/build-record.json` に残します。`sbom.py` はこの記録と exe・入力・exe の版情報が一致しなければ作りません。古い版の exe や、ビルドの後に依存を変えたまま作った、今の部品を別の exe に付けた部品一覧を出さないためです。
+
 SBOM は作るたびに別の文書として、作った日時と新しいシリアル番号を持ちます。どの exe の部品一覧かは、`metadata.component` の SHA-256 で決まります。`test/sbom.py` は次を確かめます。
 
 - 公式の JSON スキーマ（`deps/cyclonedx/` に取得元・版・ハッシュを固定して置いたもの。取得は `scripts/deps/fetch-cyclonedx-schema.py`）で正しいこと。
 - ライセンスの表記が SPDX の識別子でできていること。
 - 同じ exe から2回作ると、日時とシリアル番号のほかは一致すること。
 - 載っている部品が、`cargo tree`、Cargo.lock とネイティブの lock のハッシュ、リンクする WebRTC のライブラリの中身、コンパイラの版と一致すること。
+
+タグからのリリース（`.github/workflows/release.yml`）では、配布する exe について SBOM を作って検査し、Release に `ksip-v<版>.cdx.json` として添付します。あわせて、その SBOM を exe に紐づける証明（attestation）を付けます。受け取った側は `gh attestation verify ksip-v<版>.exe --repo kashihara-city/ksip --predicate-type https://cyclonedx.org/bom` で、その exe の SBOM であることを確かめられます。
 
 同じコミットをどの環境で組んでも同じexeになるように、ソースの改行は `.gitattributes` でCRLFに固定してあります。`src-web/` はそのままexeへ埋め込まれるため、取り出しの改行が違えば別のexeができます（Rust と C/C++ はコンパイラが改行を正規化するので影響しません）。`test/line-endings.py` が `src-web/` の改行を見ます。
 
