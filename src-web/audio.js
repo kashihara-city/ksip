@@ -36,6 +36,15 @@ async function refreshVolume(kind,level=null,mute=null){
   catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logUi('volume '+kind,e);}
   finally{control.pending=false;const next=control.queued;control.queued=null;render();if(next&&next.device===volumeDevice(kind))refreshVolume(kind,next.level,next.mute);}
 }
+// A change made while a request is on its way waits for it. The volume and
+// the mute are kept apart: a change of one does not take back a waiting
+// change of the other, so both are sent. A change for another device (the
+// device was switched meanwhile) replaces what was waiting for the old one.
+function queueChange(kind,change){
+  const c=volumes[kind],device=volumeDevice(kind),waiting=c.queued&&c.queued.device===device?c.queued:{device,level:null,mute:null};
+  ++c.sequence;
+  c.queued={device,level:change.level??waiting.level,mute:change.mute??waiting.mute};
+}
 function showMute(kind,muted){
   const control=volumes[kind],button=$(kind+'-mute'),label=t(muted?'AUDIO_UNMUTE':'AUDIO_MUTE');
   control.muted=muted;button.classList.toggle('muted',muted);button.setAttribute('aria-pressed',String(muted));button.title=label;button.setAttribute('aria-label',label);
@@ -71,7 +80,8 @@ export function init(){
     $(kind+'-volume').addEventListener('pointerdown',()=>{volumes[kind].pointer=true;});
     for(const type of ['pointerup','pointercancel'])window.addEventListener(type,()=>{volumes[kind].pointer=false;});
     $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;$(kind+'-level').textContent=slider.value+'%';});
-    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;if(c.pending){++c.sequence;c.queued={device:volumeDevice(kind),level,mute:null};}else refreshVolume(kind,level);});
-    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],mute=!c.muted;if(c.pending){++c.sequence;c.queued={device:volumeDevice(kind),level:null,mute};}else refreshVolume(kind,null,mute);});
+    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;if(c.pending)queueChange(kind,{level});else refreshVolume(kind,level);});
+    // A second click while one is waiting toggles the waiting one back.
+    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===volumeDevice(kind)?c.queued.mute:null,mute=!(waiting??c.muted);if(c.pending)queueChange(kind,{mute});else refreshVolume(kind,null,mute);});
   }
 }

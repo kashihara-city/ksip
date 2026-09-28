@@ -12,13 +12,15 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state, managed, setSelected} from './session.js';
+import {state, managed, setSelected, update} from './session.js';
+import * as audio from './audio.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[];
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null;
 window.__invoke=async(command,args)=>{
+  if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
   // A digit's request takes a while, as one does when the app waits for the engine.
   if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);callsSent.push([args.id,args.value]);await new Promise(r=>setTimeout(r,240));return '';}
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
@@ -337,6 +339,32 @@ async function checks(){
   await importFile({settings:{transport:'tcp',media_encryption:''}});
   check(beforeImport==='保存'&&$('save-settings').textContent==='保存して再接続','a settings file that needs a reconnect says so on the save as soon as it is read',[beforeImport,$('save-settings').textContent]);
   $('configuration').close();
+
+  // A mute and a volume change made while the volume is being read both go,
+  // in either order: the one does not take back the other.
+  if($('configuration').open)$('configuration').close();
+  update({...state,running:false,calls:[],devices:[]});
+  audio.init();
+  let release=null,hold=false,microphone={level:100,muted:false};
+  volumeHandler=async args=>{
+    if(args.kind!=='microphone')return {level:100,muted:false};
+    if(hold&&args.level===null&&args.mute===null){hold=false;await new Promise(r=>release=r);}
+    if(args.level!==null)microphone.level=args.level;
+    if(args.mute!==null)microphone.muted=args.mute;
+    return {...microphone};
+  };
+  const pressMute=()=>$('microphone-mute').click();
+  const setLevel=()=>{$('microphone-volume').value='70';$('microphone-volume').dispatchEvent(new Event('change',{bubbles:true}));};
+  const outcomes=[];
+  for(const order of [[pressMute,setLevel],[setLevel,pressMute]]){
+    microphone={level:100,muted:false};await audio.pollVolumes();
+    hold=true;const reading=audio.pollVolumes();await settle();
+    for(const act of order)act();
+    release();await reading;await settle();await settle();
+    outcomes.push({...microphone});
+  }
+  volumeHandler=null;
+  check(outcomes.every(o=>o.level===70&&o.muted===true),'a mute and a volume change made while the volume is read both reach the device, in either order',outcomes);
 
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring
