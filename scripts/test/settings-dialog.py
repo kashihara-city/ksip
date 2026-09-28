@@ -12,7 +12,7 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state, managed, setSelected, update} from './session.js';
+import {state, managed, setSelected, update, run} from './session.js';
 import * as audio from './audio.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
@@ -363,8 +363,28 @@ async function checks(){
     release();await reading;await settle();await settle();
     outcomes.push({...microphone});
   }
-  volumeHandler=null;
   check(outcomes.every(o=>o.level===70&&o.muted===true),'a mute and a volume change made while the volume is read both reach the device, in either order',outcomes);
+  // A mute waiting while the slider is being dragged, or while another
+  // operation runs, is kept, and sent once that is over.
+  microphone={level:100,muted:false};await audio.pollVolumes();
+  hold=true;let reading=audio.pollVolumes();await settle();
+  pressMute();
+  $('microphone-volume').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+  $('microphone-volume').value='70';$('microphone-volume').dispatchEvent(new Event('input',{bubbles:true}));
+  release();await reading;await settle();
+  window.dispatchEvent(new PointerEvent('pointerup'));$('microphone-volume').dispatchEvent(new Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,300));
+  const afterDrag={...microphone};
+  microphone={level:100,muted:false};await audio.pollVolumes();
+  hold=true;reading=audio.pollVolumes();await settle();
+  pressMute();
+  let finish=null;const operation=run(()=>new Promise(r=>finish=r)).catch(()=>{});
+  release();await reading;await settle();
+  finish();await operation;
+  await new Promise(r=>setTimeout(r,1500));
+  const afterOperation={...microphone};
+  volumeHandler=null;
+  check(afterDrag.level===70&&afterDrag.muted===true&&afterOperation.muted===true,'a mute waiting while the slider is dragged, or while another operation runs, is sent once that is over',[afterDrag,afterOperation]);
 
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring

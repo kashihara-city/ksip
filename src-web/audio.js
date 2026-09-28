@@ -18,10 +18,20 @@ export function deviceOptions(kind,selected){
 function volumeDevice(kind){return state.running?state[kind+'_id']:state.settings[kind]||'default';}
 // The level and the mute are Windows' own for the device; either is set when
 // given, and both are read back, so the icons follow what a headset key or
-// another program did within a second.
+// another program did within a second. A change the person made always goes
+// through the queue (queueChange), and leaves it only when it is sent: while
+// nothing can be sent (a request on its way, the slider held, the phone busy
+// with an operation) it waits there, and goes with the next read, which the
+// end of the request, the end of the drag or the poll a second later brings.
 async function refreshVolume(kind,level=null,mute=null){
-  const control=volumes[kind];if(!ready||busy||control.pending||control.dragging||control.pointer)return;
-  const device=volumeDevice(kind),sequence=++control.sequence;control.pending=true;
+  const control=volumes[kind];
+  if(level!==null||mute!==null)queueChange(kind,{level,mute});
+  if(!ready||busy||control.pending||control.dragging||control.pointer)return;
+  const device=volumeDevice(kind),waiting=control.queued;
+  // What waits for another device (it was switched meanwhile) is not sent.
+  control.queued=null;
+  if(waiting&&waiting.device===device){level=waiting.level;mute=waiting.mute;}
+  const sequence=++control.sequence;control.pending=true;
   try{
     const result=await invoke('audio_volume',{kind,device,level,mute});
     if(sequence!==control.sequence||device!==volumeDevice(kind)||control.dragging)return;
@@ -34,12 +44,12 @@ async function refreshVolume(kind,level=null,mute=null){
     $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);
   }
   catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logUi('volume '+kind,e);}
-  finally{control.pending=false;const next=control.queued;control.queued=null;render();if(next&&next.device===volumeDevice(kind))refreshVolume(kind,next.level,next.mute);}
+  finally{control.pending=false;render();if(control.queued)refreshVolume(kind);}
 }
-// A change made while a request is on its way waits for it. The volume and
-// the mute are kept apart: a change of one does not take back a waiting
-// change of the other, so both are sent. A change for another device (the
-// device was switched meanwhile) replaces what was waiting for the old one.
+// A change waiting to be sent. The volume and the mute are kept apart: a
+// change of one does not take back a waiting change of the other, so both
+// are sent. A change for another device (the device was switched meanwhile)
+// replaces what was waiting for the old one.
 function queueChange(kind,change){
   const c=volumes[kind],device=volumeDevice(kind),waiting=c.queued&&c.queued.device===device?c.queued:{device,level:null,mute:null};
   ++c.sequence;
@@ -80,8 +90,8 @@ export function init(){
     $(kind+'-volume').addEventListener('pointerdown',()=>{volumes[kind].pointer=true;});
     for(const type of ['pointerup','pointercancel'])window.addEventListener(type,()=>{volumes[kind].pointer=false;});
     $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;$(kind+'-level').textContent=slider.value+'%';});
-    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;if(c.pending)queueChange(kind,{level});else refreshVolume(kind,level);});
+    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;refreshVolume(kind,level);});
     // A second click while one is waiting toggles the waiting one back.
-    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===volumeDevice(kind)?c.queued.mute:null,mute=!(waiting??c.muted);if(c.pending)queueChange(kind,{mute});else refreshVolume(kind,null,mute);});
+    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===volumeDevice(kind)?c.queued.mute:null;refreshVolume(kind,null,!(waiting??c.muted));});
   }
 }
