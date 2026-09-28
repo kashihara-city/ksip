@@ -12,15 +12,15 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state, managed} from './session.js';
+import {state, managed, setSelected} from './session.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[];
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[];
 window.__invoke=async(command,args)=>{
   // A digit's request takes a while, as one does when the app waits for the engine.
-  if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);await new Promise(r=>setTimeout(r,240));return '';}
+  if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);callsSent.push([args.id,args.value]);await new Promise(r=>setTimeout(r,240));return '';}
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
   if(command==='save_buttons'){savedButtons=JSON.parse(JSON.stringify(args.buttons));throw 'TEST_SAVE_STOPPED';}
   if(command==='set_button_editing'){editingWindow=args.editing;return null;}
@@ -308,6 +308,17 @@ async function checks(){
   state.calls=[];render();
   await new Promise(r=>setTimeout(r,900));
   check(JSON.stringify(inOrder)==='["1","2","3"]'&&JSON.stringify(digitsSent)==='["4"]','keys pressed while a digit is on its way are all sent, in order; those left when the call ends are not',[inOrder,digitsSent]);
+  // The call ends while its digit is on its way and the held one comes back:
+  // what is left of the ended call goes, a key pressed on the other is sent.
+  callsSent=[];
+  state.calls=[{id:'a',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1},{id:'b',peer:'sip:1003@pbx.example',state:'ESTABLISHED',held:true,duration:1,line:2}];setSelected(1);render();
+  keypad('1').click();keypad('2').click();
+  await new Promise(r=>setTimeout(r,60));
+  state.calls=[{id:'b',peer:'sip:1003@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:2}];setSelected(2);render();
+  keypad('3').click();
+  await new Promise(r=>setTimeout(r,900));
+  check(JSON.stringify(callsSent)==='[["a","1"],["b","3"]]','when a call ends with digits waiting, only its own go; a key pressed on the call that took its place is sent',callsSent);
+  state.calls=[];setSelected(1);render();
 
   // A button made unused is saved empty, whatever its number was.
   await open({buttons:[{title:'Web',kind:'open',number:'https://pbx.example/',transfer:'',pickup:''},{title:'',kind:'speed',number:'06-1234-5678',transfer:'',pickup:''}]});

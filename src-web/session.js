@@ -61,9 +61,10 @@ export async function act(name,id=current()?.id||'',value='',line=selected){
 // time, outside run(), so that a digit pressed while the one before is on its
 // way is kept, not dropped, and the keypad stays usable (the app takes the
 // requests one after another anyway). The digits belong to the call they were
-// pressed on: what is left when that call ends, is put on hold, or another is
-// selected, is not sent. More than DTMF_LIMIT waiting, or a digit the app
-// refuses, is said; the ones after a refused digit are not sent.
+// pressed on: what is left of a call when it ends, is put on hold, or another
+// is selected, is not sent, and nor is the rest of a call whose digit the app
+// refuses (which is said). Only that call's digits go: one pressed meanwhile on
+// the call that took its place is sent. More than DTMF_LIMIT waiting is said.
 const DTMF_LIMIT=32;
 let digits=[],sendingDigits=false;
 export function sendDigit(call,digit){
@@ -73,13 +74,15 @@ export function sendDigit(call,digit){
 }
 async function sendDigits(){
   sendingDigits=true;
+  const dropCall=id=>{digits=digits.filter(d=>d.id!==id);};
   try{
     while(digits.length){
-      const next=digits[0],c=current();
-      if(!c||c.id!==next.id||c.state!=='ESTABLISHED'||c.held){digits=[];break;}
+      // Taken off the queue before it is sent, so that what the queue holds
+      // meanwhile (another call's digits) is not the answer's to touch.
+      const next=digits.shift(),c=current();
+      if(!c||c.id!==next.id||c.state!=='ESTABLISHED'||c.held){dropCall(next.id);continue;}
       try{await invoke('action',{name:'dtmf',id:next.id,value:next.digit,line:next.line});}
-      catch(e){digits=[];error=String(e);logUi('dtmf',e);render();break;}
-      digits.shift();
+      catch(e){dropCall(next.id);error=String(e);logUi('dtmf',e);render();}
     }
   }finally{sendingDigits=false;}
 }

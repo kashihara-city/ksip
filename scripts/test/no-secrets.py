@@ -19,6 +19,12 @@ ALLOWED = [
     re.compile(r"\b(?:127\.0\.0\.1|0\.0\.0\.0)\b"),
     re.compile(r"[0-9a-f]{40}"),  # git の SHA-1
 ]
+# ファイルを限って許すもの。公式の CycloneDX スキーマ（deps/cyclonedx、SHA-256 を
+# schema.lock.json で固定）にある、ハッシュ値の例示（definitions.hash-content.examples）。
+# 値ごとに限るので、同じファイルの別の値は見逃さない。
+ALLOWED_IN = {
+    "deps/cyclonedx/bom-1.6.schema.json": [re.compile(r'"examples": \["3942447fac867ae5cdb3229b658f4d48"\]')],
+}
 # 中身が秘密そのものではなく、形式上ハッシュを大量に含むもの。
 SKIP = {"deps/native-sources.lock.json", "src-tauri/Cargo.lock", "scripts/test/no-secrets.py"}
 BINARY = {".tar", ".gz", ".exe", ".ico", ".png", ".wav", ".pdb"}
@@ -29,13 +35,14 @@ def tracked():
     return [line for line in listing.splitlines() if line]
 
 
-def findings(line):
+def findings(line, name=""):
     """What in one line looks like a secret, minus what an allowed value covers.
 
     The allow list is matched by position, not by line: a permitted example
     address or a dependency hash on the same line as a real address does not
-    hide the real one."""
-    allowed = [match.span() for pattern in ALLOWED for match in pattern.finditer(line)]
+    hide the real one. A file may have values of its own allowed (ALLOWED_IN)."""
+    patterns = ALLOWED + ALLOWED_IN.get(name, [])
+    allowed = [match.span() for pattern in patterns for match in pattern.finditer(line)]
     found = []
     for reason, pattern in PATTERNS:
         for match in pattern.finditer(line):
@@ -52,6 +59,10 @@ def selftest():
     assert [reason for reason, _ in findings("192.0.2.10 and 10.1.2.3 on one line")] == ["私有IPアドレス"]
     assert [reason for reason, _ in findings('"sha256": "' + "ab" * 32 + '" host pbx.intra')] == ["社内ホスト名"]
     assert findings("loopback 127.0.0.1 only") == []
+    example = '"examples": ["3942447fac867ae5cdb3229b658f4d48"],'
+    assert findings(example, "deps/cyclonedx/bom-1.6.schema.json") == []
+    assert [reason for reason, _ in findings(example)] == ["32桁の秘密らしき文字列"], "the schema's example is allowed in the schema only"
+    assert [reason for reason, _ in findings('"examples": ["' + "cd" * 16 + '"],', "deps/cyclonedx/bom-1.6.schema.json")] == ["32桁の秘密らしき文字列"]
     print("self-test: allowed values do not hide a neighbour")
 
 
@@ -68,7 +79,7 @@ def main():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for number, line in enumerate(text.splitlines(), 1):
-            for reason, found in findings(line):
+            for reason, found in findings(line, name):
                 problems.append("%s:%d %s: %s" % (name, number, reason, found))
     if problems:
         print("\n".join(problems))
