@@ -26,7 +26,7 @@ window.__invoke=async(command,args)=>{
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
   if(command==='save_buttons'){savedButtons=JSON.parse(JSON.stringify(args.buttons));throw 'TEST_SAVE_STOPPED';}
   if(command==='set_button_editing'){editingWindow=args.editing;return null;}
-  if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','register_interval','pbx_only'];
+  if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','register_interval','keepalive','keepalive_interval','pbx_only'];
   if(command==='list_adapters')return [];
   if(command==='managed_settings')return [];
   if(command in answers)return answers[command];
@@ -35,7 +35,7 @@ window.__invoke=async(command,args)=>{
 const settle=()=>new Promise(r=>setTimeout(r,30));
 const account={server:'pbx.example',port:5061,extension:'1001',auth_user:'1001',has_password:true};
 // Every setting there, as the app's snapshot always has them.
-const base={transport:'tls',media_encryption:'sdes',codecs:'opus',sip_port:5060,rtp_port:10000,register_interval:300,tray_after_call:-1,
+const base={transport:'tls',media_encryption:'sdes',codecs:'opus',sip_port:5060,rtp_port:10000,register_interval:300,keepalive:'crlf',keepalive_interval:60,tray_after_call:-1,
   aec:true,aec_delay_ms:20,high_pass:false,noise_suppression:'high',agc:false,incoming_action:'show',language:'',microphone_gain:100,speaker_gain:100,
   network_adapter:'',ca_file:'',pbx_only:true,buttons:[]};
 async function open(settings={}){
@@ -295,6 +295,19 @@ async function checks(){
   await importFile({settings:{dtmf_mode:'info'}});
   const imported=$('dtmf_mode').value;
   check(shownMode==='info'&&s&&s.settings.dtmf_mode==='inband'&&saveLabel==='保存'&&noneStored==='rtp'&&imported==='info','the DTMF method is shown, saved without a restart, RTP when none is stored, and taken from a file',[shownMode,s&&s.settings.dtmf_mode,saveLabel,noneStored,imported]);
+  $('configuration').close();
+
+  // The keepalive: a blank line every minute when none is stored; its
+  // interval is greyed out while none is sent, keeps its value, and a change
+  // reconnects (the engine reads both when it starts).
+  await open({});
+  const keepaliveDefault=[$('keepalive').value,$('keepalive_interval').value];
+  await open({keepalive:'off',keepalive_interval:25});
+  const offGreyed=$('keepalive_interval').disabled;
+  $('keepalive').value='crlf';$('keepalive').dispatchEvent(new Event('change',{bubbles:true}));
+  const intervalOpen=!$('keepalive_interval').disabled,keepaliveLabel=$('save-settings').textContent;
+  s=await save();
+  check(keepaliveDefault.join()==='crlf,60'&&offGreyed&&intervalOpen&&keepaliveLabel==='保存して再接続'&&s&&s.settings.keepalive==='crlf'&&s.settings.keepalive_interval===25,'the keepalive is a blank line every 60 s by default, its interval greyed out while off, and a change reconnects',[keepaliveDefault,offGreyed,intervalOpen,keepaliveLabel,s&&s.settings.keepalive,s&&s.settings.keepalive_interval]);
   $('configuration').close();
 
   // Keys pressed while a digit is on its way are sent after it, in order; the

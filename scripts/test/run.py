@@ -13,7 +13,7 @@ SUITE = [
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'), ('offline', 'sbom.py'),
     ('device', 'webrtc-device.ps1'),
     ('loopback', 'loopback-control.py'), ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'), ('loopback', 'loopback-trust.py'),
-    ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'), ('pbx', 'pbx-blf-54.py'), ('pbx', 'pbx-dtmf.py'),
+    ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-keepalive.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'), ('pbx', 'pbx-blf-54.py'), ('pbx', 'pbx-dtmf.py'),
     ('pbx', 'pbx-record-switch.py'), ('pbx', 'pbx-early-media.py'), ('pbx', 'pbx-playback.py'), ('pbx', 'pbx-live-aec.py'),
     ('app', 'app-walkthrough.ps1'), ('app', 'app-protocol.ps1'), ('app', 'app-buttons.ps1'),
     ('app', 'app-transfer.ps1'), ('app', 'app-auto-answer.ps1'), ('app', 'app-unregister.ps1'),

@@ -21,10 +21,12 @@
 namespace {
 bool sip_message_log = false;
 
-void sip_trace(bool tx, enum sip_transp tp, const sa *, const sa *, const uint8_t *packet, size_t length, void *) {
-    if (sip_message_log && packet && length) ksip_io::log_sip_message(tx, packet, length);
+void sip_trace(bool tx, enum sip_transp tp, const sa *src, const sa *, const uint8_t *packet, size_t length, void *) {
+    // A keepalive (a blank line) is no SIP message; sip_account logs its own.
+    bool blank = packet && length && std::all_of(packet, packet + length, [](uint8_t c) { return c == '\r' || c == '\n'; });
+    if (sip_message_log && packet && length && !blank) ksip_io::log_sip_message(tx, packet, length);
     if (tx || !packet || length < 7) return;
-    sip_account::on_answer(packet, length, tp);
+    sip_account::on_answer(packet, length, tp, src);
     bool update = length >= 7 && memcmp(packet, "UPDATE ", 7) == 0;
     bool reinvite = length >= 7 && memcmp(packet, "INVITE ", 7) == 0;
     if (!update && !reinvite) return;

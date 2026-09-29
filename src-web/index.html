@@ -130,6 +130,13 @@
             <select id="network_adapter"></select></label>
             <p class="hint" data-i18n="SETTINGS_ADAPTER_HINT"></p>
             <div class="row"><label><span data-i18n="SETTINGS_SIP_PORT"></span><input id="sip_port" type="number" min="1024" max="65535" value="5060"></label><label><span data-i18n="SETTINGS_RTP_PORT"></span><input id="rtp_port" type="number" min="1024" max="65400" step="2" value="10000"></label></div>
+            <p class="group-label" data-i18n="SETTINGS_KEEPALIVE"></p>
+            <p class="hint" data-i18n="SETTINGS_KEEPALIVE_HINT"></p>
+            <div class="row"><label><span data-i18n="SETTINGS_KEEPALIVE_MODE"></span>
+              <select id="keepalive">
+                <option value="crlf" data-i18n="KEEPALIVE_CRLF"></option>
+                <option value="off" data-i18n="KEEPALIVE_OFF"></option>
+              </select></label><label><span data-i18n="SETTINGS_KEEPALIVE_INTERVAL"></span><input id="keepalive_interval" type="number" min="10" max="600" step="1" required><span class="unit-hint" data-i18n="SETTINGS_SECONDS"></span></label></div>
           </details>
         </section>
         <section id="settings-audio" class="settings-tab" role="tabpanel" aria-labelledby="tab-audio" hidden>

@@ -168,6 +168,31 @@
         <decimal id="register_interval" valueName="register_interval" required="true" minValue="30" maxValue="3600" />
       </elements>
     </policy>
+    <policy name="keepalive" class="User" displayName="$(string.keepalive)" explainText="$(string.keepalive_Help)" presentation="$(presentation.keepalive)" key="Software\Policies\KashiharaCity\ksip">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <enum id="keepalive" valueName="keepalive" required="true">
+          <item displayName="$(string.keepalive_0)">
+            <value>
+              <string>crlf</string>
+            </value>
+          </item>
+          <item displayName="$(string.keepalive_1)">
+            <value>
+              <string>off</string>
+            </value>
+          </item>
+        </enum>
+      </elements>
+    </policy>
+    <policy name="keepalive_interval" class="User" displayName="$(string.keepalive_interval)" explainText="$(string.keepalive_interval_Help)" presentation="$(presentation.keepalive_interval)" key="Software\Policies\KashiharaCity\ksip">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <elements>
+        <decimal id="keepalive_interval" valueName="keepalive_interval" required="true" minValue="10" maxValue="600" />
+      </elements>
+    </policy>
     <policy name="aec" class="User" displayName="$(string.aec)" explainText="$(string.aec_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="aec">
       <parentCategory ref="Audio" />
       <supportedOn ref="SUPPORTED_KSIP" />

@@ -231,6 +231,8 @@ ksip.exe ksip:ANSWER
 | `sip_port`             | 整数   | ローカルSIP待受ポート。1024以上                                                                                                                                                                                                                                                                                                                                                                                                          | `5060`                                                | ○            | ○             |
 | `rtp_port`             | 整数   | RTP開始ポート。1024〜65400の偶数で、そこから20ポートを使う。SIPポートと重ならないこと                                                                                                                                                                                                                                                                                                                                                    | `10000`                                               | ○            | ○             |
 | `register_interval`    | 整数   | REGISTERの更新周期（秒）。30〜3600                                                                                                                                                                                                                                                                                                                                                                                                       | `300`                                                 | ○            | ○             |
+| `keepalive`            | 文字列  | 登録の更新の合間に登録先へ送るもの。`crlf`＝空行（CRLF CRLF）を、登録に使っている通り道（UDPならSIPのポート、TCP・TLSならその接続）に送り、ファイアウォールやルーターの戻り道を開けておく。TCP・TLSでは RFC 5626 の ping と同じ形。`off`＝送らない | `300`                                                 | ○            | ○             |
+| `keepalive_interval`   | 整数   | キープアライブの間隔（秒）。10〜600。WindowsファイアウォールはUDPの戻り道を最後に送ってから90〜120秒で閉じたので、既定の60はそれより短い | `300`                                                 | ○            | ○             |
 | `pbx_only`             | 真偽   | 登録先のPBX以外から届いた着信や要求を断るか（baresip の `filter_registrar`）。ONのとき登録前は何も受け付けず、TCPとTLSでは待ち受けもしない（通話は登録の接続で届く）。PBXが複数のアドレスから送ってくる構成ではOFFにする                                                                                                                                                                                                                 | ON（断る）                                            | ○            | ○             |
 | `microphone`           | 文字列 | 録音エンドポイントID。500文字以内。保存したデバイスが無いときは既定で動作し、設定は変えない。戻ったら「音声デバイスを更新」で戻る                                                                                                                                                                                                                                                                                                        | `default`（Windowsの既定の通信マイク）                | ○            | ×（端末固有） |
 | `speaker`              | 文字列 | 再生エンドポイントID。無いときの扱いは `microphone` と同じ                                                                                                                                                                                                                                                                                                                                                                               | `default`（Windowsの既定の通信スピーカー）            | ○            | ×（端末固有） |
@@ -472,6 +474,7 @@ python -X utf8 scripts/test/sbom.py
 ```powershell
 python -X utf8 scripts/test/pbx-transfer.py
 python -X utf8 scripts/test/pbx-codec.py
+python -X utf8 scripts/test/pbx-keepalive.py
 python -X utf8 scripts/test/pbx-tls.py
 python -X utf8 scripts/test/pbx-osrtp.py
 python -X utf8 scripts/test/pbx-pai.py
@@ -523,6 +526,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 
 サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。任意で、応答前に183で音を流してから応答する番号（`early_media`。開発用Asteriskでは `Progress()` と `Playback(...,noanswer)` の後に `Answer()`）があれば、`pbx-early-media.py` がアーリーメディア中の録音の振る舞いを確かめます。無ければそのテストは飛ばします。留守番電話のテストは、声の入った短いWAV（48 kHz・モノラル・16 bit）を `test-pbx/irodori-rusuden.wav` に置いておくと、それを話者として流します。無音だけの録音を捨てるPBX（3CX）があるためです。
 
+`pbx-keepalive.py` は、キープアライブを10秒ごとにした電話機を UDP・TCP・TLS でそれぞれ登録し、エンジンのログに設定どおりの間隔と運び方で登録先へ空行を送った記録が出ること、送れなかった記録が無いこと、その間も登録が保たれることを確かめます。「送らない」にした電話機が送らないことも見ます。空行が実際に届いているかと、受信の許可規則の無い PC に着信が届くかは見ていません（開発用 Asterisk は `qualify_frequency` で30秒ごとに OPTIONS を送ってくるので、その返事で戻り道が開いたままになり、キープアライブが無くても着信が届きます）。1分半ほどかかります。
+
 `app-settings-file.ps1` は、設定画面の「書き出し」と「読み込み」を Windows のファイルダイアログごと試します。書き出したファイルが保存済みの設定と同じこと、読み込みは画面に入れるだけで保存せずに閉じれば元のままのこと、保存すると読み込んだ値が残り、端末固有の値・元の端末で読めなかった値・型の違う値は入らないことを確かめます。
 
 `app-settings.py` は、テンプレートが書くのと同じ型の値をテスト用プロファイルへ置き、`ksip.exe --export-settings` で読み戻します。全ポリシーを既定と違う値で同時に有効にした状態、各数値の最小値、各選択肢（SDES と OSRTP は TLS と組で）が、書いたとおりに読まれて設定とアカウントの検査に通ること、各数値の最小値より1小さい値が拒まれること、型の違う値（REG_BINARY、範囲外の数値、真偽として読めない文字列）が読めない値として名指しされること、手で文字列として書いた真偽と数値も読まれることを確かめます。10秒ほどで終わります。
@@ -565,7 +570,7 @@ python -X utf8 scripts/test/sandbox-admx.py
 
 サンドボックスを起動し、中で `docs/admx` を `PolicyDefinitions` に置いて gpedit（ローカル グループ ポリシー エディター）を UIAutomation で操作します（中の台本は `scripts/test/sandbox-admx.ps1`）。確かめるのは次のとおりです。
 
-- 読み込み時にエラーが出ず、KSIP の各カテゴリに85のポリシーがそろって並ぶこと
+- 読み込み時にエラーが出ず、KSIP の各カテゴリに87のポリシーがそろって並ぶこと
 - 真偽（`aec`）・数値（`sip_port`）・選択（`transport`）・文字列（`server`）・カスタムボタン（`button_1` の5値）を有効・無効・未構成にして `gpupdate` したとき、`HKCU\Software\Policies\KashiharaCity\ksip` に期待どおりの型と値が書かれる（未構成では消える。無効では、真偽は `0`、それ以外は消える）こと
 
 1回6分ほどかかります。サンドボックスは同時に1つしか動かないので、開いているときは閉じてから流してください。実行中はサンドボックスの画面を操作しないでください（キー入力で項目を選んでいます）。結果は `temp/reports/sandbox-admx.json` に残ります。

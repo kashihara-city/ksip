@@ -39,6 +39,12 @@ pub struct Settings {
     pub noise_suppression: String,
     pub agc: bool,
     pub register_interval: u16,
+    /// What is sent to the registrar between registrations to keep the way
+    /// back through a firewall or NAT open: `crlf` (a blank line on the
+    /// registration's flow) or `off`. See the ksip module's sip_account.
+    pub keepalive: String,
+    /// Seconds between keepalives, 10 to 600.
+    pub keepalive_interval: u16,
     /// Take SIP requests (a call, a subscription) only from the PBX this
     /// phone registers with, and none before it has registered; baresip's
     /// own `filter_registrar`. Requests within a dialog are not affected.
@@ -182,6 +188,10 @@ impl Default for Settings {
             // noise alike, and the microphone volume is the person's own to set.
             agc: false,
             register_interval: 300,
+            // Windows Firewall let a UDP reply in for 90 but not 120 seconds
+            // where it was measured; a minute keeps the way in open with room.
+            keepalive: "crlf".into(),
+            keepalive_interval: 60,
             pbx_only: true,
             detail_log: false,
             program_integration: false,
@@ -330,6 +340,8 @@ impl Settings {
             ("noise_suppression", text(&self.noise_suppression)),
             ("agc", flag(self.agc)),
             ("register_interval", Number(self.register_interval.into())),
+            ("keepalive", text(&self.keepalive)),
+            ("keepalive_interval", Number(self.keepalive_interval.into())),
             ("pbx_only", flag(self.pbx_only)),
             ("detail_log", flag(self.detail_log)),
             ("program_integration", flag(self.program_integration)),
@@ -401,6 +413,9 @@ impl Settings {
         r.text("noise_suppression", &mut s.noise_suppression);
         r.flag("agc", &mut s.agc);
         r.number("register_interval", &mut s.register_interval);
+        r.text("keepalive", &mut s.keepalive);
+        s.keepalive = s.keepalive.to_ascii_lowercase();
+        r.number("keepalive_interval", &mut s.keepalive_interval);
         r.flag("pbx_only", &mut s.pbx_only);
         r.flag("detail_log", &mut s.detail_log);
         r.flag("program_integration", &mut s.program_integration);
@@ -445,7 +460,7 @@ impl Settings {
     /// take effect at once: the window's own, and the engine's it is told of
     /// while running (the watched numbers, the gains, the sounds, the detail
     /// log). The window gets the list, to say which save reconnects.
-    pub const RESTART: [&'static str; 16] = [
+    pub const RESTART: [&'static str; 18] = [
         "network_adapter",
         "sip_port",
         "rtp_port",
@@ -461,6 +476,8 @@ impl Settings {
         "noise_suppression",
         "agc",
         "register_interval",
+        "keepalive",
+        "keepalive_interval",
         "pbx_only",
     ];
     /// Whether going from these settings to `other` needs the engine started
@@ -504,6 +521,8 @@ impl Settings {
         ["off", "low", "moderate", "high", "very_high"];
     /// The ways a DTMF digit can be sent.
     pub const DTMF_MODES: [&'static str; 3] = ["rtp", "info", "inband"];
+    /// What can be sent as a keepalive.
+    pub const KEEPALIVES: [&'static str; 2] = ["off", "crlf"];
     /// The codecs to offer, in order: the setting's names, each once, or all
     /// of them when it names none. A PBX that answers one codec and sends
     /// another garbles what the far end hears; the order is how a site steers
@@ -775,6 +794,7 @@ fn offered_choice(name: &str, value: &serde_json::Value) -> Option<serde_json::V
         "media_encryption" => MediaEncryption::parse(text).map(|m| m.name().to_string()),
         "noise_suppression" => Settings::NOISE_SUPPRESSION_LEVELS.contains(&text).then(|| text.to_string()),
         "dtmf_mode" => Settings::DTMF_MODES.contains(&text.to_ascii_lowercase().as_str()).then(|| text.to_ascii_lowercase()),
+        "keepalive" => Settings::KEEPALIVES.contains(&text.to_ascii_lowercase().as_str()).then(|| text.to_ascii_lowercase()),
         "incoming_action" => matches!(text, "show" | "notify").then(|| text.to_string()),
         "codecs" => offered_codecs(text),
         _ => Some(text.to_string()),
@@ -936,6 +956,12 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     }
     if !(30..=3600).contains(&s.register_interval) {
         return Err(message("SETTINGS_REGISTER_INTERVAL_RANGE"));
+    }
+    if !Settings::KEEPALIVES.contains(&s.keepalive.as_str()) {
+        return Err(message("SETTINGS_KEEPALIVE_INVALID"));
+    }
+    if !(10..=600).contains(&s.keepalive_interval) {
+        return Err(message("SETTINGS_KEEPALIVE_INTERVAL_RANGE"));
     }
     if !(-1..=3600).contains(&s.tray_after_call) {
         return Err(message("SETTINGS_TRAY_AFTER_CALL_RANGE"));
@@ -1391,6 +1417,15 @@ mod tests {
         assert!(validate(&s).is_err(), "a codec the app does not have is refused");
     }
     #[test]
+    fn a_keepalive_is_off_or_a_blank_line_every_10_to_600_seconds() {
+        let mut s = Settings::default();
+        for (keepalive, interval, ok) in [("crlf", 10, true), ("off", 600, true), ("crlf", 9, false), ("crlf", 601, false), ("stun", 60, false), ("", 60, false)] {
+            s.keepalive = keepalive.into();
+            s.keepalive_interval = interval;
+            assert_eq!(validate(&s).is_ok(), ok, "{keepalive} every {interval} s");
+        }
+    }
+    #[test]
     fn only_what_the_engine_reads_at_a_start_needs_it_started_again() {
         let base = Settings::default();
         let with = |change: &dyn Fn(&mut Settings)| {
@@ -1404,6 +1439,8 @@ mod tests {
             ("sip_port", with(&|s| s.sip_port = 5070)),
             ("aec", with(&|s| s.aec = false)),
             ("pbx_only", with(&|s| s.pbx_only = false)),
+            ("keepalive", with(&|s| s.keepalive = "off".into())),
+            ("keepalive_interval", with(&|s| s.keepalive_interval = 30)),
         ] {
             assert!(base.needs_restart(&changed), "{what}");
         }
@@ -1605,6 +1642,7 @@ mod tests {
         assert_eq!(settings.noise_suppression, "high");
         assert!(!settings.agc, "the automatic gain is off unless asked for");
         assert_eq!(settings.register_interval, 300);
+        assert_eq!((settings.keepalive.as_str(), settings.keepalive_interval), ("crlf", 60), "a blank line every minute unless told otherwise");
         assert_eq!(settings.tray_after_call, -1);
         assert!(!settings.detail_log);
         assert!(!settings.auto_record);
@@ -1670,6 +1708,8 @@ mod tests {
             noise_suppression: "low".into(),
             agc: true,
             register_interval: 600,
+            keepalive: "off".into(),
+            keepalive_interval: 25,
             pbx_only: false,
             detail_log: true,
             program_integration: true,
@@ -1995,10 +2035,10 @@ mod tests {
         let read = |settings: serde_json::Value| import_settings(&serde_json::json!({"format": 1, "settings": settings}).to_string(), |_| false).unwrap();
         // Choices in another spelling come in the dialog's.
         let taken = read(serde_json::json!({
-            "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "INFO",
+            "transport": "TLS", "media_encryption": "SDES", "codecs": " pcmu, OpUs ,g722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "INFO", "keepalive": "CRLF",
             "buttons": [{"kind": "park"}, {"kind": ""}]
         }));
-        assert_eq!(taken["settings"], serde_json::json!({"transport": "tls", "media_encryption": "sdes", "codecs": "PCMU,opus,G722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "info"}));
+        assert_eq!(taken["settings"], serde_json::json!({"transport": "tls", "media_encryption": "sdes", "codecs": "PCMU,opus,G722", "noise_suppression": "low", "incoming_action": "notify", "dtmf_mode": "info", "keepalive": "crlf"}));
         assert_eq!(taken["buttons"], serde_json::json!([{"n": 1, "kind": "park"}, {"n": 2, "kind": ""}]));
         assert!(taken["invalid"].as_array().unwrap().is_empty());
         // An empty transport, encryption or codec list means something, and
@@ -2009,14 +2049,14 @@ mod tests {
         // out of the field's reach: named, and not taken.
         let refused = read(serde_json::json!({
             "transport": "quic", "media_encryption": "future-encryption", "codecs": "PCMU,G729", "noise_suppression": "HIGH",
-            "incoming_action": "popup", "sip_port": 70000, "rtp_port": -2, "tray_after_call": 1.5, "dtmf_mode": "tones",
+            "incoming_action": "popup", "sip_port": 70000, "rtp_port": -2, "tray_after_call": 1.5, "dtmf_mode": "tones", "keepalive": "stun",
             "buttons": [{"kind": "call", "number": "1001"}]
         }));
         assert_eq!(refused["settings"], serde_json::json!({}));
         assert_eq!(refused["buttons"], serde_json::json!([{"n": 1, "number": "1001"}]));
         assert_eq!(
             refused["invalid"],
-            serde_json::json!(["button_1_kind", "codecs", "dtmf_mode", "incoming_action", "media_encryption", "noise_suppression", "rtp_port", "sip_port", "transport", "tray_after_call"])
+            serde_json::json!(["button_1_kind", "codecs", "dtmf_mode", "incoming_action", "keepalive", "media_encryption", "noise_suppression", "rtp_port", "sip_port", "transport", "tray_after_call"])
         );
         assert_eq!(read(serde_json::json!({"codecs": "PCMU,pcmu"}))["invalid"], serde_json::json!(["codecs"]));
     }

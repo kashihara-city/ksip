@@ -238,6 +238,8 @@ impl Services {
         put(format!("ksip_noise_suppression {}", s.noise_suppression));
         put(format!("ksip_agc {}", yes_no(s.agc)));
         put(format!("ksip_register_interval {}", s.register_interval));
+        put(format!("ksip_keepalive {}", s.keepalive));
+        put(format!("ksip_keepalive_interval {}", s.keepalive_interval));
         put(format!("ksip_audio_codecs {}", s.codec_list().join(",")));
         put(format!("ksip_detail_log {}", yes_no(s.detail_log)));
         put(format!("ksip_sip_transport {}", s.sip_transport()));
@@ -362,6 +364,7 @@ mod tests {
             assert!(config.contains("ksip_high_pass yes"));
             assert!(config.contains("ksip_noise_suppression high"));
             assert!(config.contains("ksip_agc no"));
+            assert!(config.contains("ksip_keepalive crlf") && config.contains("ksip_keepalive_interval 60"), "a blank line every minute, by default");
             assert!(config.contains("ksip_microphone_gain 100"));
             assert!(config.contains("ksip_speaker_gain 100"));
             let mut link = EngineLink::start(prepared.plan, generation, tx.clone()).unwrap();

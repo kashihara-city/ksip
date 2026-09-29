@@ -120,7 +120,7 @@ pub struct Store {
 /// The settings a policy can fix (the ADMX's, besides the custom buttons):
 /// what the person may not change while one is set. The gains and the echo
 /// delay are the person's alone, for they are adjusted where the phone is used.
-pub const POLICY_SETTINGS: [&str; 31] = [
+pub const POLICY_SETTINGS: [&str; 33] = [
     "server",
     "port",
     "sip_port",
@@ -131,6 +131,8 @@ pub const POLICY_SETTINGS: [&str; 31] = [
     "codecs",
     "dtmf_mode",
     "register_interval",
+    "keepalive",
+    "keepalive_interval",
     "pbx_only",
     "aec",
     "high_pass",

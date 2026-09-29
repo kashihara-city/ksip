@@ -17,6 +17,29 @@ uint32_t register_interval = 300;
 // Set when this phone was taken off the server on purpose. The 200 OK for a
 // de-registration arrives as a register event, which must not undo it.
 bool unregistered = false;
+std::string server_host_;
+
+// Keepalives: a blank line (CRLF CRLF) to the registrar every interval, on
+// the flow the registration uses (the SIP UDP socket, or the TCP/TLS
+// connection), so that a firewall or NAT in between keeps the way back open
+// between re-registrations. Windows Firewall let a UDP reply in for 90 but
+// not 120 seconds after the last packet out where it was measured, and a
+// re-registration comes every 270 of the default 300; without keepalives an
+// INVITE could be dropped on its way in. Over TCP/TLS the blank line is
+// RFC 5626's ping; over UDP it is in no standard, but a SIP stack skips it
+// (it is no message), and the flow is kept open whatever the content.
+// RFC 5626 proper is not used: libre sends its keepalives only when the
+// registrar requires "outbound", which the PBXs in use do not, and at the
+// registrar's interval, not ours.
+bool keepalive_on = true;
+uint32_t keepalive_interval = 60;
+tmr keepalive_timer;
+sa registrar{};
+enum sip_transp registrar_tp = SIP_TRANSP_NONE;
+// What has been said about the keepalives, so that the log has the first
+// one and the first of each run of failures, not one line a minute.
+bool keepalive_told = false;
+int keepalive_failure = 0;
 } // namespace
 
 ua *user_agent() { return account_ua; }
@@ -30,6 +53,33 @@ const std::string &registration() { return registration_; }
 const std::string &registered_transport() { return transport_; }
 const std::string &media_encryption() { return media_encryption_; }
 const std::string &own_user() { return own_user_; }
+
+namespace {
+void send_keepalive(void *) {
+    tmr_start(&keepalive_timer, keepalive_interval * 1000ull, send_keepalive, nullptr);
+    if (!registered() || unregistered || registrar_tp == SIP_TRANSP_NONE) return;
+    mbuf *mb = mbuf_alloc(4);
+    if (!mb) return;
+    mbuf_write_str(mb, "\r\n\r\n");
+    mb->pos = 0;
+    // The host is what the registration's TLS connection was verified
+    // against; a connection opened again for this one is verified the same.
+    std::string host = server_host_;
+    int err = sip_send_conn(uag_sip(), nullptr, registrar_tp, &registrar, host.data(), mb, nullptr, nullptr);
+    mem_deref(mb);
+    if (err) {
+        if (err != keepalive_failure)
+            warning("ksip: keepalive to %J over %s could not be sent: %m\n", &registrar, sip_transp_name(registrar_tp), err);
+        keepalive_failure = err;
+        return;
+    }
+    if (keepalive_failure) info("ksip: keepalive to %J sent again\n", &registrar);
+    keepalive_failure = 0;
+    if (!keepalive_told)
+        info("ksip: keepalive (CRLF) every %u s to %J over %s\n", keepalive_interval, &registrar, sip_transp_name(registrar_tp));
+    keepalive_told = true;
+}
+} // namespace
 
 int login(re_printf *pf, void *) {
     using ksip_io::token;
@@ -74,6 +124,7 @@ int login(re_printf *pf, void *) {
                  password.empty() || password.size() > 512 || !port || port > 65535))
         err = EINVAL;
     if (!err) {
+        server_host_ = server;
         authority_ = std::string(server) + ":" + std::to_string(port);
         // The transport belongs in the URI, the media encryption in the parameters.
         scheme_ = (transport && !str_casecmp(transport, "TLS")) ? "tls" : (transport && !str_casecmp(transport, "TCP")) ? "tcp" : "udp";
@@ -136,10 +187,18 @@ void on_event(bevent_ev ev, bevent *e) {
         transport_.clear();
     }
 }
-void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp) {
-    if (!unregistered && length >= 9 && memcmp(packet, "SIP/2.0 2", 9) == 0 &&
-        ksip_io::sip_header(packet, length, "CSeq").find("REGISTER") != std::string::npos)
-        transport_ = sip_transp_name(tp);
+void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src) {
+    if (unregistered || length < 9 || memcmp(packet, "SIP/2.0 2", 9) != 0 ||
+        ksip_io::sip_header(packet, length, "CSeq").find("REGISTER") == std::string::npos)
+        return;
+    transport_ = sip_transp_name(tp);
+    if (!src) return;
+    // The registrar as it answered: the address the name resolved to, and
+    // the flow the registration is on. The first one starts the keepalives.
+    registrar = *src;
+    bool first = registrar_tp == SIP_TRANSP_NONE;
+    registrar_tp = tp;
+    if (first && keepalive_on) tmr_start(&keepalive_timer, keepalive_interval * 1000ull, send_keepalive, nullptr);
 }
 void write_state(odict *od) {
     odict_entry_add(od, "registration", ODICT_STRING, registration_.c_str());
@@ -149,6 +208,18 @@ void write_state(odict *od) {
 void init() {
     uint32_t interval = register_interval;
     if (!conf_get_u32(conf_cur(), "ksip_register_interval", &interval) && interval >= 30 && interval <= 3600) register_interval = interval;
+    tmr_init(&keepalive_timer);
+    // The app writes both; anything it would not write keeps the defaults.
+    pl mode = PL_INIT;
+    if (!conf_get(conf_cur(), "ksip_keepalive", &mode) && pl_isset(&mode)) {
+        if (!pl_strcasecmp(&mode, "off")) keepalive_on = false;
+        else if (!pl_strcasecmp(&mode, "crlf")) keepalive_on = true;
+    }
+    interval = keepalive_interval;
+    if (!conf_get_u32(conf_cur(), "ksip_keepalive_interval", &interval) && interval >= 10 && interval <= 600) keepalive_interval = interval;
 }
-void close() { account_ua = nullptr; }
+void close() {
+    tmr_cancel(&keepalive_timer);
+    account_ua = nullptr;
+}
 } // namespace sip_account

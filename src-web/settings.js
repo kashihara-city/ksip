@@ -147,10 +147,10 @@ export function openSettings(){
   const dropped=setCodecs(state.settings.codecs);
   $('password').value='';$('register_interval').value=state.settings.register_interval??300;$('detail_log').checked=!!state.settings.detail_log;
   $('shortcut_window').value=state.settings.shortcut_window||'';$('shortcut_call').value=state.settings.shortcut_call||'';
-  setChoice($('incoming_action'),state.settings.incoming_action||'show');setChoice($('dtmf_mode'),state.settings.dtmf_mode||'rtp');$('tray_after_call').value=state.settings.tray_after_call??-1;
+  setChoice($('incoming_action'),state.settings.incoming_action||'show');setChoice($('dtmf_mode'),state.settings.dtmf_mode||'rtp');setChoice($('keepalive'),state.settings.keepalive||'crlf');$('keepalive_interval').value=state.settings.keepalive_interval??60;$('tray_after_call').value=state.settings.tray_after_call??-1;
   setChoice($('language'),state.settings.language||'');$('program_integration').checked=!!state.settings.program_integration;$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
   // The app reads these two whatever their case and spaces; the list has them in lower case.
-  $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();
+  $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();syncKeepalive();
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
   $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;
@@ -180,6 +180,8 @@ function syncIntegration(){
   const on=$('program_integration').checked;
   for(const id of ['browser_integration','browser_dial_confirm'])able($(id),on);
 }
+// The interval is only for a keepalive that is sent; it keeps its value.
+function syncKeepalive(){able($('keepalive_interval'),$('keepalive').value!=='off');}
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that
 // what a button does can be read off the settings.
@@ -201,7 +203,7 @@ async function calibrateAec(careful){
 // has it. Nothing is saved until the dialog is.
 const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
-const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language','dtmf_mode'];
+const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language','dtmf_mode','keepalive'];
 const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
 const isChoice=key=>CHOICES.includes(key)||/^button_\d+_kind$/.test(key);
 // One value into the dialog, and whether the dialog shows it.
@@ -229,7 +231,7 @@ function restore(before){
   $('codec-list').replaceChildren(...before.codecs);
   for(const {el,value,checked} of before.fields){el.value=value;el.checked=checked;}
   carried=before.carried;
-  syncEncryptionChoices();syncIntegration();for(const n of BUTTON_INDEXES)syncButtonRow(n);
+  syncEncryptionChoices();syncIntegration();syncKeepalive();for(const n of BUTTON_INDEXES)syncButtonRow(n);
 }
 // Every value the file gives is shown as it is, or none is taken: a file
 // that would change the dialog in a way it does not say (a choice the list
@@ -249,7 +251,7 @@ function applyImport(file){
   ];
   const before=snapshot();
   for(const [key,value] of given)showSetting(key,value);
-  syncEncryptionChoices();syncIntegration();for(const b of buttons)syncButtonRow(b.n);
+  syncEncryptionChoices();syncIntegration();syncKeepalive();for(const b of buttons)syncButtonRow(b.n);
   const notShown=given.filter(([key,value])=>!shows(key,value)).map(([key])=>key);
   if(notShown.length){restore(before);throw fill('SETTINGS_IMPORT_NOT_SHOWN',notShown.join(', '));}
   const passedOver=[...(file.unreadable||[]),...(file.invalid||[])],fixed=file.managed||[];
@@ -281,7 +283,7 @@ function heldSettings(){
     buttons:BUTTON_INDEXES.map(n=>!$('button_'+n+'_kind').value?{title:'',kind:'',number:'',transfer:'',pickup:''}:({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),
     auto_answer:$('auto_answer').checked,
     aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,
-    register_interval:Number($('register_interval').value),detail_log:$('detail_log').checked,
+    register_interval:Number($('register_interval').value),keepalive:$('keepalive').value,keepalive_interval:Number($('keepalive_interval').value),detail_log:$('detail_log').checked,
     shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
     pbx_only:$('pbx_only').checked,program_integration:$('program_integration').checked,
@@ -328,6 +330,7 @@ export function init(){
   });
   $('media_encryption').addEventListener('change',syncEncryptionChoices);
   $('program_integration').addEventListener('change',syncIntegration);
+  $('keepalive').addEventListener('change',syncKeepalive);
   for(const n of BUTTON_INDEXES)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
   $('choose-ca').addEventListener('click',async()=>{
     try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen){$('ca_file').value=chosen;updateSaveLabel();}}

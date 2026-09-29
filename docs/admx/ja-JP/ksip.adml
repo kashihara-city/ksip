@@ -97,6 +97,20 @@
 ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
 
 値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
+      <string id="keepalive">キープアライブ</string>
+      <string id="keepalive_Help">登録の更新の合間に、登録先へ空行（CRLF）を送り、ファイアウォールやルーターの戻り道（着信の通り道）を開けておくかどうか。空行は、登録に使っている通り道（UDPならSIPのポート、TCP・TLSならその接続）に送ります。TCP・TLSでは RFC 5626 の ping と同じ形で、UDP では規格に無い形ですが、SIPのメッセージではないのでSIPサーバーは読み飛ばします。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 空行）
+
+ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
+
+値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
+      <string id="keepalive_0">空行（CRLF）</string>
+      <string id="keepalive_1">送らない</string>
+      <string id="keepalive_interval">キープアライブの間隔</string>
+      <string id="keepalive_interval_Help">キープアライブを送る間隔（秒）。10〜600。Windowsファイアウォールは、UDPの戻り道を最後に送ってから90〜120秒で閉じたので、それより短くします。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 60）
+
+ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
+
+値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
       <string id="aec">エコーキャンセル</string>
       <string id="aec_Help">WebRTC のエコーキャンセル（AEC3）を使うか。有効で使い、無効で使いません。（既定: 使う）
 
@@ -1021,6 +1035,12 @@
       </presentation>
       <presentation id="register_interval">
         <decimalTextBox refId="register_interval" defaultValue="300" spinStep="1">秒</decimalTextBox>
+      </presentation>
+      <presentation id="keepalive">
+        <dropdownList refId="keepalive" noSort="true" defaultItem="0">送り方</dropdownList>
+      </presentation>
+      <presentation id="keepalive_interval">
+        <decimalTextBox refId="keepalive_interval" defaultValue="60" spinStep="1">秒</decimalTextBox>
       </presentation>
       <presentation id="noise_suppression">
         <dropdownList refId="noise_suppression" noSort="true" defaultItem="3">ノイズ抑制</dropdownList>

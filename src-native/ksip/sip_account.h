@@ -36,9 +36,10 @@ int login(re_printf *pf, void *arg);
 int unregister();
 // The register events of the user agent.
 void on_event(bevent_ev ev, bevent *e);
-// A SIP answer received: the transport that carried a registration is read
-// from the answer itself, since the register events carry no message.
-void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp);
+// A SIP answer received: the transport that carried a registration, and the
+// registrar's address the keepalives go to, are read from the answer itself,
+// since the register events carry no message.
+void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src);
 void write_state(odict *od);
 void init();
 void close();
