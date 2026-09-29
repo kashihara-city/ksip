@@ -4,11 +4,14 @@ import argparse, datetime, os, pathlib, subprocess, sys, time,hashlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TESTS = ROOT / 'scripts/test'
 # The order matters: the cheap checks first, the app last because it takes the
-# extension the phones use, and the group is what --group selects.
+# extension the phones use, and the group is what --group selects. The device
+# group needs a real microphone and speaker and takes minutes, so it runs only
+# when asked for.
 SUITE = [
     ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'audio-devices.py'),
     ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'settings-dialog.py'), ('offline', 'no-secrets.py'),
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'), ('offline', 'sbom.py'),
+    ('device', 'webrtc-device.ps1'),
     ('loopback', 'loopback-control.py'), ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'), ('loopback', 'loopback-trust.py'),
     ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'), ('pbx', 'pbx-blf-54.py'), ('pbx', 'pbx-dtmf.py'),
     ('pbx', 'pbx-record-switch.py'), ('pbx', 'pbx-early-media.py'), ('pbx', 'pbx-playback.py'), ('pbx', 'pbx-live-aec.py'),
@@ -42,7 +45,7 @@ def run(script, log, folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', action='append', choices=['offline', 'loopback', 'pbx', 'app'], help='which groups to run; default all')
+    parser.add_argument('--group', action='append', choices=['offline', 'device', 'loopback', 'pbx', 'app'], help='which groups to run; default all but device')
     parser.add_argument('--only', action='append', help='a test file name to run, repeatable; overrides --group')
     parser.add_argument('--pbx', help='folder under test-pbx/ to test against (sets KSIP_TEST_PBX)')
     parser.add_argument('--folder', help='a staged build folder for the app tests (their -Folder)')
@@ -54,7 +57,8 @@ def main():
     # Windows PowerShell's own module path, or Get-FileHash goes missing when started from pwsh.
     os.environ['PSModulePath'] = ';'.join([os.path.expandvars(r'%USERPROFILE%\Documents\WindowsPowerShell\Modules'),
                                            r'C:\Program Files\WindowsPowerShell\Modules', r'C:\Windows\system32\WindowsPowerShell\v1.0\Modules'])
-    chosen = [s for g, s in SUITE if (args.only and s in args.only) or (not args.only and (not args.group or g in args.group))]
+    chosen = [s for g, s in SUITE if (args.only and s in args.only) or
+              (not args.only and (g in args.group if args.group else g != 'device'))]
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     out = ROOT / 'temp/reports' / f'run-{stamp}-{pbx}'
     out.mkdir(parents=True, exist_ok=True)
@@ -78,8 +82,16 @@ def main():
         with open(summary, 'a', encoding='utf-8') as f:
             f.write(line + '\n')
         failed += result.startswith('FAIL')
+    # A WebRTC update or a change to its patches is proven only on real
+    # devices, which is easy to forget when the default leaves them out.
+    device_note = [] if any(g == 'device' and s in chosen for g, s in SUITE) else [
+        'NOTE: 実機の WebRTC テスト（--group device）は流していません。WebRTC を更新したときや '
+        'scripts/build/patch-webrtc.py を変えたときは、マイクとスピーカーのある PC で流してください']
     with open(summary, 'a', encoding='utf-8') as f:
+        f.write(''.join(line + '\n' for line in device_note))
         f.write(f'finished {datetime.datetime.now():%Y-%m-%dT%H:%M:%S} failed={failed}\n')
+    for line in device_note:
+        print(line)
     print(f'{len(chosen)} tests, {failed} failed; logs in {out.relative_to(ROOT).as_posix()}')
     return 1 if failed else 0
 

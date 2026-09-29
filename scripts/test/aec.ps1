@@ -11,6 +11,13 @@ if ($env:KSIP_TEST_AUDIO_DEVICE -eq '1') {
     & temp/build/test-webrtc-audio.exe --playout
     if ($LASTEXITCODE -ne 0) { throw 'WebRTC default playout callback test failed' }
     Write-Host 'Google WebRTC default playout callback test passed'
+    # The microphone opened and closed again and again, each left running for
+    # 300 ms: before patch-webrtc.py's active-before-start change, about one
+    # start in a hundred reported success and delivered nothing.
+    $microphone = if ($env:KSIP_TEST_AUDIO_MIC) { $env:KSIP_TEST_AUDIO_MIC } else { 'default' }
+    & temp/build/test-webrtc-audio.exe --capture-restarts 400 $microphone 300
+    if ($LASTEXITCODE -ne 0) { throw "WebRTC capture restart test failed ($LASTEXITCODE)" }
+    Write-Host 'Google WebRTC capture restart test passed'
 }
 if ($env:KSIP_TEST_AUDIO_SIGNAL -eq '1') {
     $helper = 'temp/cargo-target/debug/examples/audio-devices.exe'

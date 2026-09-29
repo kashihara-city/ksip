@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -118,6 +119,64 @@ int RenderSilence(void *, int16_t *samples, size_t frames) {
 void CaptureSamples(void *, const int16_t *, size_t, int64_t) {
   capture_callbacks.fetch_add(1, std::memory_order_relaxed);
 }
+
+// Opens and closes one side's stream again and again, and counts the starts
+// that report success but never deliver a callback. WebRTC's audio thread
+// could take its first data event before the start marked the stream active
+// and end for good, which left a call with a silent microphone or speaker.
+// A device can take a second or more to open, so each start gets two seconds.
+// Each stream then runs `hold_ms` before it is stopped: a stop that catches a
+// data event unconsumed leaves it signalled for the next start's new thread.
+int TestRestarts(ksip_audio *audio, bool capture, int rounds,
+                 const char *device, int hold_ms) {
+  std::atomic<unsigned> &counter = capture ? capture_callbacks : callbacks;
+  int dead = 0;
+  long long slowest_ms = 0;
+  for (int round = 1; round <= rounds; ++round) {
+    counter.store(0, std::memory_order_relaxed);
+    const auto started = std::chrono::steady_clock::now();
+    const int result =
+        capture ? ksip_audio_start_recording(audio, device, CaptureSamples,
+                                             nullptr)
+                : ksip_audio_start_playout(audio, device, RenderSilence,
+                                           nullptr);
+    if (result) {
+      std::printf("Round %d: start failed (%d)\n", round, result);
+      return 17;
+    }
+    long long first_ms = -1;
+    while (std::chrono::steady_clock::now() - started <
+           std::chrono::seconds(2)) {
+      if (counter.load(std::memory_order_relaxed)) {
+        first_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - started)
+                       .count();
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (first_ms >= 0)
+      std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
+    if (capture)
+      ksip_audio_stop_recording(audio);
+    else
+      ksip_audio_stop_playout(audio);
+    if (first_ms < 0) {
+      ++dead;
+      std::printf("Round %d: started but no callback within 2 s\n", round);
+    } else {
+      slowest_ms = std::max(slowest_ms, first_ms);
+    }
+    if (round % 50 == 0 || round == rounds) {
+      std::printf("%s restarts: %d/%d, silent %d, slowest first callback "
+                  "%lld ms\n",
+                  capture ? "Capture" : "Playout", round, rounds, dead,
+                  slowest_ms);
+      std::fflush(stdout);
+    }
+  }
+  return dead ? 16 : 0;
+}
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -135,6 +194,19 @@ int main(int argc, char **argv) {
   } else {
     const int synthetic_result = TestSyntheticEcho(audio);
     if (synthetic_result) return synthetic_result;
+  }
+  // --capture-restarts / --playout-restarts [rounds] [device] [hold ms]
+  const bool test_restarts = argc >= 2 &&
+      (!std::strcmp(argv[1], "--capture-restarts") ||
+       !std::strcmp(argv[1], "--playout-restarts"));
+  if (test_restarts) {
+    const int rounds = argc >= 3 ? std::atoi(argv[2]) : 200;
+    if (rounds <= 0) return 18;
+    const int result = TestRestarts(
+        audio, !std::strcmp(argv[1], "--capture-restarts"), rounds,
+        argc >= 4 ? argv[3] : "default", argc >= 5 ? std::atoi(argv[4]) : 0);
+    ksip_audio_destroy(audio);
+    return result;
   }
   const bool test_capture = argc >= 2 &&
       (!std::strcmp(argv[1], "--capture") ||

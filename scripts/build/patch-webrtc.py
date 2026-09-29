@@ -12,6 +12,13 @@
 #       runs Google's APM itself, and the two in series once cut the input to
 #       around -90 dBFS. If the device refuses RAW, the stream is opened again
 #       without it. Playback is not changed.
+#   modules/audio_device/win/core_audio_{input,output}_win.cc
+#       StartRecording and StartPlayout mark the stream active before Start()
+#       spawns the audio thread, not after it returns. The thread's first
+#       data callback could run in between, find the stream inactive, and end
+#       the thread for good: the device stayed open and the start reported
+#       success, but no audio was delivered again. A call then sent no RTP,
+#       heard nothing from a PBX that waits for it, and recorded nothing.
 #
 # Building and embedding (no change to what the library does):
 #   ksip_bridge/                   the KSIP bridge sources copied from
@@ -20,7 +27,8 @@
 #                                  that bundles the bridge with the ADM, APM
 #                                  and their dependencies.
 #
-# Nothing else in WebRTC is touched.
+# Nothing else in WebRTC is touched (scripts/test/supply-chain.py holds the
+# same list).
 from pathlib import Path
 import argparse
 import shutil
@@ -32,6 +40,8 @@ RAW_BEGIN = "// KSIP RAW CAPTURE BEGIN"
 RAW_END = "// KSIP RAW CAPTURE END"
 RAW_FALLBACK_BEGIN = "// KSIP RAW FALLBACK BEGIN"
 RAW_FALLBACK_END = "// KSIP RAW FALLBACK END"
+ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
+ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 TARGET = f'''{BEGIN}
 rtc_static_library("ksip_webrtc_audio") {{
   visibility = [ "*" ]
@@ -163,12 +173,51 @@ def patch_raw_capture(source: Path):
         base.write_text(base_text, encoding="utf-8")
 
 
+def patch_active_before_start(source: Path):
+    """Let the audio thread's first callback find its stream active."""
+    original = """  if (!Start()) {
+    return -1;
+  }
+
+  is_active_ = true;
+  return 0;"""
+    replacement = f"""  {ACTIVE_BEGIN}
+  // Active before Start() spawns the audio thread: its first data callback
+  // can run before Start() returns, and one that finds the stream inactive
+  // ends the thread for good while the start still reports success.
+  is_active_ = true;
+  if (!Start()) {{
+    is_active_ = false;
+    return -1;
+  }}
+  {ACTIVE_END}
+  return 0;"""
+    for name in ["core_audio_input_win.cc", "core_audio_output_win.cc"]:
+        path = source / "modules" / "audio_device" / "win" / name
+        text = path.read_text(encoding="utf-8")
+        present = [ACTIVE_BEGIN in text, ACTIVE_END in text]
+        if any(present) and not all(present):
+            raise RuntimeError(f"Unsupported partial KSIP active patch in {name}")
+        if all(present):
+            start = text.index(ACTIVE_BEGIN) - 2
+            finish = text.index(ACTIVE_END, start) + len(ACTIVE_END)
+            text = text[:start] + replacement[:replacement.index(ACTIVE_END) +
+                                              len(ACTIVE_END)] + text[finish:]
+        else:
+            if text.count(original) != 1:
+                raise RuntimeError(
+                    f"Unsupported WebRTC CoreAudio source: start anchor missing in {name}")
+            text = text.replace(original, replacement, 1)
+        path.write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     args = parser.parse_args()
     source = args.source.resolve()
     patch_raw_capture(source)
+    patch_active_before_start(source)
     bridge = source / "ksip_bridge"
     bridge.mkdir(exist_ok=True)
     for name in ["ksip_audio_bridge.h", "ksip_audio_bridge_internal.h",

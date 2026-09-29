@@ -447,7 +447,9 @@ python -X utf8 scripts/test/admx.py
 python -X utf8 scripts/test/sbom.py
 ```
 
-`test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。
+`test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストと、マイクを開いては閉じるのを400回くり返すテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。`test/webrtc-device.ps1` は `KSIP_TEST_AUDIO_DEVICE=1` を立てて `test/aec.ps1` を流すもので、`run.py --group device` で流れます（4分ほど）。
+
+くり返しのテストは、1回ごとにマイクを開き、300 ms 鳴らしてから閉じ、開始が成功したのに音が一度も届かなかった回があれば失敗にします。`scripts/build/patch-webrtc.py` がWebRTCのマイクとスピーカーの開始を直す前は、USBオーディオで100回に1回ほどこれが起き、通話はRTPを送らず、相手の声も録音も無くなりました。確率でしか起きないので、WebRTCを更新したときや `patch-webrtc.py` を変えたときに、マイクとスピーカーのあるPCで流します。使うマイクは `KSIP_TEST_AUDIO_MIC` にエンドポイントIDで指定でき、省けばWindowsの既定です。
 
 `test/audio-module.ps1` は音声モジュールのうち機器も baresip も要らない部分を単体で試します。再生ストリームの引継ぎ（新しいプレーヤーが取り、去れば前のプレーヤーへ返す、起動に失敗した切替は取り上げた相手へ返す）、マイクが開かないときの無音の代替、状態の報告（入力が機器か無音か、再生しているか、失敗した開始の数）が失敗・引継ぎ・取り直しの後も実際と合うこと、コールバック解除中の競合（実行中の呼び出しを待つ、呼び出しの中からの解除は待たない）、WAV 録音のバッファと見出しです。
 
@@ -534,9 +536,10 @@ python -X utf8 scripts/test/run.py
 python -X utf8 scripts/test/run.py --group offline --group loopback
 python -X utf8 scripts/test/run.py --group pbx --group app --pbx local-freeswitch
 python -X utf8 scripts/test/run.py --group app --folder temp/build/ci-ksip
+python -X utf8 scripts/test/run.py --group device
 ```
 
-`scripts/test/run.py` は全部を上の順（対向不要 → ループバック → PBX → アプリ）で1本ずつ流し、`temp/reports/run-<日時>-<PBX>/` に1本ごとのログと `summary.txt`（PASS / FAIL / SKIP と所要時間）を残します。`--only <ファイル名>` で選んだものだけ流せます。テストの間に3秒置くのは、前のアプリが終了して `ksip.exe` を手放すのを待つためです。
+`scripts/test/run.py` は全部を上の順（対向不要 → ループバック → PBX → アプリ）で1本ずつ流し、`temp/reports/run-<日時>-<PBX>/` に1本ごとのログと `summary.txt`（PASS / FAIL / SKIP と所要時間）を残します。`--only <ファイル名>` で選んだものだけ流せます。実機の音声機器を使う `device` 群（`webrtc-device.ps1`）は、`--group device` と指定したときだけ流れます。流さなかったときは、最後とsummary.txtにその旨を出します。テストの間に3秒置くのは、前のアプリが終了して `ksip.exe` を手放すのを待つためです。
 
 ### ローカルの2プロセスだけで行うテスト
 

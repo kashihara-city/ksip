@@ -1,7 +1,7 @@
 # タグ v* を push すると、ランナーだけで KSIP を最初から組み、対向の要らない
 # テストを通し、来歴（attestation）を付けて GitHub Release に載せる。
-# SIP サーバーと実機が要るテスト（asterisk-*.py・app-*.ps1）は、タグを打つ前に
-# 手元で通しておく決まり。手動実行（workflow_dispatch）ではビルドとテストだけを
+# SIP サーバーと実機が要るテスト（pbx-*.py・app-*.ps1・run.py --group device）は、
+# タグを打つ前に手元で通しておく決まり。手動実行（workflow_dispatch）ではビルドとテストだけを
 # 行い、来歴と Release は作らない。
 name: Release
 

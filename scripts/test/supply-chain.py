@@ -15,7 +15,8 @@ PATCHED={'re':{'cmake/re-config.cmake','src/sipevent/subscribe.c'},
          'baresip':{'src/main.c','CMakeLists.txt'}}
 ADDED={'baresip':('modules/ksip_audio/','modules/ksip_audio_filter/','modules/ksip/','modules/ksip_ctrl/')}
 WEBRTC_TOUCHED={'BUILD.gn','modules/audio_device/win/core_audio_utility_win.cc',
-                'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc','ksip_bridge/'}
+                'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc',
+                'modules/audio_device/win/core_audio_input_win.cc','modules/audio_device/win/core_audio_output_win.cc','ksip_bridge/'}
 def tree_differences(name,archive,tree):
     """The files of an unpacked tree that are not as the archive has them, patches aside."""
     if not tree.exists():return []
