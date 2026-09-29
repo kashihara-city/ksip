@@ -99,20 +99,18 @@ fn samples(format: &Format, data: &[u8]) -> Result<Vec<i16>, String> {
 /// samples on disk under a header that says there are none, which no reader
 /// plays. When the `data` size is zero or runs past the end of the file, it
 /// and the RIFF size are set from the file's length. Returns whether the
-/// file was changed. Anything that is not such a header is left alone.
+/// file was changed. Anything that is not such a header is left alone, and
+/// so is a header with no samples after it and none claimed: there is nothing
+/// to put right in a recording that is empty (see `holds_no_samples`).
 pub fn repair_sizes(path: &std::path::Path) -> Result<bool, String> {
     use std::io::{Seek, SeekFrom, Write};
     let length = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path).map_err(|e| e.to_string())?;
-    let mut header = [0u8; 44];
-    std::io::Read::read_exact(&mut file, &mut header).map_err(|e| e.to_string())?;
-    if &header[0..4] != b"RIFF" || &header[8..16] != b"WAVEfmt " || &header[36..40] != b"data" || length < 44 {
+    let Some((block, data)) = recorder_header(&mut file, length)? else {
         return Ok(false);
-    }
-    let block = u16_at(&header, 32).max(1) as u64;
-    let data = u32_at(&header, 40) as u64;
+    };
     let available = (length - 44) / block * block;
-    if data != 0 && data <= length - 44 {
+    if (data != 0 && data <= length - 44) || (data == 0 && available == 0) {
         return Ok(false);
     }
     let riff = u32::try_from(36 + available).map_err(|e| e.to_string())?;
@@ -123,6 +121,33 @@ pub fn repair_sizes(path: &std::path::Path) -> Result<bool, String> {
     file.write_all(&data.to_le_bytes()).map_err(|e| e.to_string())?;
     file.flush().map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// The block size and the claimed `data` size of the recorder's 44-byte
+/// header, or nothing when the file does not start with one.
+fn recorder_header(file: &mut std::fs::File, length: u64) -> Result<Option<(u64, u64)>, String> {
+    let mut header = [0u8; 44];
+    if length < 44 {
+        return Ok(None);
+    }
+    std::io::Read::read_exact(file, &mut header).map_err(|e| e.to_string())?;
+    if &header[0..4] != b"RIFF" || &header[8..16] != b"WAVEfmt " || &header[36..40] != b"data" {
+        return Ok(None);
+    }
+    Ok(Some((u16_at(&header, 32).max(1) as u64, u32_at(&header, 40) as u64)))
+}
+
+/// Whether a recording holds not one whole sample frame: the recorder's
+/// header with nothing after it, which is what a call whose audio never
+/// started leaves. Media Foundation refuses to encode such a file. Anything
+/// that is not the recorder's header is not called empty here.
+pub fn holds_no_samples(path: &std::path::Path) -> Result<bool, String> {
+    let length = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let Some((block, _)) = recorder_header(&mut file, length)? else {
+        return Ok(false);
+    };
+    Ok((length - 44) / block == 0)
 }
 
 /// The sample rate and channel count a WAV declares.
@@ -190,8 +215,16 @@ mod tests {
         bytes.extend_from_slice(&16u16.to_le_bytes());
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&0u32.to_le_bytes());
+        // The header alone, or with less than one block after it: empty, and
+        // nothing to repair (it once said "repaired" and then failed to encode).
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(!repair_sizes(&path).unwrap());
+        assert!(holds_no_samples(&path).unwrap());
+        std::fs::write(&path, [bytes.as_slice(), &[7u8; 3]].concat()).unwrap();
+        assert!(holds_no_samples(&path).unwrap());
         bytes.extend(std::iter::repeat_n(7u8, 4003)); // 1000 whole blocks and three stray bytes
         std::fs::write(&path, &bytes).unwrap();
+        assert!(!holds_no_samples(&path).unwrap());
         assert!(repair_sizes(&path).unwrap());
         let fixed = std::fs::read(&path).unwrap();
         assert_eq!(u32_at(&fixed, 40), 4000);
@@ -202,6 +235,10 @@ mod tests {
         // Something that is not the recorder's header is left alone too.
         std::fs::write(&path, b"not a wav at all, but long enough to hold a header of 44 bytes").unwrap();
         assert!(!repair_sizes(&path).unwrap());
+        assert!(!holds_no_samples(&path).unwrap(), "only the recorder's own header is called empty");
+        std::fs::write(&path, b"short").unwrap();
+        assert!(!repair_sizes(&path).unwrap());
+        assert!(!holds_no_samples(&path).unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1981,10 +1981,10 @@ async fn start_recording(s: &Shared, id: &str) -> Result<(), String> {
         let mut name = wanted.clone();
         let mut count = 1;
         // The name is taken if any form of it is there: the WAV, the MP3 it
-        // became, or the MP3 still being made from it.
+        // became, the MP3 still being made from it, or the WAV set aside as empty.
         let taken = |name: &str| {
             let wav = folder.join(name);
-            wav.exists() || wav.with_extension("mp3").exists() || wav.with_extension("converting.mp3").exists()
+            ["wav", "mp3", "converting.mp3", "empty.wav"].iter().any(|ext| wav.with_extension(ext).exists())
         };
         while taken(&name) {
             count += 1;

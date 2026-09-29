@@ -39,14 +39,35 @@ pub fn recording_name(stamp: &str, peer: &str) -> String {
 fn partial_recording(wav: &Path) -> PathBuf {
     wav.with_extension("converting.mp3")
 }
+/// The name a recording with no sound in it is kept under: out of the
+/// converter's way, which could only fail on it at every start, and still
+/// there to show that the call's audio never started.
+fn empty_recording(wav: &Path) -> PathBuf {
+    wav.with_extension("empty.wav")
+}
+/// Renames a recording that holds no samples to its empty name and says
+/// what it is called now; one with sound in it, or one that cannot be read,
+/// is left for the converter. An empty one that cannot be renamed is an
+/// error, and the next start tries again.
+fn set_aside_empty(wav: &Path) -> Result<Option<PathBuf>, String> {
+    if crate::wav::holds_no_samples(wav) != Ok(true) {
+        return Ok(None);
+    }
+    let empty = empty_recording(wav);
+    std::fs::rename(wav, &empty).map_err(err)?;
+    Ok(Some(empty))
+}
+fn is_empty_recording(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".empty.wav"))
+}
 /// Tidies a recordings folder from earlier runs and says which WAVs still
 /// want converting: a partial MP3 goes (its conversion never finished, and
 /// the WAV is still the recording), and every WAV is handed back, the ones
 /// with an MP3 beside them included. An MP3 next to its WAV may be one an
 /// earlier version wrote straight under the final name and never finished,
 /// so it is not taken as proof of anything: the WAV is converted again, the
-/// MP3 replaced by the new one, and only then does the WAV go. Nothing else
-/// is touched.
+/// MP3 replaced by the new one, and only then does the WAV go. An empty
+/// recording already set aside is not handed back. Nothing else is touched.
 fn sweep_recording_folder(folder: &Path) -> Vec<PathBuf> {
     let mut leftover = Vec::new();
     let Ok(entries) = std::fs::read_dir(folder) else {
@@ -58,7 +79,7 @@ fn sweep_recording_folder(folder: &Path) -> Vec<PathBuf> {
         let name = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
         if name.ends_with(".converting.mp3") {
             let _ = std::fs::remove_file(&path);
-        } else if name.ends_with(".wav") {
+        } else if name.ends_with(".wav") && !is_empty_recording(&path) {
             leftover.push(path);
         }
     }
@@ -74,7 +95,8 @@ fn explorer_path(path: &std::path::Path) -> String {
 }
 impl Services {
     /// The file a history row's recording is in now: the MP3 once it has
-    /// been made, the WAV until then, nothing once both are gone.
+    /// been made, the WAV until then, the empty one if it held no sound,
+    /// nothing once all are gone.
     pub fn recording_file(&self, name: &str) -> Option<PathBuf> {
         let plain = !name.is_empty()
             && name.ends_with(".wav")
@@ -84,7 +106,8 @@ impl Services {
             return None;
         }
         let wav = self.data.join("recordings").join(name);
-        [wav.with_extension("mp3"), wav].into_iter().find(|path| path.is_file())
+        let empty = empty_recording(&wav);
+        [wav.with_extension("mp3"), wav, empty].into_iter().find(|path| path.is_file())
     }
     /// Shows a recording named in the history in Explorer, selected.
     pub fn open_recording_location(&self, name: &str) -> Result<(), String> {
@@ -92,9 +115,13 @@ impl Services {
         crate::native::show_in_folder(&path)
     }
     /// Plays a recording named in the history with whatever Windows plays
-    /// sound files with. Only a file in the recordings folder can be named.
+    /// sound files with. Only a file in the recordings folder can be named,
+    /// and one that holds no sound is not handed to a player.
     pub fn open_recording(&self, name: &str) -> Result<(), String> {
         let path = self.recording_file(name).ok_or_else(|| message("RECORDING_NOT_FOUND"))?;
+        if is_empty_recording(&path) {
+            return Err(message("RECORDING_EMPTY_PLAY"));
+        }
         crate::native::open_url(&path.to_string_lossy())
             .map_err(|e| message_with("RECORDING_OPEN_FAILED", [crate::message::split(&e).1.join(" ")]))
     }
@@ -105,7 +132,8 @@ impl Services {
     /// the recording, and an exit in the middle leaves the WAV as the one
     /// copy, which the next start converts. The WAV goes once the MP3 is
     /// there; if it is being played just then, it stays until the next start
-    /// sweeps it away. A failure leaves the WAV.
+    /// sweeps it away. A failure leaves the WAV. A recording with no sound in
+    /// it is not converted but set aside under its empty name.
     pub fn convert_recording(&self, wav: PathBuf) {
         let me = self.clone();
         me.converting.fetch_add(1, Ordering::Relaxed);
@@ -117,21 +145,32 @@ impl Services {
             let mp3 = wav.with_extension("mp3");
             let partial = partial_recording(&wav);
             let name = wav.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            // A recording the engine never closed says it holds no samples;
-            // its header is put right from the file's length before encoding.
-            if crate::wav::repair_sizes(&wav) == Ok(true) {
-                me.log(LOG_APP, message_with("RECORDING_HEADER_REPAIRED", [&name]));
-            }
-            let finished = crate::mp3::transcode(&wav, &partial)
-                .and_then(|()| std::fs::rename(&partial, &mp3).map_err(|e| message_with("RECORDING_CONVERT_FAILED", [err(e)])));
-            match finished {
-                Ok(()) => match std::fs::remove_file(&wav) {
-                    Ok(()) => me.log(LOG_APP, message_with("RECORDING_CONVERTED", [&name])),
-                    Err(_) => me.log(LOG_APP, message_with("RECORDING_WAV_KEPT", [&name])),
-                },
-                Err(e) => {
-                    let _ = std::fs::remove_file(&partial);
-                    me.log(LOG_APP, e);
+            // A call whose audio never started leaves the header alone, which
+            // no encoder takes: it is kept aside, and says so, instead.
+            match set_aside_empty(&wav) {
+                Ok(Some(empty)) => {
+                    let empty = empty.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    me.log(LOG_APP, message_with("RECORDING_EMPTY", [&name, &empty]));
+                }
+                Err(e) => me.log(LOG_APP, message_with("RECORDING_EMPTY_KEPT", [&name, &e])),
+                Ok(None) => {
+                    // A recording the engine never closed says it holds no samples;
+                    // its header is put right from the file's length before encoding.
+                    if crate::wav::repair_sizes(&wav) == Ok(true) {
+                        me.log(LOG_APP, message_with("RECORDING_HEADER_REPAIRED", [&name]));
+                    }
+                    let finished = crate::mp3::transcode(&wav, &partial)
+                        .and_then(|()| std::fs::rename(&partial, &mp3).map_err(|e| message_with("RECORDING_CONVERT_FAILED", [err(e)])));
+                    match finished {
+                        Ok(()) => match std::fs::remove_file(&wav) {
+                            Ok(()) => me.log(LOG_APP, message_with("RECORDING_CONVERTED", [&name])),
+                            Err(_) => me.log(LOG_APP, message_with("RECORDING_WAV_KEPT", [&name])),
+                        },
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&partial);
+                            me.log(LOG_APP, e);
+                        }
+                    }
                 }
             }
             me.converting.fetch_sub(1, Ordering::Relaxed);
@@ -193,6 +232,8 @@ mod tests {
         file("2026-09-26_10-05-00_1003.converting.mp3");
         file("2026-09-26_10-10-00_1004.wav");
         file("2026-09-26_10-15-00_1005.mp3");
+        // Set aside as empty at an earlier run: left where it is, not converted again.
+        file("2026-09-26_10-20-00_1006.empty.wav");
         let leftover = sweep_recording_folder(&folder);
         assert_eq!(
             leftover,
@@ -212,11 +253,50 @@ mod tests {
                 "2026-09-26_10-00-00_1002.wav",
                 "2026-09-26_10-05-00_1003.wav",
                 "2026-09-26_10-10-00_1004.wav",
-                "2026-09-26_10-15-00_1005.mp3"
+                "2026-09-26_10-15-00_1005.mp3",
+                "2026-09-26_10-20-00_1006.empty.wav"
             ]
         );
         assert!(sweep_recording_folder(&folder.join("missing")).is_empty());
         assert_eq!(partial_recording(Path::new("a/b.wav")), PathBuf::from("a/b.converting.mp3"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+    #[test]
+    fn a_recording_with_no_sound_is_set_aside_instead_of_converted() {
+        let folder = std::env::temp_dir().join(format!("ksip-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        // The recorder's header as the engine closes it with nothing written:
+        // stereo 16-bit 48 kHz, block 4, sizes 36 and 0.
+        let mut header = Vec::new();
+        header.extend_from_slice(b"RIFF");
+        header.extend_from_slice(&36u32.to_le_bytes());
+        header.extend_from_slice(b"WAVEfmt ");
+        header.extend_from_slice(&16u32.to_le_bytes());
+        header.extend_from_slice(&1u16.to_le_bytes());
+        header.extend_from_slice(&2u16.to_le_bytes());
+        header.extend_from_slice(&48000u32.to_le_bytes());
+        header.extend_from_slice(&(48000u32 * 4).to_le_bytes());
+        header.extend_from_slice(&4u16.to_le_bytes());
+        header.extend_from_slice(&16u16.to_le_bytes());
+        header.extend_from_slice(b"data");
+        header.extend_from_slice(&0u32.to_le_bytes());
+        let empty = folder.join("2026-09-29_10-02-16_1002.wav");
+        std::fs::write(&empty, &header).unwrap();
+        assert_eq!(set_aside_empty(&empty).unwrap(), Some(folder.join("2026-09-29_10-02-16_1002.empty.wav")));
+        assert!(!empty.exists() && folder.join("2026-09-29_10-02-16_1002.empty.wav").is_file());
+        assert!(is_empty_recording(&folder.join("2026-09-29_10-02-16_1002.empty.wav")));
+        assert!(!is_empty_recording(&empty));
+        // One with sound in it, and one that is not the recorder's, go to the converter.
+        let sound = folder.join("2026-09-29_10-03-00_1002.wav");
+        let mut with_sound = header.clone();
+        with_sound[40..44].copy_from_slice(&8u32.to_le_bytes());
+        with_sound.extend_from_slice(&[1u8; 8]);
+        std::fs::write(&sound, &with_sound).unwrap();
+        assert_eq!(set_aside_empty(&sound).unwrap(), None);
+        std::fs::write(&sound, b"not the recorder's header").unwrap();
+        assert_eq!(set_aside_empty(&sound).unwrap(), None);
+        assert!(sound.is_file());
         let _ = std::fs::remove_dir_all(&folder);
     }
     #[test]
