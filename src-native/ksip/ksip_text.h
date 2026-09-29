@@ -22,7 +22,8 @@ bool address_ok(const std::string &s);
 bool token(const char *s, const char *extra);
 // The value of a header in a SIP message, or empty. The name is matched
 // without regard to case, and the white space HCOLON allows before the colon
-// (RFC 3261 25.1) is skipped.
+// (RFC 3261 25.1) is skipped. A value folded over several lines (RFC 3261
+// 7.3.1) comes as one, each fold and the white space around it one space.
 std::string sip_header(const uint8_t *packet, size_t length, const char *name);
 // What identifies the transaction of a request as it was sent: its Call-ID,
 // its CSeq (number and method, spaces evened out) and the branch of its top

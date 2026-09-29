@@ -2,6 +2,7 @@
 #include "ksip_text.h"
 #include <cctype>
 #include <cstring>
+#include <vector>
 
 namespace ksip_text {
 namespace {
@@ -39,22 +40,40 @@ bool token(const char *s, const char *extra) {
 }
 std::string sip_header(const uint8_t *packet, size_t length, const char *name) {
     const std::string wanted = lower(name);
+    // The lines of the head, each without its CRLF, up to the blank line.
+    std::vector<std::string> lines;
     size_t pos = 0;
     while (pos < length) {
         size_t end = pos;
         while (end + 1 < length && !(packet[end] == '\r' && packet[end + 1] == '\n')) ++end;
         if (end == pos) break;
-        std::string line(reinterpret_cast<const char *>(packet + pos), end - pos);
-        auto colon = line.find(':');
-        if (colon != std::string::npos && header_name(line, colon) == wanted) {
-            size_t value = colon + 1;
-            while (value < line.size() && (line[value] == ' ' || line[value] == '\t')) ++value;
-            size_t stop = line.size();
-            while (stop > value && (line[stop - 1] == ' ' || line[stop - 1] == '\t')) --stop;
-            return line.substr(value, stop - value);
-        }
+        lines.emplace_back(reinterpret_cast<const char *>(packet + pos), end - pos);
         if (end + 1 >= length) break;
         pos = end + 2;
+    }
+    auto folded = [](const std::string &line) { return !line.empty() && (line[0] == ' ' || line[0] == '\t'); };
+    // The first line (the request or status line) and the continuation lines
+    // of a header are never taken for a header of their own.
+    for (size_t i = 1; i < lines.size(); ++i) {
+        if (folded(lines[i])) continue;
+        auto colon = lines[i].find(':');
+        if (colon == std::string::npos || header_name(lines[i], colon) != wanted) continue;
+        // A value folded over several lines (RFC 3261 7.3.1): each line that
+        // starts with white space continues it, and the fold is one space.
+        std::string value = lines[i].substr(colon + 1);
+        for (size_t j = i + 1; j < lines.size() && folded(lines[j]); ++j) value += ' ' + lines[j];
+        size_t begin = 0;
+        while (begin < value.size() && (value[begin] == ' ' || value[begin] == '\t')) ++begin;
+        size_t stop = value.size();
+        while (stop > begin && (value[stop - 1] == ' ' || value[stop - 1] == '\t')) --stop;
+        std::string out;
+        // The white space of the fold, and around it, reads as one space.
+        for (size_t k = begin; k < stop; ++k) {
+            const bool space = value[k] == ' ' || value[k] == '\t';
+            if (space && !out.empty() && out.back() == ' ') continue;
+            out += space ? ' ' : value[k];
+        }
+        return out;
     }
     return {};
 }

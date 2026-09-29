@@ -665,6 +665,16 @@ void only_the_answer_to_the_register_sent_is_taken() {
     check(!answer("200 OK", "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKother", "Call-ID: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "another branch is not taken");
     check(!answer("401 Unauthorized", via, "Call-ID: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "an answer that is not 2xx is not taken");
     check(!ksip_text::is_success_answer({}, bytes(sent), sent.size()), "nothing is taken before a REGISTER was sent");
+    // A header may be folded over lines that start with white space (RFC 3261
+    // 7.3.1): the Via's branch and the CSeq still match.
+    const std::string folded = "SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 192.0.2.20:5060;\r\n branch=z9hG4bKabc123;rport=5060\r\n"
+                               "Call-ID: reg-1@192.0.2.20\r\nCSeq: 7\r\n\tREGISTER\r\n\r\n";
+    check(ksip_text::is_success_answer(ids, bytes(folded), folded.size()), "a 200 OK with its Via and CSeq folded over lines is taken");
+    check(ksip_text::sip_header(bytes(folded), folded.size(), "Via") == "SIP/2.0/UDP 192.0.2.20:5060; branch=z9hG4bKabc123;rport=5060",
+          "a folded header comes as one value, the fold one space");
+    const std::string tricky = "SIP/2.0 200 OK\r\nContact: <sip:1001@192.0.2.20>;\r\n expires: 300\r\nExpires: 60\r\n\r\n";
+    check(ksip_text::sip_header(bytes(tricky), tricky.size(), "Expires") == "60" && ksip_text::sip_header(bytes(tricky), tricky.size(), "expires ") .empty(),
+          "a continuation line is never taken for a header of its own");
 }
 // The power of one frequency in a run of samples (Goertzel), as the square
 // of its amplitude.
