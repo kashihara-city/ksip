@@ -640,6 +640,32 @@ void numbers_and_lists_are_checked() {
     check(ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk) && mic == "{mic}" && spk == "{spk}", "the two endpoint ids");
     check(!ksip_text::parse_audio_devices("{mic}", 160, mic, spk), "one id is not enough");
 }
+// The keepalives follow the registrar only on the 2xx to the REGISTER sent:
+// the same Call-ID, CSeq and top Via branch, compact names read too.
+void only_the_answer_to_the_register_sent_is_taken() {
+    auto bytes = [](const std::string &s) { return reinterpret_cast<const uint8_t *>(s.data()); };
+    const std::string sent =
+        "REGISTER sip:pbx.example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKabc123;rport\r\n"
+        "Call-ID: reg-1@192.0.2.20\r\n"
+        "CSeq: 7  REGISTER\r\n\r\n";
+    auto ids = ksip_text::request_ids(bytes(sent), sent.size(), "REGISTER");
+    check(ids.call_id == "reg-1@192.0.2.20" && ids.cseq == "7 REGISTER" && ids.branch == "z9hG4bKabc123", "a REGISTER sent is known by its Call-ID, CSeq and Via branch");
+    const std::string invite = "INVITE sip:1001@pbx.example SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.20;branch=z9hG4bKx\r\nCall-ID: c\r\nCSeq: 1 INVITE\r\n\r\n";
+    check(ksip_text::request_ids(bytes(invite), invite.size(), "REGISTER").call_id.empty(), "another request is not taken for a REGISTER");
+    auto answer = [&](const std::string &status, const std::string &via, const std::string &callid, const std::string &cseq) {
+        std::string a = "SIP/2.0 " + status + "\r\n" + via + "\r\n" + callid + "\r\n" + cseq + "\r\n\r\n";
+        return ksip_text::is_success_answer(ids, bytes(a), a.size());
+    };
+    const std::string via = "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKabc123;rport=5060;received=192.0.2.20";
+    check(answer("200 OK", via, "Call-ID: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "its 200 OK is taken, with the parameters the registrar adds");
+    check(answer("200 OK", "v: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKabc123", "i: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "the compact names of Via and Call-ID are read");
+    check(!answer("200 OK", via, "Call-ID: unrelated", "CSeq: 7 REGISTER"), "another Call-ID is not taken");
+    check(!answer("200 OK", via, "Call-ID: reg-1@192.0.2.20", "CSeq: 99 REGISTER"), "another CSeq is not taken");
+    check(!answer("200 OK", "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKother", "Call-ID: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "another branch is not taken");
+    check(!answer("401 Unauthorized", via, "Call-ID: reg-1@192.0.2.20", "CSeq: 7 REGISTER"), "an answer that is not 2xx is not taken");
+    check(!ksip_text::is_success_answer({}, bytes(sent), sent.size()), "nothing is taken before a REGISTER was sent");
+}
 // The power of one frequency in a run of samples (Goertzel), as the square
 // of its amplitude.
 double tone_power(const std::vector<double> &samples, double frequency, unsigned srate) {
@@ -694,6 +720,7 @@ int main() {
     a_header_is_found_however_it_is_spaced();
     dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off();
     numbers_and_lists_are_checked();
+    only_the_answer_to_the_register_sent_is_taken();
     an_inband_digit_is_its_two_tones_for_as_long_as_the_rules_ask();
     the_newest_player_has_the_stream_and_the_one_before_gets_it_back();
     a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from();

@@ -40,6 +40,11 @@ enum sip_transp registrar_tp = SIP_TRANSP_NONE;
 // one and the first of each run of failures, not one line a minute.
 bool keepalive_told = false;
 int keepalive_failure = 0;
+// The REGISTER last sent: what identifies its transaction, where it went
+// and on which transport. Only an answer to it moves the keepalives.
+ksip_text::TransactionIds register_sent;
+sa register_dst{};
+enum sip_transp register_tp = SIP_TRANSP_NONE;
 } // namespace
 
 ua *user_agent() { return account_ua; }
@@ -187,15 +192,26 @@ void on_event(bevent_ev ev, bevent *e) {
         transport_.clear();
     }
 }
+void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *dst) {
+    auto ids = ksip_text::request_ids(packet, length, "REGISTER");
+    if (ids.call_id.empty() || !dst) return;
+    register_sent = ids;
+    register_dst = *dst;
+    register_tp = tp;
+}
 void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src) {
-    if (unregistered || length < 9 || memcmp(packet, "SIP/2.0 2", 9) != 0 ||
-        ksip_io::sip_header(packet, length, "CSeq").find("REGISTER") == std::string::npos)
-        return;
+    // The trace sees every packet before libre matches it to a transaction,
+    // so an answer counts only when it is the answer to the REGISTER sent
+    // (the same Call-ID, CSeq and Via branch, which is new for each
+    // transaction) on its transport: another's "200 OK" does not move the
+    // keepalives. Where it came from is not asked for: a registrar may answer
+    // from another address; the keepalives go where the REGISTER went.
+    (void)src;
+    if (unregistered || tp != register_tp || !ksip_text::is_success_answer(register_sent, packet, length)) return;
     transport_ = sip_transp_name(tp);
-    if (!src) return;
-    // The registrar as it answered: the address the name resolved to, and
-    // the flow the registration is on. The first one starts the keepalives.
-    registrar = *src;
+    // The registrar the registration went to, as the name resolved, and the
+    // flow it is on. The first one starts the keepalives.
+    registrar = register_dst;
     bool first = registrar_tp == SIP_TRANSP_NONE;
     registrar_tp = tp;
     if (first && keepalive_on) tmr_start(&keepalive_timer, keepalive_interval * 1000ull, send_keepalive, nullptr);

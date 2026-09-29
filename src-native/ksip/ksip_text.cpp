@@ -58,6 +58,58 @@ std::string sip_header(const uint8_t *packet, size_t length, const char *name) {
     }
     return {};
 }
+namespace {
+// A header by its name or its compact form (RFC 3261 7.3.3).
+std::string header_or_compact(const uint8_t *packet, size_t length, const char *name, const char *compact) {
+    auto value = sip_header(packet, length, name);
+    return value.empty() ? sip_header(packet, length, compact) : value;
+}
+std::string evened(const std::string &s) {
+    std::string out;
+    for (char c : s) {
+        if (c == ' ' || c == '\t') {
+            if (!out.empty() && out.back() != ' ') out += ' ';
+        } else {
+            out += c;
+        }
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+// The branch parameter of a Via value (the first Via, when several are on one line).
+std::string via_branch(const std::string &via) {
+    const std::string first = via.substr(0, via.find(','));
+    const std::string low = lower(first);
+    size_t at = 0;
+    while ((at = low.find("branch", at)) != std::string::npos) {
+        size_t eq = at + 6;
+        while (eq < low.size() && (low[eq] == ' ' || low[eq] == '\t')) ++eq;
+        if (at > 0 && (low[at - 1] == ';' || low[at - 1] == ' ' || low[at - 1] == '\t') && eq < low.size() && low[eq] == '=') {
+            size_t begin = eq + 1;
+            while (begin < first.size() && (first[begin] == ' ' || first[begin] == '\t')) ++begin;
+            size_t end = begin;
+            while (end < first.size() && first[end] != ';' && first[end] != ' ' && first[end] != '\t') ++end;
+            return first.substr(begin, end - begin);
+        }
+        at += 6;
+    }
+    return {};
+}
+} // namespace
+TransactionIds request_ids(const uint8_t *packet, size_t length, const char *method) {
+    const size_t n = strlen(method);
+    if (!packet || length <= n || memcmp(packet, method, n) != 0 || packet[n] != ' ') return {};
+    TransactionIds ids{header_or_compact(packet, length, "Call-ID", "i"), evened(sip_header(packet, length, "CSeq")),
+                       via_branch(header_or_compact(packet, length, "Via", "v"))};
+    if (ids.cseq.empty() || ids.branch.empty()) return {};
+    return ids;
+}
+bool is_success_answer(const TransactionIds &request, const uint8_t *packet, size_t length) {
+    if (request.call_id.empty() || !packet || length < 9 || memcmp(packet, "SIP/2.0 2", 9) != 0) return false;
+    return header_or_compact(packet, length, "Call-ID", "i") == request.call_id &&
+           evened(sip_header(packet, length, "CSeq")) == request.cseq &&
+           via_branch(header_or_compact(packet, length, "Via", "v")) == request.branch;
+}
 std::vector<std::string> scrubbed_sip_lines(const uint8_t *packet, size_t length) {
     // Secrets never reach the log: digest headers are replaced before printing,
     // together with any folded continuation lines of theirs (RFC 3261 7.3.1),

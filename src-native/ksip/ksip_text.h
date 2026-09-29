@@ -24,6 +24,18 @@ bool token(const char *s, const char *extra);
 // without regard to case, and the white space HCOLON allows before the colon
 // (RFC 3261 25.1) is skipped.
 std::string sip_header(const uint8_t *packet, size_t length, const char *name);
+// What identifies the transaction of a request as it was sent: its Call-ID,
+// its CSeq (number and method, spaces evened out) and the branch of its top
+// Via. call_id is empty when the packet is not a request of that method.
+struct TransactionIds {
+    std::string call_id, cseq, branch;
+};
+TransactionIds request_ids(const uint8_t *packet, size_t length, const char *method);
+// Whether a packet is a 2xx answer to that request: the same Call-ID, CSeq
+// and top Via branch (the branch is new for each transaction, so an answer
+// that did not see the request cannot carry it). The compact names of
+// Call-ID (i) and Via (v) are read too.
+bool is_success_answer(const TransactionIds &request, const uint8_t *packet, size_t length);
 // The lines of a SIP message as the log may show them: the digest headers
 // (Authorization, Proxy-Authorization, WWW-Authenticate, Proxy-Authenticate),
 // however cased and spaced, are replaced together with their folded
