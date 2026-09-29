@@ -93,8 +93,8 @@ int action(re_printf *pf, const ActionRequest &request) {
     const std::string &op = request.op, &id = request.id, &value = request.value;
     call *c = find(id);
     int err = 0;
-    // Hanging up and calling the transfer off are the two ways out of a pending transfer.
-    if (transfer::pending() && op != "hangup" && op != "cancel_transfer") return EBUSY;
+    // Hanging up is the way out of a pending transfer.
+    if (transfer::pending() && op != "hangup") return EBUSY;
     if (op == "select") {
         // A held call comes back and the active one goes on hold. The active
         // call itself is left alone: uag_hold_resume on a call that is not on
@@ -103,11 +103,10 @@ int action(re_printf *pf, const ActionRequest &request) {
         if (c && call_state(c) == CALL_STATE_ESTABLISHED) return call_is_onhold(c) ? uag_hold_resume(c) : 0;
         return hold_others(c);
     }
-    if (op == "dial" || op == "consult") {
+    if (op == "dial") {
         auto account_ua = sip_account::user_agent();
         if (!sip_account::registered()) return EAGAIN;
         if (!transfer::idle() || !(sip_uri(value) ? address_ok(value) : token(value.c_str(), "*#+"))) return EINVAL;
-        if (op == "consult" && (!c || call_state(c) != CALL_STATE_ESTABLISHED || !call_supported(c, REPLACES))) return ENOTSUP;
         // A number is completed with the configured registrar; a URI is sent as
         // it was written. Either way the library has to be able to read it.
         std::string uri = sip_account::uri_for(value);
@@ -129,11 +128,9 @@ int action(re_printf *pf, const ActionRequest &request) {
             if (c) uag_hold_resume(c);
             return err;
         }
-        if (op == "consult") transfer::begin_consult(id, call_id(next));
         return re_hprintf(pf, "%s", call_id(next));
     }
     if (op == "transfer") return transfer::start(id, value);
-    if (op == "cancel_transfer") return transfer::cancel();
     if (op == "blind_transfer") {
         // The call in progress is sent to the number as it is; the buttons
         // decide what the number means (a park slot, a colleague, a queue).

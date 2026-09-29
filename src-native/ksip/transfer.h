@@ -14,19 +14,15 @@
 #include <string>
 
 namespace transfer {
-// No transfer or consultation is under way.
+// No transfer is under way.
 bool idle();
-// A REFER has gone out and its answer is awaited: only hanging up and
-// calling the transfer off are allowed meanwhile.
+// A REFER has gone out and its answer is awaited: only hanging up is
+// allowed meanwhile.
 bool pending();
-// A consultation call was placed for `original`; its id is `consultation`.
-void begin_consult(const std::string &original, const std::string &consultation);
-// The ksip_action transfer: call `original` referred to call `consultation`
-// once both are on hold.
-int start(const std::string &original, const std::string &consultation);
-// The ksip_action cancel_transfer: the consultation call is ended and the
-// original resumed.
-int cancel();
+// The ksip_action transfer of the two calls, given in any order: once both
+// are on hold, the one established first is referred to the other, as
+// baresip's own attended transfer does, whichever line each is on.
+int start(const std::string &one, const std::string &other);
 // The outcome is counted as well as named: the window shows a notice each
 // time one is set, and the same outcome twice in a row (returning to the
 // held call after each of two second calls) would otherwise look unchanged.

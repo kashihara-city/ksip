@@ -2145,7 +2145,6 @@ async fn action(s: &Shared, name: &str, id: &str, value: &str, line: u8) -> Resu
             | "resume"
             | "select"
             | "transfer"
-            | "cancel_transfer"
             | "unregister"
             | "dtmf"
             | "blind_transfer"
@@ -2182,7 +2181,9 @@ async fn action(s: &Shared, name: &str, id: &str, value: &str, line: u8) -> Resu
         if name == "dial" && calls.iter().any(|c| c.line == line) {
             return Err(message("CALL_LINE_BUSY"));
         }
-        if name == "transfer" && (!calls.iter().any(|c| c.id == id && c.line == 1) || !calls.iter().any(|c| c.id == value && c.line == 2)) {
+        // The two calls in either order: the engine refers the one
+        // established first, whichever line it is on.
+        if name == "transfer" && (id == value || !calls.iter().any(|c| c.id == id) || !calls.iter().any(|c| c.id == value)) {
             return Err(message("TRANSFER_NEEDS_TWO_CALLS"));
         }
         // What the engine is sent: the value as it came, or, for a button,

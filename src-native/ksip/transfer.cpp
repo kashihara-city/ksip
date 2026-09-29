@@ -31,8 +31,25 @@ void clear() {
     refer_waiting.clear();
     tmr_cancel(&refer_timer);
 }
-// The REFER the other way round (call 2 referred to call 1), tried once when
-// the first was refused. True when it went out.
+// Whether `a` was established before `b`: the call the consultation began
+// from, whichever line it is on and whichever of the two was last taken off
+// hold (a hold or a resume does not move the start). baresip's own attended
+// transfer (menu atransferexec) refers that call, with the consultation call
+// as its replacement. The production PBX carried out a transfer the other
+// way round as well, but then sent neither NOTIFY nor BYE, and both calls
+// stayed on screen. Two started in the same second go by the order the user
+// agent made them in.
+bool established_first(call *a, call *b) {
+    uint32_t da = call_duration(a), db = call_duration(b);
+    if (da != db) return da > db;
+    for (le *l = list_head(ua_calls(call_get_ua(a))); l; l = l->next) {
+        if (l->data == a) return true;
+        if (l->data == b) return false;
+    }
+    return true;
+}
+// The REFER the other way round (the second call referred to the first),
+// tried once when the first was refused. True when it went out.
 bool refer_reversed(call *from, call *to) {
     transfer_reversed = true;
     std::swap(original, consultation);
@@ -41,8 +58,8 @@ bool refer_reversed(call *from, call *to) {
     return false;
 }
 // The REFER of a transfer, once every hold sent for it has been answered (or
-// the wait for them has run out): call 1 is referred to call 2, and a refusal
-// is answered by trying the other way round once, as before.
+// the wait for them has run out): the first call is referred to the second,
+// and a refusal is answered by trying the other way round once, as before.
 void send_refer(void *) {
     if (!refer_armed) return;
     refer_armed = false;
@@ -84,29 +101,23 @@ void transfer_leftover(void *) {
 
 bool idle() { return original.empty(); }
 bool pending() { return pending_; }
-void begin_consult(const std::string &orig, const std::string &cons) {
-    original = orig;
-    consultation = cons;
-    outcome.clear();
-}
 void set_outcome(const char *code) {
     outcome = code;
     ++outcome_seq;
 }
-int start(const std::string &orig, const std::string &cons) {
-    if (original.empty()) {
-        original = orig;
-        consultation = cons;
-    }
-    auto from = calls::find(original);
-    auto to = calls::find(consultation);
+int start(const std::string &one, const std::string &other) {
+    auto from = calls::find(one);
+    auto to = calls::find(other);
     if (!from || !to || from == to || call_state(from) != CALL_STATE_ESTABLISHED || call_state(to) != CALL_STATE_ESTABLISHED) {
         clear();
         return EINVAL;
     }
+    if (!established_first(from, to)) std::swap(from, to);
+    original = call_id(from);
+    consultation = call_id(to);
     transfer_reversed = false;
-    // As RFC 5589 has it: both calls on hold, then call 1 is referred to
-    // call 2. The REFER waits until every hold sent here has been answered
+    // As RFC 5589 has it: both calls on hold, then the first call is
+    // referred to the second. The REFER waits until every hold sent here has been answered
     // and acknowledged. The production PBX ignored a REFER that arrived
     // while a hold re-INVITE on either call was still in progress, and
     // that is why its transfers did not go through; a hold that gets no
@@ -127,14 +138,6 @@ int start(const std::string &orig, const std::string &cons) {
     tmr_start(&transfer_timer, 60000, transfer_timeout, nullptr);
     tmr_start(&refer_timer, refer_waiting.empty() ? 0 : 2000, send_refer, nullptr);
     return 0;
-}
-int cancel() {
-    auto from = calls::find(original);
-    auto to = calls::find(consultation);
-    clear();
-    set_outcome("TRANSFER_CANCELLED");
-    if (to) ua_hangup(call_get_ua(to), to, 0, nullptr);
-    return from ? uag_hold_resume(from) : 0;
 }
 void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id) {
     if (ev == BEVENT_CALL_REMOTE_SDP && refer_armed && !str_cmp(bevent_get_text(e), "answer")) {
