@@ -1010,6 +1010,7 @@ impl Phone {
         let v = &mut self.view;
         v.transport = report.transport;
         v.media_encryption = report.media_encryption;
+        v.detail_log_active = report.detail_log;
         v.calls = applied.calls;
         // How the audio stands now, as the module says: a microphone that
         // came back, a speaker handed back after a failed start, are there
@@ -1056,6 +1057,7 @@ impl Phone {
         v.recording = false;
         v.recording_call.clear();
         v.aec_active = false;
+        v.detail_log_active = false;
         v.microphone_fallback = false;
         v.transfer = Transfer::default();
         v.parking.clear();
@@ -1103,6 +1105,7 @@ impl Phone {
         v.settings = settings.clone();
         v.error.clear();
         v.aec_active = false;
+        v.detail_log_active = false;
         v.microphone_fallback = false;
         v.recording = false;
         v.calls.clear();
@@ -1141,6 +1144,7 @@ impl Phone {
         v.running = false;
         v.recording = false;
         v.aec_active = false;
+        v.detail_log_active = false;
         v.microphone_fallback = false;
         v.calls.clear();
         v.transfer = Transfer::default();
@@ -2275,6 +2279,23 @@ mod tests {
             report["tls_trust_certificates"] = json!(n);
         }
         serde_json::from_value(report).unwrap()
+    }
+    #[test]
+    fn the_detail_log_mark_follows_what_the_engine_says_not_the_setting() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        p.view.running = true;
+        p.view.settings.detail_log = true;
+        let mut report = report_with(json!(null), None);
+        p.apply_report(1, report);
+        assert!(!p.view.detail_log_active, "a report that does not say it is on is off, whatever the settings say");
+        report = report_with(json!(null), None);
+        report.detail_log = true;
+        p.apply_report(2, report);
+        assert!(p.view.detail_log_active);
+        // The engine gone, the mark goes with it.
+        p.close_calls_on_exit(None);
+        assert!(!p.view.detail_log_active);
     }
     #[test]
     fn the_audio_state_follows_the_reports_through_failure_and_recovery() {

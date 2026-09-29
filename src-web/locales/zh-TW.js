@@ -206,6 +206,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       PANEL_FILTER:'篩選號碼與記錄',
       PANEL_FILTERING:'篩選中',
       PANEL_HISTORY:'通話紀錄',
+      DETAIL_LOG_ACTIVE:'正在記錄詳細記錄',
       PANEL_LOGS:'記錄',
       PROTOCOL_MALFORMED:'無法讀取連結：{0}',
       QUIT:'結束',

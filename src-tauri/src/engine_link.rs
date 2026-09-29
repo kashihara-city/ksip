@@ -38,6 +38,10 @@ pub struct EngineReport {
     pub transport: String,
     #[serde(default)]
     pub media_encryption: String,
+    /// Whether the engine writes the detail log now (the SIP messages and
+    /// the debug lines), as it says, not as the settings would have it.
+    #[serde(default)]
+    pub detail_log: bool,
     pub calls: Vec<CallInfo>,
     pub transfer: Transfer,
     #[serde(default)]

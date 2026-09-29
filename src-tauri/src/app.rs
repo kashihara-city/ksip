@@ -234,6 +234,7 @@ impl Services {
             log_sequence: 0,
             data_dir: data.to_string_lossy().into(),
             aec_active: false,
+            detail_log_active: false,
             transport: String::new(),
             media_encryption: String::new(),
             microphone_fallback: false,

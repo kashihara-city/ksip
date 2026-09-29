@@ -12,7 +12,7 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state, managed, setSelected, update, run} from './session.js';
+import {state, managed, selected, setSelected, update, run} from './session.js';
 import * as audio from './audio.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
@@ -309,6 +309,32 @@ async function checks(){
   s=await save();
   check(keepaliveDefault.join()==='crlf,60'&&offGreyed&&intervalOpen&&keepaliveLabel==='保存して再接続'&&s&&s.settings.keepalive==='crlf'&&s.settings.keepalive_interval===25,'the keepalive is a blank line every 60 s by default, its interval greyed out while off, and a change reconnects',[keepaliveDefault,offGreyed,intervalOpen,keepaliveLabel,s&&s.settings.keepalive,s&&s.settings.keepalive_interval]);
   $('configuration').close();
+
+  // The detail log mark beside the Logs tab: there only while the running
+  // engine says its detail log is on, whatever the settings say.
+  const wasRunning=state.running;
+  state.running=true;state.detail_log_active=true;render();
+  const markOn=!$('detail-log-active').hidden;
+  state.detail_log_active=false;state.settings.detail_log=true;render();
+  const markOffBySetting=$('detail-log-active').hidden;
+  state.running=false;state.detail_log_active=true;render();
+  const markStopped=$('detail-log-active').hidden;
+  state.detail_log_active=false;state.settings.detail_log=false;state.running=wasRunning;render();
+  check(markOn&&markOffBySetting&&markStopped,'the detail log mark is shown only while the running engine says the log is on',[markOn,markOffBySetting,markStopped]);
+
+  // Moving to the other line empties the number box, as the clear button
+  // does, both ways; staying on the same line keeps what was typed.
+  state.running=false;state.calls=[];render();
+  const lineStart=selected;
+  const other=lineStart===1?2:1;
+  $('target').value='1234';$('line-'+other).click();await settle();
+  const movedAway=$('target').value;
+  $('target').value='5678';$('line-'+other).click();await settle();
+  const stayed=$('target').value;
+  $('line-'+lineStart).click();await settle();
+  const movedBack=$('target').value,focused=document.activeElement===$('target');
+  state.running=wasRunning;render();
+  check(movedAway===''&&stayed==='5678'&&movedBack===''&&focused,'moving to the other line empties the number box and puts the cursor there, both ways; the same line keeps it',[movedAway,stayed,movedBack,focused]);
 
   // Keys pressed while a digit is on its way are sent after it, in order; the
   // ones left when the call ends are not.

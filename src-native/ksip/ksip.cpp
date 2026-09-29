@@ -67,6 +67,8 @@ int state(re_printf *pf, void *) {
         return err;
     }
     sip_account::write_state(od);
+    // Whether the detail log runs now: set at start, switched while running.
+    odict_entry_add(od, "detail_log", ODICT_BOOL, sip_message_log);
     trust_state::write_state(od);
     ksip_audio_add_state(od);
     unsigned count = calls::write_state(od, list);

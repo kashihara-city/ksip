@@ -206,6 +206,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       PANEL_FILTER:'Filter numbers and log',
       PANEL_FILTERING:'Filtered',
       PANEL_HISTORY:'Call history',
+      DETAIL_LOG_ACTIVE:'Detail log on',
       PANEL_LOGS:'Log',
       PROTOCOL_MALFORMED:'The link could not be read: {0}',
       QUIT:'Quit',

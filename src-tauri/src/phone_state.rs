@@ -30,6 +30,9 @@ pub struct Snapshot {
     pub log_sequence: u64,
     pub data_dir: String,
     pub aec_active: bool,
+    /// The engine's detail log is running, as its last report said.
+    #[serde(default)]
+    pub detail_log_active: bool,
     pub transport: String,
     pub media_encryption: String,
     pub microphone_fallback: bool,

@@ -206,6 +206,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       PANEL_FILTER:'番号・ログを絞り込む',
       PANEL_FILTERING:'フィルター中',
       PANEL_HISTORY:'通話履歴',
+      DETAIL_LOG_ACTIVE:'詳細ログ取得中',
       PANEL_LOGS:'ログ',
       PROTOCOL_MALFORMED:'リンクを読み取れません: {0}',
       QUIT:'終了',

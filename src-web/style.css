@@ -905,6 +905,15 @@ footer {
   color:#a84035;
   white-space:nowrap;
 }
+/* Beside the Logs tab while the engine writes the detail log: that log holds
+   every SIP message and fills up fast, so it should not be left on unseen. */
+.panel-tabs .detail-log-active {
+  align-self:center;
+  font-size:11px;
+  font-weight:600;
+  color:#a84035;
+  white-space:nowrap;
+}
 #logs:focus {
   outline:2px solid #a9caba;
   outline-offset:-2px;

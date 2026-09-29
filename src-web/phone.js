@@ -56,6 +56,8 @@ export function render({clearNotices=false}={}){
   $('registration').textContent=((state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting)+(state.dnd&&registered?' · '+t('DND_ACTIVE'):'');
   $('registration').className='reg-'+String(state.registration||'').toLowerCase();$('status-light').className=registered?'online':paused?'paused':state.registration==='REGISTER_FAIL'?'fault':'';
   $('transport-label').textContent=registered?state.transport||'':'';
+  // As the engine says it runs, like the transport: not the saved setting.
+  $('detail-log-active').hidden=!(state.running&&state.detail_log_active);
   // In a call (connected to the other end, on hold too) the settings and
   // the button editing cannot be entered; while a call only rings they can.
   // A call that starts closes them, by whatever way it started (a key, the
@@ -150,14 +152,21 @@ function renderFooter(){
   if(!processing.aec){$('aec-core').textContent='';$('aec-delay').textContent='';}
   $('aec-agc').textContent=!processing.agc?'':Number.isFinite(metrics.agc_gain_db)?fill('AGC_REPORT',metric(metrics.agc_gain_db,' dB'),metric(metrics.agc_speech_level_dbfs,' dBFS',0),metric(metrics.agc_noise_level_dbfs,' dBFS',0),metric(metrics.agc_headroom_db,' dB',0)):t('AGC_WAITING');
 }
+// Empties the number box and puts the cursor there, when it can be typed in.
+function clearTarget(){$('target').value='';if(!$('target').disabled)$('target').focus();}
 export function init(){
   for(let n=1;n<=2;n++)$('line-'+n).addEventListener('click',async()=>{
+    const before=selected;
     try{await run(async()=>{if(state.running)await invoke('action',{name:'select',id:callAt(n)?.id||'',value:'',line:n});setSelected(n);});}catch{}
+    // Moving to the other line is, as often as not, getting ready to transfer:
+    // the number box is emptied as the clear button does, ready for a number.
+    // Whether the line moved is what counts, not how the refresh after it went.
+    if(selected!==before)clearTarget();
   });
   $('dial-form').addEventListener('submit',e=>{e.preventDefault();dial($('target').value.trim());});
   // The number stays in the box after a call (to see what was dialled); this
   // empties it and puts the cursor there for the next one.
-  $('clear-target').addEventListener('click',()=>{$('target').value='';$('target').focus();});
+  $('clear-target').addEventListener('click',clearTarget);
   $('answer').addEventListener('click',()=>answer());
   $('hangup').addEventListener('click',()=>hangup());
   $('hold').addEventListener('click',()=>act(current()?.held?'resume':'hold'));
