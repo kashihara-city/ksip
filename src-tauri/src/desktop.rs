@@ -46,6 +46,38 @@ pub fn set_button_editing(editing: bool) {
 static FITTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 /// The phone's own width; the panel beside it takes what the window has more.
 const PHONE_WIDTH: f64 = 520.0;
+/// The window's least height, whatever it holds.
+const MIN_HEIGHT: f64 = 620.0;
+/// Whether the height has been fitted at the start; see `fit_start_height`.
+static START_FITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The height the window starts with, from the page's measure: down to the
+/// history's second row (`wanted`, logical pixels), which the custom buttons
+/// and the notices above it move. Never under the least height, nor taller
+/// than what the screen's work area leaves inside the frame (`most`).
+fn start_height(wanted: f64, most: Option<f64>) -> Option<f64> {
+    if !wanted.is_finite() || wanted <= 0.0 {
+        return None;
+    }
+    Some(wanted.ceil().min(most.unwrap_or(f64::MAX)).max(MIN_HEIGHT))
+}
+/// Fits the window's height once, when the page has laid out what it shows
+/// at the start; the width stays. Later calls do nothing, so that a height
+/// the person chooses stays, and a maximized window is left as it is.
+pub fn fit_start_height(window: &tauri::WebviewWindow, wanted: f64) {
+    if START_FITTED.swap(true, std::sync::atomic::Ordering::Relaxed) || window.is_maximized().unwrap_or(false) {
+        return;
+    }
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let (Ok(inner), Ok(outer)) = (window.inner_size(), window.outer_size()) else {
+        return;
+    };
+    // The work area is the whole window's; the frame and title bar come off it.
+    let frame = outer.height.saturating_sub(inner.height) as f64 / scale;
+    let most = window.current_monitor().ok().flatten().map(|m| m.work_area().size.height as f64 / scale - frame);
+    if let Some(height) = start_height(wanted, most) {
+        let _ = window.set_size(tauri::LogicalSize::new(inner.width as f64 / scale, height));
+    }
+}
 /// The window is widened for the panels when the buttons ask for it: twice
 /// the phone's width for a button in the first panel (7 to 30), three times
 /// for one in the second (31 to 54) or while the buttons are being edited. It is
@@ -67,7 +99,7 @@ pub fn fit_window(app: &tauri::AppHandle, settings: &Settings) {
         return;
     };
     let height = size.height as f64 / scale;
-    let _ = window.set_min_size(Some(tauri::LogicalSize::new(if panel { 840.0 } else { 420.0 }, 620.0)));
+    let _ = window.set_min_size(Some(tauri::LogicalSize::new(if panel { 840.0 } else { 420.0 }, MIN_HEIGHT)));
     let _ = window.set_size(tauri::LogicalSize::new(PHONE_WIDTH * level as f64, height));
 }
 fn is_visible(app: &tauri::AppHandle) -> bool {
@@ -99,6 +131,7 @@ pub fn run(state: AppState) {
             commands::restart_settings,
             commands::managed_settings,
             commands::ui_ready,
+            commands::fit_start_height,
             commands::action,
             commands::open_recordings,
             commands::open_recording,
@@ -301,4 +334,18 @@ pub fn run(state: AppState) {
                 exit_state.shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn the_start_height_is_what_the_page_measured_within_the_least_height_and_the_screen() {
+        assert_eq!(start_height(671.2, Some(1000.0)), Some(672.0), "rounded up, so the second row is whole");
+        assert_eq!(start_height(400.0, Some(1000.0)), Some(MIN_HEIGHT), "never under the least height");
+        assert_eq!(start_height(1400.0, Some(1000.0)), Some(1000.0), "never taller than the screen leaves");
+        assert_eq!(start_height(900.0, None), Some(900.0), "no screen known, the measure as it is");
+        assert_eq!(start_height(f64::NAN, Some(1000.0)), None);
+        assert_eq!(start_height(0.0, Some(1000.0)), None, "a page not laid out yet changes nothing");
+    }
 }

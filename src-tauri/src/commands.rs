@@ -48,6 +48,12 @@ pub fn emit_link(app: &tauri::AppHandle, event: &'static str, payload: serde_jso
     }
     let _ = app.emit(event, payload);
 }
+/// The page's measure of how tall the window should start; see
+/// desktop::fit_start_height. Only the first one is taken.
+#[tauri::command]
+pub fn fit_start_height(height: f64, window: tauri::WebviewWindow) {
+    crate::desktop::fit_start_height(&window, height);
+}
 #[tauri::command]
 pub fn ui_ready(app: tauri::AppHandle) {
     let Some(queue) = app.try_state::<LinkQueue>() else {

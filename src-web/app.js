@@ -40,8 +40,21 @@ initLinks();
 // for an answer, and the page shows it. What `busy` keeps back is a second
 // operation, not the looking.
 async function poll(){
-  try{update(await invoke('snapshot'));await syncLogs();await syncHistory();}
+  try{update(await invoke('snapshot'));await syncLogs();await syncHistory();fitStartHeight();}
   catch(e){setError(String(e));logUi('poll',e);render();}
   setTimeout(poll,300);
+}
+// The window's height at the start, from this first layout with the phone's
+// state and the history in it: down to the history's second row, which the
+// custom buttons and the notices above it move. Asked once; the app then
+// leaves the height to the person. With no history yet, a row is 53px.
+let startFitted=false;
+function fitStartHeight(){
+  if(startFitted)return;startFitted=true;
+  const main=document.querySelector('main'),panel=document.querySelector('.bottom-panel');
+  const tabs=document.querySelector('.panel-tabs').getBoundingClientRect().height;
+  const row=document.querySelector('.history-row')?.getBoundingClientRect().height||53;
+  const top=panel.getBoundingClientRect().top+main.scrollTop;
+  invoke('fit_start_height',{height:top+tabs+row*2+6}).catch(e=>logUi('fit start height',e));
 }
 render();poll();pollVolumes();pollAudioPeaks();

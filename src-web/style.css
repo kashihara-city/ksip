@@ -767,11 +767,17 @@ html,body {
 body {
   overflow:hidden;
 }
+/* The window scrolls only when what is shown does not fit: notices above can
+   push the history and the log below their least height (six rows), and they
+   would otherwise be cut off. The bar is thin and pale, and there only then. */
 main {
   height:100vh;
   display:flex;
   flex-direction:column;
-  overflow:hidden;
+  overflow-x:hidden;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:#b9cbc2 transparent;
   padding:16px;
 }
 header {
@@ -871,7 +877,8 @@ footer {
 .bottom-panel {
   display:flex;
   flex:1 1 160px;
-  min-height:120px;
+  /* The tabs (26px) and six history rows (53px each), as measured. */
+  min-height:344px;
   flex-direction:column;
   margin-top:8px;
   overflow:hidden;
