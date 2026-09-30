@@ -32,6 +32,9 @@ void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id);
 // A closed call that was one of the transfer's legs, or the transferred leg
 // saying so itself: true when the closing was the transfer's to handle.
 bool on_call_closed(call *c, const std::string &id, const char *text);
+// Every SIP message, as the trace passes it: the REFER going out, its 2xx
+// and the NOTIFY of its subscription, which baresip does not report.
+void on_sip(bool tx, const uint8_t *packet, size_t length);
 // A closed call that was the one left to the server after a transfer:
 // true when it was, and nothing more is to be done for it.
 bool release_leftover(const std::string &id);

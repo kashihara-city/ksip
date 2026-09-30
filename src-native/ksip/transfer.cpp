@@ -1,17 +1,22 @@
 // An attended transfer; see transfer.h.
 #include "transfer.h"
 #include "calls.h"
+#include "ksip_text.h"
 #include "sip_account.h"
 #include <algorithm>
 #include <vector>
 
 namespace transfer {
 namespace {
+// The call the REFER goes to and the one it is to be replaced by: the call
+// established first and the second, which the retry the other way round
+// swaps.
 std::string original, consultation, outcome;
 // The call this module ends itself once a transfer has gone through. Its
 // closing is part of the transfer, not a call the person hung up.
 std::string transfer_hangup;
 bool pending_ = false;
+// The wait for the server to end the call it took over (transfer_leftover).
 tmr transfer_timer;
 // A transfer sends its REFER only once the holds it sent have been answered:
 // the timer fires it, and these are the calls whose answer is still waited for.
@@ -20,16 +25,92 @@ std::vector<std::string> refer_waiting;
 bool refer_armed = false;
 bool transfer_reversed = false;
 unsigned outcome_seq = 0;
+// The REFER that is out: what identifies its transaction (read off the SIP
+// trace as it goes), when it went, whether a 2xx has come for it, and
+// whether a NOTIFY of its subscription has.
+ksip_text::TransactionIds refer_sent;
+uint64_t refer_sent_at = 0;
+bool refer_accepted = false, refer_notified = false;
+// The limit of a REFER, and the nudge a REFER that was accepted but tells
+// nothing gets (see refer_deadline and refer_probe).
+tmr deadline_timer, probe_timer;
+// How soon a REFER has to be refused for the other way round to be tried:
+// a server that does not take a transfer that way says so at once. A failure
+// later (a subscription that ran out, a transfer that went wrong on the way)
+// is not answered with a second REFER.
+constexpr uint64_t REFUSED_WITHIN_MS = 5000;
+// How long a 2xx to the REFER waits for its first NOTIFY before the calls
+// are asked whether they are still there.
+constexpr uint64_t NOTIFY_NUDGE_MS = 5000;
 
 void clear() {
     original.clear();
     consultation.clear();
     pending_ = false;
     transfer_reversed = false;
-    tmr_cancel(&transfer_timer);
     refer_armed = false;
     refer_waiting.clear();
     tmr_cancel(&refer_timer);
+    refer_sent = {};
+    refer_accepted = refer_notified = false;
+    tmr_cancel(&deadline_timer);
+    tmr_cancel(&probe_timer);
+}
+// The end of the wait for a REFER, the one limit a transfer keeps itself;
+// the rest (a subscription's refresh, a re-INVITE's answer) is baresip's
+// and libre's. It is 64*T1 from sending the REFER, SIP_T1 being libre's:
+//  - With no answer at all, it is Timer F (RFC 3261 17.1.2.2): libre gives
+//    the REFER up then, and baresip only logs that, so a transfer has to
+//    see it by the time. The REFER most likely never reached the server;
+//    the call it went to is resumed.
+//  - With a 2xx but no NOTIFY, it is Timer N of RFC 6665 (4.1.2.4): a
+//    subscriber with no NOTIFY within 64*T1 of sending its SUBSCRIBE takes
+//    the subscription as failed. RFC 6665 says so of SUBSCRIBE; that it
+//    holds for the subscription a REFER makes is our reading, since RFC 7647
+//    has REFER rest on the RFC 6665 framework without restating the timer,
+//    and RFC 3515 has the notifier send a NOTIFY at once but sets no limit.
+//    The server took the REFER on and may be carrying the transfer out, so
+//    the call the REFER went to is left on hold and the other one is resumed.
+// A little is added so that libre, whose transaction runs the same 64*T1,
+// has given up first. The outcome says only that it is not known. Referred
+// the usual way, that resumes the first call with no answer and the second
+// with no NOTIFY.
+constexpr uint64_t REFER_LIMIT_MS = 64 * SIP_T1 + 2000;
+void refer_deadline(void *) {
+    std::string resume = refer_accepted ? consultation : original;
+    debug("ksip: transfer: no %s within 64*T1 of the REFER, resuming %s\n", refer_accepted ? "NOTIFY" : "answer",
+          refer_accepted ? "the call it was to be replaced by" : "the call it went to");
+    clear();
+    set_outcome("TRANSFER_UNKNOWN");
+    if (auto c = calls::find(resume)) uag_hold_resume(c);
+}
+// A REFER answered 2xx whose NOTIFY has not come: each call gets a re-INVITE
+// that changes nothing (the same offer, on hold as it is; RFC 3261 allows a
+// re-INVITE that leaves the session as it was, and session timers, RFC 4028,
+// refresh with one). A call the server no longer has is answered 481 or 408,
+// on which libre ends it (RFC 5057), and it closes like any call; one that
+// is still there answers and stays. Once, and with no wait of its own: the
+// REFER's limit stays what ends the transfer.
+void refer_probe(void *) {
+    if (refer_notified) return;
+    for (const std::string &id : {original, consultation}) {
+        call *c = calls::find(id);
+        if (!c || call_state(c) != CALL_STATE_ESTABLISHED) continue;
+        debug("ksip: transfer: no NOTIFY %u ms after the 2xx, asking %s with a re-INVITE\n",
+              static_cast<unsigned>(NOTIFY_NUDGE_MS), call_peeruri(c));
+        call_modify(c);
+    }
+}
+// A REFER is about to be handed to baresip: its limit counts from here. It is
+// called before, since the REFER may pass the SIP trace (on_sip) before
+// call_replace_transfer returns; one that could not be sent is cleared by
+// the caller.
+void refer_went() {
+    refer_sent = {};
+    refer_accepted = refer_notified = false;
+    refer_sent_at = tmr_jiffies();
+    tmr_cancel(&probe_timer);
+    tmr_start(&deadline_timer, REFER_LIMIT_MS, refer_deadline, nullptr);
 }
 // Whether `a` was established before `b`: the call the consultation began
 // from, whichever line it is on and whichever of the two was last taken off
@@ -53,7 +134,11 @@ bool established_first(call *a, call *b) {
 bool refer_reversed(call *from, call *to) {
     transfer_reversed = true;
     std::swap(original, consultation);
-    if (!call_replace_transfer(to, from)) return true;
+    refer_went();
+    if (!call_replace_transfer(to, from)) {
+        debug("ksip: transfer: trying the other way round\n");
+        return true;
+    }
     std::swap(original, consultation);
     return false;
 }
@@ -72,17 +157,13 @@ void send_refer(void *) {
         if (from) uag_hold_resume(from);
         return;
     }
-    if (call_replace_transfer(from, to) && !refer_reversed(from, to)) {
+    refer_went();
+    if (!call_replace_transfer(from, to)) return;
+    if (!refer_reversed(from, to)) {
         clear();
         set_outcome("TRANSFER_FAILED");
         uag_hold_resume(from);
     }
-}
-void transfer_timeout(void *) {
-    pending_ = false;
-    refer_armed = false;
-    set_outcome("TRANSFER_UNKNOWN");
-    if (auto c = calls::find(original)) uag_hold_resume(c);
 }
 // The server takes the other call over with the transfer and ends it itself.
 // A BYE from here could reach it before it has done so and undo the transfer
@@ -135,7 +216,6 @@ int start(const std::string &one, const std::string &other) {
     pending_ = true;
     refer_armed = true;
     set_outcome("TRANSFER_PENDING");
-    tmr_start(&transfer_timer, 60000, transfer_timeout, nullptr);
     tmr_start(&refer_timer, refer_waiting.empty() ? 0 : 2000, send_refer, nullptr);
     return 0;
 }
@@ -149,14 +229,16 @@ void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id) {
     if (ev == BEVENT_CALL_TRANSFER_FAILED && id == original) {
         auto other = calls::find(consultation);
         // Both calls are on hold by now (the REFER waited for that), so the
-        // other way round can go out at once.
-        if (!transfer_reversed && other && call_state(c) == CALL_STATE_ESTABLISHED && call_state(other) == CALL_STATE_ESTABLISHED &&
-            refer_reversed(c, other)) {
-            tmr_start(&transfer_timer, 60000, transfer_timeout, nullptr);
+        // other way round can go out at once; only for a refusal that came
+        // straight away, though, which is how a server says it does not take
+        // a transfer that way.
+        uint64_t after = tmr_jiffies() - refer_sent_at;
+        bool refused = after <= REFUSED_WITHIN_MS;
+        if (!refused) debug("ksip: transfer: failed %llu ms after the REFER, not tried the other way round\n", static_cast<unsigned long long>(after));
+        if (refused && !transfer_reversed && other && call_state(c) == CALL_STATE_ESTABLISHED &&
+            call_state(other) == CALL_STATE_ESTABLISHED && refer_reversed(c, other))
             return;
-        }
-        pending_ = false;
-        tmr_cancel(&transfer_timer);
+        clear();
         set_outcome("TRANSFER_FAILED");
         uag_hold_resume(c);
     }
@@ -200,9 +282,40 @@ void write_state(odict *xfer) {
     odict_entry_add(xfer, "outcome", ODICT_STRING, outcome.c_str());
     odict_entry_add(xfer, "outcome_seq", ODICT_INT, static_cast<int64_t>(outcome_seq));
 }
+void on_sip(bool tx, const uint8_t *packet, size_t length) {
+    if (!pending_ || !packet) return;
+    if (tx) {
+        // The REFER going out (a retransmission carries the same ids, a
+        // resend after a challenge new ones): its 2xx is known by them.
+        auto ids = ksip_text::request_ids(packet, length, "REFER");
+        if (!ids.call_id.empty()) refer_sent = ids;
+        return;
+    }
+    if (!refer_accepted && ksip_text::is_success_answer(refer_sent, packet, length)) {
+        refer_accepted = true;
+        debug("ksip: transfer: the REFER was accepted\n");
+        if (!refer_notified) tmr_start(&probe_timer, NOTIFY_NUDGE_MS, refer_probe, nullptr);
+        return;
+    }
+    // A NOTIFY of the REFER's subscription (in the same dialog, Event refer):
+    // the outcome is baresip's to read from here on, however long it takes.
+    auto notify = ksip_text::request_ids(packet, length, "NOTIFY");
+    if (refer_notified || notify.call_id.empty() || notify.call_id != refer_sent.call_id) return;
+    std::string event = ksip_text::sip_header(packet, length, "Event");
+    if (event.empty()) event = ksip_text::sip_header(packet, length, "o");
+    // The event name as libre matches it to the subscription (listen.c,
+    // pl_strcmp): a NOTIFY libre would not hand to baresip tells nothing.
+    if (event.compare(0, 5, "refer") != 0 || (event.size() > 5 && event[5] != ';' && event[5] != ' ')) return;
+    refer_notified = true;
+    tmr_cancel(&probe_timer);
+    tmr_cancel(&deadline_timer);
+    debug("ksip: transfer: the REFER's NOTIFY came\n");
+}
 void init() {
     tmr_init(&transfer_timer);
     tmr_init(&refer_timer);
+    tmr_init(&deadline_timer);
+    tmr_init(&probe_timer);
 }
 void close() { clear(); }
 } // namespace transfer
