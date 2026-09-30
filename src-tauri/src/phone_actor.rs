@@ -1018,6 +1018,8 @@ impl Phone {
         if let Some(audio) = &report.audio {
             v.aec_active = audio.ready && audio.processing;
             v.microphone_fallback = audio.microphone.input == "silence";
+            // Only while a call's microphone is the device, open as the engine says.
+            v.microphone_raw = if audio.microphone.input == "device" { audio.capture_raw } else { None };
         }
         v.transfer = report.transfer;
         v.parking = report.parking;
@@ -1059,6 +1061,7 @@ impl Phone {
         v.aec_active = false;
         v.detail_log_active = false;
         v.microphone_fallback = false;
+        v.microphone_raw = None;
         v.transfer = Transfer::default();
         v.parking.clear();
         v.audio_processing_stats = None;
@@ -1107,6 +1110,7 @@ impl Phone {
         v.aec_active = false;
         v.detail_log_active = false;
         v.microphone_fallback = false;
+        v.microphone_raw = None;
         v.recording = false;
         v.calls.clear();
         v.transfer = Transfer::default();
@@ -1146,6 +1150,7 @@ impl Phone {
         v.aec_active = false;
         v.detail_log_active = false;
         v.microphone_fallback = false;
+        v.microphone_raw = None;
         v.calls.clear();
         v.transfer = Transfer::default();
         v.parking.clear();
@@ -2297,6 +2302,36 @@ mod tests {
         // The engine gone, the mark goes with it.
         p.close_calls_on_exit(None);
         assert!(!p.view.detail_log_active);
+    }
+    #[test]
+    fn whether_the_microphone_is_raw_is_shown_only_while_a_calls_microphone_is_the_device() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        p.view.running = true;
+        let audio = |input: &str, raw: Option<bool>| {
+            let mut audio = json!({"ready": true, "processing": true,
+                                   "microphone": {"input": input, "failures": 0},
+                                   "speaker": {"playing": false, "failures": 0}});
+            if let Some(raw) = raw {
+                audio["capture_raw"] = json!(raw);
+            }
+            audio
+        };
+        p.apply_report(1, report_with(audio("device", None), None));
+        assert_eq!(p.view.microphone_raw, None, "nothing is said until the engine says it");
+        p.apply_report(2, report_with(audio("device", Some(false)), None));
+        assert_eq!(p.view.microphone_raw, Some(false));
+        p.apply_report(3, report_with(audio("device", Some(true)), None));
+        assert_eq!(p.view.microphone_raw, Some(true));
+        // The calls over, the microphone closed: gone.
+        p.apply_report(4, report_with(audio("none", Some(true)), None));
+        assert_eq!(p.view.microphone_raw, None);
+        // Silence standing in for a microphone that would not start is not the device.
+        p.apply_report(5, report_with(audio("silence", Some(true)), None));
+        assert_eq!(p.view.microphone_raw, None);
+        p.apply_report(6, report_with(audio("device", Some(true)), None));
+        p.close_calls_on_exit(None);
+        assert_eq!(p.view.microphone_raw, None, "the engine gone, so is what it said");
     }
     #[test]
     fn the_audio_state_follows_the_reports_through_failure_and_recovery() {

@@ -238,6 +238,7 @@ impl Services {
             transport: String::new(),
             media_encryption: String::new(),
             microphone_fallback: false,
+            microphone_raw: None,
             microphone_missing: false,
             speaker_missing: false,
             microphone_id: String::new(),

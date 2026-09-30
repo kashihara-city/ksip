@@ -36,6 +36,10 @@ pub struct Snapshot {
     pub transport: String,
     pub media_encryption: String,
     pub microphone_fallback: bool,
+    /// The call's microphone is open in RAW mode (false: the device's effects
+    /// process it first); none while no call has the device.
+    #[serde(default)]
+    pub microphone_raw: Option<bool>,
     /// The saved microphone or speaker was not there when the engine started,
     /// so the default is in use. The saved choice stands; nothing is written.
     pub microphone_missing: bool,

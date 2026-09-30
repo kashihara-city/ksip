@@ -11,7 +11,8 @@
 #       (their echo cancellation, noise suppression and gain) touch it. KSIP
 #       runs Google's APM itself, and the two in series once cut the input to
 #       around -90 dBFS. If the device refuses RAW, the stream is opened again
-#       without it. Playback is not changed.
+#       without it. Playback is not changed. Which of the two the capture
+#       stream got is told to the bridge (KsipNoteCaptureRaw), which shows it.
 #   modules/audio_device/win/core_audio_{input,output}_win.cc
 #       StartRecording and StartPlayout mark the stream active before Start()
 #       spawns the audio thread, not after it returns. The thread's first
@@ -92,6 +93,8 @@ def patch_raw_capture(source: Path):
     props.Options = AUDCLNT_STREAMOPTIONS_NONE;
     error = client->SetClientProperties(&props);
   }}
+  if (raw_capture && SUCCEEDED(error.Error()))
+    KsipNoteCaptureRaw(props.Options == AUDCLNT_STREAMOPTIONS_RAW);
 #endif
   {RAW_FALLBACK_END}
   if (FAILED(error.Error())) {{
@@ -150,12 +153,17 @@ def patch_raw_capture(source: Path):
     old_declaration = "HRESULT SetClientProperties(IAudioClient2* client);"
     new_declaration = ("HRESULT SetClientProperties(IAudioClient2* client, "
                        "bool raw_capture = false);")
+    note_declaration = ("// KSIP: defined by the bridge, told whether capture "
+                        "got RAW.\nvoid KsipNoteCaptureRaw(bool raw);")
     if new_declaration not in header_text:
         if old_declaration not in header_text:
             raise RuntimeError(
                 "Unsupported WebRTC CoreAudio header: declaration anchor missing")
         header_text = header_text.replace(old_declaration, new_declaration, 1)
-        header.write_text(header_text, encoding="utf-8")
+    if note_declaration not in header_text:
+        header_text = header_text.replace(
+            new_declaration, new_declaration + "\n" + note_declaration, 1)
+    header.write_text(header_text, encoding="utf-8")
 
     base = (source / "modules" / "audio_device" / "win" /
             "core_audio_base_win.cc")

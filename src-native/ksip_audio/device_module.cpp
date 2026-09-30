@@ -107,6 +107,8 @@ extern "C" int ksip_audio_add_state(struct odict *od) {
     // Not up, the session has had nothing to do: no input, no output, no
     // failures, which is what it says.
     playback_session::add_state(audio);
+    // Whether the last capture stream took RAW mode; not there before the first.
+    if (const int raw = g_audio ? ksip_audio_capture_raw() : 0) odict_entry_add(audio, "capture_raw", ODICT_BOOL, raw == 1);
     err = odict_entry_add(od, "audio", ODICT_OBJECT, audio);
     mem_deref(audio);
     return err;

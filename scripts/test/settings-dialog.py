@@ -322,6 +322,15 @@ async function checks(){
   state.detail_log_active=false;state.settings.detail_log=false;state.running=wasRunning;render();
   check(markOn&&markOffBySetting&&markStopped,'the detail log mark is shown only while the running engine says the log is on',[markOn,markOffBySetting,markStopped]);
 
+  // How the call's microphone is open, after the AGC: RAW as the other
+  // labels are, APO in red, nothing while no call has it.
+  const capturePath=()=>({shown:!$('capture-path').hidden,text:$('capture-path').textContent,red:$('capture-name').classList.contains('apo'),color:getComputedStyle($('capture-name')).color});
+  state.microphone_raw=null;render();const captureNone=capturePath();
+  state.microphone_raw=true;render();const captureRaw=capturePath();
+  state.microphone_raw=false;render();const captureApo=capturePath();
+  state.microphone_raw=null;render();
+  check(!captureNone.shown&&captureRaw.shown&&captureRaw.text===' · RAW'&&!captureRaw.red&&captureApo.shown&&captureApo.text===' · APO'&&captureApo.red&&captureApo.color!==captureRaw.color,'whether the microphone is raw follows the AGC label: RAW plainly, APO in red, nothing while no call has it',[captureNone,captureRaw,captureApo]);
+
   // Moving to the other line empties the number box, as the clear button
   // does, both ways; staying on the same line keeps what was typed.
   state.running=false;state.calls=[];render();

@@ -427,6 +427,8 @@ mod tests {
                     processing: true,
                     microphone: MicrophoneState { input: "none".into(), failures: 0, last_result: None },
                     speaker: SpeakerState { playing: false, failures: 0, last_result: None },
+                    // No call has opened the microphone yet.
+                    capture_raw: None,
                 }
             );
             let report = link.stop().map_err(|back| back.1).unwrap();

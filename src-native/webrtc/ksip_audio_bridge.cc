@@ -5,13 +5,30 @@
 // what they share.
 #include "bridge_state.h"
 
+#include <atomic>
 #include <memory>
 #include <string>
 
 #include "api/audio/builtin_audio_processing_builder.h"
 #include "modules/audio_device/include/audio_device_factory.h"
+#include "modules/audio_device/win/core_audio_utility_win.h"
 #include "rtc_base/logging.h"
 #include "system_wrappers/include/metrics.h"
+
+namespace {
+// How the last capture stream was opened: 0 not yet, 1 RAW, 2 without it.
+std::atomic<int> capture_raw{0};
+}  // namespace
+
+// Called by WebRTC's CoreAudio once a capture stream has its properties
+// (the RAW patch in scripts/build/patch-webrtc.py).
+void webrtc::webrtc_win::core_audio_utility::KsipNoteCaptureRaw(bool raw) {
+  capture_raw = raw ? 1 : 2;
+}
+
+extern "C" int ksip_audio_capture_raw(void) {
+  return capture_raw.load();
+}
 
 int ksip_audio::Initialize() {
   if (!com.Succeeded()) return -2;

@@ -1102,7 +1102,8 @@ footer.aec-status {
   text-overflow:ellipsis;
   flex:0 1 auto;
 }
-#codec-label.unencrypted {
+#codec-label.unencrypted,
+#capture-name.apo {
   color:#a84035;
 }
 
