@@ -27,8 +27,9 @@ bool transfer_reversed = false;
 unsigned outcome_seq = 0;
 // The REFER that is out: what identifies its transaction (read off the SIP
 // trace as it goes), when it went, whether a 2xx has come for it, and
-// whether a NOTIFY of its subscription has.
-ksip_text::TransactionIds refer_sent;
+// whether a NOTIFY of its subscription has. The last NOTIFY in its dialog
+// counts once it is answered 2xx (on_sip).
+ksip_text::TransactionIds refer_sent, notify_seen;
 uint64_t refer_sent_at = 0;
 bool refer_accepted = false, refer_notified = false;
 // The limit of a REFER, and the nudge a REFER that was accepted but tells
@@ -51,7 +52,7 @@ void clear() {
     refer_armed = false;
     refer_waiting.clear();
     tmr_cancel(&refer_timer);
-    refer_sent = {};
+    refer_sent = notify_seen = {};
     refer_accepted = refer_notified = false;
     tmr_cancel(&deadline_timer);
     tmr_cancel(&probe_timer);
@@ -106,7 +107,7 @@ void refer_probe(void *) {
 // call_replace_transfer returns; one that could not be sent is cleared by
 // the caller.
 void refer_went() {
-    refer_sent = {};
+    refer_sent = notify_seen = {};
     refer_accepted = refer_notified = false;
     refer_sent_at = tmr_jiffies();
     tmr_cancel(&probe_timer);
@@ -289,6 +290,18 @@ void on_sip(bool tx, const uint8_t *packet, size_t length) {
         // resend after a challenge new ones): its 2xx is known by them.
         auto ids = ksip_text::request_ids(packet, length, "REFER");
         if (!ids.call_id.empty()) refer_sent = ids;
+        // Our 2xx to a NOTIFY in the REFER's dialog: libre hands a NOTIFY to
+        // baresip only as one of the REFER's subscription (listen.c: its Event
+        // and the id in it, the dialog, a Subscription-State; else 481, 489 or
+        // 400), and baresip answers 2xx only once it has read its sipfrag
+        // (call.c). From here on the outcome is baresip's to read, however
+        // long it takes.
+        if (!refer_notified && ksip_text::is_success_answer(notify_seen, packet, length)) {
+            refer_notified = true;
+            tmr_cancel(&probe_timer);
+            tmr_cancel(&deadline_timer);
+            debug("ksip: transfer: the REFER's NOTIFY came\n");
+        }
         return;
     }
     if (!refer_accepted && ksip_text::is_success_answer(refer_sent, packet, length)) {
@@ -297,19 +310,11 @@ void on_sip(bool tx, const uint8_t *packet, size_t length) {
         if (!refer_notified) tmr_start(&probe_timer, NOTIFY_NUDGE_MS, refer_probe, nullptr);
         return;
     }
-    // A NOTIFY of the REFER's subscription (in the same dialog, Event refer):
-    // the outcome is baresip's to read from here on, however long it takes.
+    // A NOTIFY in the REFER's dialog counts by the answer it gets. One that is
+    // refused (another subscription's, a stale Event id, another dialog's
+    // tags, no Subscription-State) leaves the limit running.
     auto notify = ksip_text::request_ids(packet, length, "NOTIFY");
-    if (refer_notified || notify.call_id.empty() || notify.call_id != refer_sent.call_id) return;
-    std::string event = ksip_text::sip_header(packet, length, "Event");
-    if (event.empty()) event = ksip_text::sip_header(packet, length, "o");
-    // The event name as libre matches it to the subscription (listen.c,
-    // pl_strcmp): a NOTIFY libre would not hand to baresip tells nothing.
-    if (event.compare(0, 5, "refer") != 0 || (event.size() > 5 && event[5] != ';' && event[5] != ' ')) return;
-    refer_notified = true;
-    tmr_cancel(&probe_timer);
-    tmr_cancel(&deadline_timer);
-    debug("ksip: transfer: the REFER's NOTIFY came\n");
+    if (!refer_notified && !notify.call_id.empty() && notify.call_id == refer_sent.call_id) notify_seen = notify;
 }
 void init() {
     tmr_init(&transfer_timer);

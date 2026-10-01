@@ -592,9 +592,12 @@ python -X utf8 scripts/test/loopback-call.py
 python -X utf8 scripts/test/loopback-gain.py
 python -X utf8 scripts/test/loopback-silent-mic.py
 python -X utf8 scripts/test/loopback-trust.py
+python -X utf8 scripts/test/loopback-keepalive.py
+python -X utf8 scripts/test/loopback-transfer-notify.py
 ```
 
 `loopback-silent-mic.py` は、開けないマイクの代わりに無音が時間どおり送られることと、音声モジュールの状態（`ksip_audio_state`）が通話中は無音の代替と失敗した開始を、通話後は入力なしを示すことを確かめます。`loopback-trust.py` は、TLS のときに音声エンジンの状態が信頼リストの証明書の数を示すこと（証明書でないファイルや無いファイルなら 0、実際の信頼リストなら 1 以上、TLS でなければ出さない）を確かめます。画面はこの数が 0 のときに「TLSの信頼リストを読み込めませんでした」と出します。
+`loopback-keepalive.py` は、127.0.0.1 に置いた模擬の登録先に登録し、キープアライブの空行が登録先へ届くこと（Via や CSeq を折り返した 200 OK でも）と、別の送り主が送った 200 OK の宛先には送らないことを確かめます。`loopback-transfer-notify.py` は、模擬の PBX との2本の通話で転送し、古い Event id の NOTIFY（481 で断られる）では転送の期限が残って TRANSFER_UNKNOWN になり、正しい NOTIFY（200 で受け付けられる）では期限が外れて最後の NOTIFY で TRANSFER_DONE になることを確かめます。転送の期限を待つので、1分半ほどかかります。
 
 ### グループポリシー（ADMX）のテスト
 
