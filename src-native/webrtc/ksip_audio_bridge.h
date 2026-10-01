@@ -126,6 +126,10 @@ void ksip_audio_set_raw(int capture, int playout);
    effects process the audio). */
 int ksip_audio_capture_raw(void);
 int ksip_audio_playout_raw(void);
+/* The endpoint the last capture stream opened, whichever way it was chosen
+   (WebRTC moves to the default by itself when the device in use goes away):
+   0 with its id in `out`, -1 before any or when it does not fit. */
+int ksip_audio_capture_endpoint(char *out, size_t size);
 /* Supplied by the baresip ksip_audio module for other in-process modules. */
 int ksip_audio_get_current_stats(ksip_audio_stats *stats);
 

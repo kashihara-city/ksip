@@ -62,9 +62,26 @@ void apply(bool muted) {
 }
 void tick(void *) {
     tmr_start(&g_timer, kEveryMs, tick, nullptr);
+    if (!g_bridge) return;
+    // The endpoint the capture stream actually opened, the default WebRTC
+    // moved to after the one in use went away included; before any stream,
+    // the one selected.
+    char opened[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
     ksip_audio_device_info device{};
+    const char *id = !ksip_audio_capture_endpoint(opened, sizeof(opened)) ? opened
+                     : !ksip_audio_get_device_info(g_bridge, &device) ? device.recording_id
+                                                                       : nullptr;
     bool muted = false;
-    if (!g_bridge || ksip_audio_get_device_info(g_bridge, &device) || !read_mute(device.recording_id, muted)) return;
+    if (!id || !read_mute(id, muted)) {
+        // A mute that cannot be read any more (the endpoint gone) is not kept
+        // on the calls: what was muted for it comes back.
+        if (g_known && g_muted) {
+            info("ksip_audio: the microphone's mute cannot be read; calls send what it picks up\n");
+            apply(false);
+        }
+        g_known = false;
+        return;
+    }
     if (g_known ? muted != g_muted : muted)
         info("ksip_audio: the microphone is %s on the device; calls send %s\n", muted ? "muted" : "unmuted",
              muted ? "silence" : "what it picks up");

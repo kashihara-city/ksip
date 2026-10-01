@@ -6,7 +6,9 @@
 #include "bridge_state.h"
 
 #include <atomic>
+#include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "api/audio/builtin_audio_processing_builder.h"
@@ -23,7 +25,31 @@ struct RawMode {
   std::atomic<int> taken{0};
 };
 RawMode capture_raw, playout_raw;
+// The endpoint the last capture stream opened (see ksip_audio_capture_endpoint),
+// made once and never destroyed, as WebRTC builds without exit-time destructors.
+struct Endpoint {
+  std::mutex mutex;
+  std::string id;
+};
+Endpoint& capture_endpoint() {
+  static Endpoint* const endpoint = new Endpoint();
+  return *endpoint;
+}
 }  // namespace
+
+void webrtc::webrtc_win::core_audio_utility::KsipNoteDevice(bool capture, const std::string& id) {
+  if (!capture) return;
+  Endpoint& endpoint = capture_endpoint();
+  std::lock_guard<std::mutex> lock(endpoint.mutex);
+  endpoint.id = id;
+}
+extern "C" int ksip_audio_capture_endpoint(char *out, size_t size) {
+  Endpoint& endpoint = capture_endpoint();
+  std::lock_guard<std::mutex> lock(endpoint.mutex);
+  if (!out || !size || endpoint.id.empty() || endpoint.id.size() >= size) return -1;
+  std::strncpy(out, endpoint.id.c_str(), size);
+  return 0;
+}
 
 // Asked and told by WebRTC's CoreAudio as a stream gets its properties (the
 // RAW patch in scripts/build/patch-webrtc.py).

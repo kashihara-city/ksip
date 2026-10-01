@@ -15,7 +15,10 @@
 #       speaker plays what KSIP sent, which the echo cancellation takes as its
 #       reference, without bass, surround or loudness effects. If the device
 #       refuses RAW, the stream is opened again without it; which of the two a
-#       stream got is told to the bridge (KsipNoteRaw), which shows it.
+#       stream got is told to the bridge (KsipNoteRaw), which shows it. The
+#       endpoint a stream opens is told too (KsipNoteDevice), the default
+#       WebRTC moves to by itself when a device goes away included, so that
+#       the microphone's mute is read off the one in use.
 #   modules/audio_device/win/core_audio_{input,output}_win.cc
 #       StartRecording and StartPlayout mark the stream active before Start()
 #       spawns the audio thread, not after it returns. The thread's first
@@ -52,6 +55,15 @@ RAW_BEGIN = "// KSIP RAW CAPTURE BEGIN"
 RAW_END = "// KSIP RAW CAPTURE END"
 RAW_FALLBACK_BEGIN = "// KSIP RAW FALLBACK BEGIN"
 RAW_FALLBACK_END = "// KSIP RAW FALLBACK END"
+DEVICE_DECLARATION = ("// KSIP: defined by the bridge: the endpoint a stream "
+                      "opens.\nvoid KsipNoteDevice(bool capture, "
+                      "const std::string& id);")
+DEVICE_ANCHOR = """  RTC_LOG(LS_INFO) << "Unique device identifier: device_id=" << device_id
+                   << ", role=" << RoleToString(role);
+"""
+DEVICE_CALL = """  // KSIP: the endpoint this stream opens, for the bridge.
+  core_audio_utility::KsipNoteDevice(GetDataFlow() == eCapture, device_id_);
+"""
 ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
@@ -190,6 +202,9 @@ def patch_raw_capture(source: Path):
         "HRESULT SetClientProperties(IAudioClient2* client, "
         "bool raw_capture = false);",
     ], new_declaration, "declaration")
+    if DEVICE_DECLARATION not in header_text:
+        header_text = header_text.replace(
+            new_declaration, new_declaration + "\n" + DEVICE_DECLARATION, 1)
     header.write_text(header_text, encoding="utf-8")
 
     base = (source / "modules" / "audio_device" / "win" /
@@ -201,6 +216,14 @@ def patch_raw_capture(source: Path):
         call + ")",
         call + ",\n            GetDataFlow() == eCapture)",
     ], call + ",\n            GetDataFlow())", "call")
+    # The endpoint a stream opens, whichever way it was chosen: one KSIP
+    # selected, or the default WebRTC moves to on its own when the device in
+    # use goes away (SwitchDeviceIfNeeded, which KSIP does not see).
+    if DEVICE_CALL not in base_text:
+        if DEVICE_ANCHOR not in base_text:
+            raise RuntimeError(
+                "Unsupported WebRTC CoreAudio base: device anchor missing")
+        base_text = base_text.replace(DEVICE_ANCHOR, DEVICE_ANCHOR + DEVICE_CALL, 1)
     base.write_text(base_text, encoding="utf-8")
 
 

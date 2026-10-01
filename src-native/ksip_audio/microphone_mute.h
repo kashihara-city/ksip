@@ -4,7 +4,9 @@
 // in baresip too. baresip's mute sends silence, zeros encoded as usual, so
 // RTP goes on (a PBX that waits for RTP, and a firewall that keeps the way
 // in only while packets go out, see no difference); what a muted device
-// still delivers (one tried left noise at -66 dBFS) goes no further.
+// still delivers (one tried left noise at -66 dBFS) goes no further. The
+// endpoint is the one the capture stream opened, so that one WebRTC moved to
+// by itself is followed; a mute that cannot be read is let go of.
 //
 // Threads: baresip's main thread only (its timer). Lifetime: start() once
 // the bridge is up, stop() before it goes (device_module.cpp).
