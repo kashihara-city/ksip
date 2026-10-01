@@ -237,6 +237,8 @@ impl Services {
         put(format!("ksip_high_pass {}", yes_no(s.high_pass)));
         put(format!("ksip_noise_suppression {}", s.noise_suppression));
         put(format!("ksip_agc {}", yes_no(s.agc)));
+        put(format!("ksip_raw_microphone {}", yes_no(s.raw_microphone)));
+        put(format!("ksip_raw_speaker {}", yes_no(s.raw_speaker)));
         put(format!("ksip_register_interval {}", s.register_interval));
         put(format!("ksip_keepalive {}", s.keepalive));
         put(format!("ksip_keepalive_interval {}", s.keepalive_interval));
@@ -360,6 +362,7 @@ mod tests {
             assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
             assert!(config.contains("ksip_aec_enabled yes"));
+            assert!(config.contains("ksip_raw_microphone yes") && config.contains("ksip_raw_speaker yes"), "RAW unless turned off");
             assert!(config.contains("filter_registrar UDP,TCP,TLS"), "requests only from the registrar, by default");
             assert!(config.contains("ksip_high_pass yes"));
             assert!(config.contains("ksip_noise_suppression high"));
@@ -429,6 +432,7 @@ mod tests {
                     speaker: SpeakerState { playing: false, failures: 0, last_result: None },
                     // No call has opened the microphone yet.
                     capture_raw: None,
+                    playout_raw: None,
                 }
             );
             let report = link.stop().map_err(|back| back.1).unwrap();

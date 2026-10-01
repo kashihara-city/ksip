@@ -38,6 +38,10 @@ pub struct Settings {
     /// off, low, moderate, high or very_high.
     pub noise_suppression: String,
     pub agc: bool,
+    /// The microphone and the speaker taken in RAW mode, past the effects of
+    /// Windows and of the device's maker (APOs), each where the device allows.
+    pub raw_microphone: bool,
+    pub raw_speaker: bool,
     pub register_interval: u16,
     /// What is sent to the registrar between registrations to keep the way
     /// back through a firewall or NAT open: `crlf` (a blank line on the
@@ -187,6 +191,9 @@ impl Default for Settings {
             // Off unless asked for: the digital gain lifts quiet rooms and their
             // noise alike, and the microphone volume is the person's own to set.
             agc: false,
+            // KSIP's own processing is all a call's audio goes through.
+            raw_microphone: true,
+            raw_speaker: true,
             register_interval: 300,
             // Windows Firewall let a UDP reply in for 90 but not 120 seconds
             // where it was measured; a minute keeps the way in open with room.
@@ -339,6 +346,8 @@ impl Settings {
             ("high_pass", flag(self.high_pass)),
             ("noise_suppression", text(&self.noise_suppression)),
             ("agc", flag(self.agc)),
+            ("raw_microphone", flag(self.raw_microphone)),
+            ("raw_speaker", flag(self.raw_speaker)),
             ("register_interval", Number(self.register_interval.into())),
             ("keepalive", text(&self.keepalive)),
             ("keepalive_interval", Number(self.keepalive_interval.into())),
@@ -412,6 +421,8 @@ impl Settings {
         r.flag("high_pass", &mut s.high_pass);
         r.text("noise_suppression", &mut s.noise_suppression);
         r.flag("agc", &mut s.agc);
+        r.flag("raw_microphone", &mut s.raw_microphone);
+        r.flag("raw_speaker", &mut s.raw_speaker);
         r.number("register_interval", &mut s.register_interval);
         r.text("keepalive", &mut s.keepalive);
         s.keepalive = s.keepalive.to_ascii_lowercase();
@@ -460,7 +471,7 @@ impl Settings {
     /// take effect at once: the window's own, and the engine's it is told of
     /// while running (the watched numbers, the gains, the sounds, the detail
     /// log). The window gets the list, to say which save reconnects.
-    pub const RESTART: [&'static str; 18] = [
+    pub const RESTART: [&'static str; 20] = [
         "network_adapter",
         "sip_port",
         "rtp_port",
@@ -475,6 +486,8 @@ impl Settings {
         "high_pass",
         "noise_suppression",
         "agc",
+        "raw_microphone",
+        "raw_speaker",
         "register_interval",
         "keepalive",
         "keepalive_interval",
@@ -1707,6 +1720,8 @@ mod tests {
             high_pass: false,
             noise_suppression: "low".into(),
             agc: true,
+            raw_microphone: false,
+            raw_speaker: false,
             register_interval: 600,
             keepalive: "off".into(),
             keepalive_interval: 25,

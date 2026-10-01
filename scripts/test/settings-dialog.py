@@ -26,7 +26,7 @@ window.__invoke=async(command,args)=>{
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
   if(command==='save_buttons'){savedButtons=JSON.parse(JSON.stringify(args.buttons));throw 'TEST_SAVE_STOPPED';}
   if(command==='set_button_editing'){editingWindow=args.editing;return null;}
-  if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','register_interval','keepalive','keepalive_interval','pbx_only'];
+  if(command==='restart_settings')return ['network_adapter','sip_port','rtp_port','microphone','speaker','transport','ca_file','media_encryption','codecs','aec','aec_delay_ms','high_pass','noise_suppression','agc','raw_microphone','raw_speaker','register_interval','keepalive','keepalive_interval','pbx_only'];
   if(command==='list_adapters')return [];
   if(command==='managed_settings')return [];
   if(command in answers)return answers[command];
@@ -36,7 +36,7 @@ const settle=()=>new Promise(r=>setTimeout(r,30));
 const account={server:'pbx.example',port:5061,extension:'1001',auth_user:'1001',has_password:true};
 // Every setting there, as the app's snapshot always has them.
 const base={transport:'tls',media_encryption:'sdes',codecs:'opus',sip_port:5060,rtp_port:10000,register_interval:300,keepalive:'crlf',keepalive_interval:60,tray_after_call:-1,
-  aec:true,aec_delay_ms:20,high_pass:false,noise_suppression:'high',agc:false,incoming_action:'show',language:'',microphone_gain:100,speaker_gain:100,
+  aec:true,aec_delay_ms:20,high_pass:false,noise_suppression:'high',agc:false,raw_microphone:true,raw_speaker:true,incoming_action:'show',language:'',microphone_gain:100,speaker_gain:100,
   network_adapter:'',ca_file:'',pbx_only:true,buttons:[]};
 async function open(settings={}){
   if($('configuration').open)$('configuration').close();
@@ -308,6 +308,17 @@ async function checks(){
   const intervalOpen=!$('keepalive_interval').disabled,keepaliveLabel=$('save-settings').textContent;
   s=await save();
   check(keepaliveDefault.join()==='crlf,60'&&offGreyed&&intervalOpen&&keepaliveLabel==='保存して再接続'&&s&&s.settings.keepalive==='crlf'&&s.settings.keepalive_interval===25,'the keepalive is a blank line every 60 s by default, its interval greyed out while off, and a change reconnects',[keepaliveDefault,offGreyed,intervalOpen,keepaliveLabel,s&&s.settings.keepalive,s&&s.settings.keepalive_interval]);
+
+  // RAW for the microphone and the speaker: on as the app starts out, each its
+  // own switch, and a change restarts the engine.
+  await open({});
+  const rawDefault=[$('raw_microphone').checked,$('raw_speaker').checked];
+  await open({raw_speaker:false});
+  const rawLoaded=[$('raw_microphone').checked,$('raw_speaker').checked];
+  $('raw_speaker').checked=true;$('raw_microphone').checked=false;$('raw_microphone').dispatchEvent(new Event('change',{bubbles:true}));
+  const rawLabel=$('save-settings').textContent;
+  s=await save();
+  check(rawDefault.join()==='true,true'&&rawLoaded.join()==='true,false'&&rawLabel==='保存して再接続'&&s&&s.settings.raw_microphone===false&&s.settings.raw_speaker===true,'the microphone and the speaker are RAW to start with, each its own switch, and a change reconnects',[rawDefault,rawLoaded,rawLabel,s&&s.settings.raw_microphone,s&&s.settings.raw_speaker]);
   $('configuration').close();
 
   // The detail log mark beside the Logs tab: there only while the running
@@ -322,14 +333,18 @@ async function checks(){
   state.detail_log_active=false;state.settings.detail_log=false;state.running=wasRunning;render();
   check(markOn&&markOffBySetting&&markStopped,'the detail log mark is shown only while the running engine says the log is on',[markOn,markOffBySetting,markStopped]);
 
-  // How the call's microphone is open, after the AGC: RAW as the other
-  // labels are, APO in red, nothing while no call has it.
-  const capturePath=()=>({shown:!$('capture-path').hidden,text:$('capture-path').textContent,red:$('capture-name').classList.contains('apo'),color:getComputedStyle($('capture-name')).color});
-  state.microphone_raw=null;render();const captureNone=capturePath();
-  state.microphone_raw=true;render();const captureRaw=capturePath();
-  state.microphone_raw=false;render();const captureApo=capturePath();
-  state.microphone_raw=null;render();
-  check(!captureNone.shown&&captureRaw.shown&&captureRaw.text===' · RAW'&&!captureRaw.red&&captureApo.shown&&captureApo.text===' · APO'&&captureApo.red&&captureApo.color!==captureRaw.color,'whether the microphone is raw follows the AGC label: RAW plainly, APO in red, nothing while no call has it',[captureNone,captureRaw,captureApo]);
+  // How the call's microphone and speaker are open, after the AGC and in that
+  // order: RAW as the other labels are, APO in red, - for one not open, and
+  // nothing while neither is.
+  const capturePath=()=>({shown:!$('capture-path').hidden,text:$('capture-path').textContent,titled:!!$('capture-path').title,
+    red:[$('capture-name').classList.contains('apo'),$('playout-name').classList.contains('apo')],color:getComputedStyle($('playout-name')).color});
+  const both=(mic,speaker)=>{state.microphone_raw=mic;state.speaker_raw=speaker;render();return capturePath();};
+  const captureNone=both(null,null),captureRaw=both(true,true),captureApo=both(true,false),captureMicOnly=both(true,null),captureMicApo=both(false,null);
+  both(null,null);
+  check(!captureNone.shown&&captureRaw.shown&&captureRaw.titled&&captureRaw.text===' · RAW RAW'&&captureRaw.red.join()==='false,false'
+    &&captureApo.text===' · RAW APO'&&captureApo.red.join()==='false,true'&&captureApo.color!==captureRaw.color
+    &&captureMicOnly.text===' · RAW -'&&captureMicApo.text===' · APO -'&&captureMicApo.red.join()==='true,false',
+    'whether the microphone and the speaker are raw follows the AGC label: RAW plainly, APO in red, - for one not open',[captureNone,captureRaw,captureApo,captureMicOnly,captureMicApo]);
 
   // Moving to the other line empties the number box, as the clear button
   // does, both ways; staying on the same line keeps what was typed.

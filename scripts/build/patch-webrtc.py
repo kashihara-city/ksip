@@ -6,13 +6,16 @@
 # Behaviour of the audio device:
 #   modules/audio_device/win/core_audio_utility_win.{cc,h}
 #   modules/audio_device/win/core_audio_base_win.cc
-#       the WASAPI capture stream asks for AUDCLNT_STREAMOPTIONS_RAW, so the
-#       microphone is read before Windows' or the OEM's communication APOs
-#       (their echo cancellation, noise suppression and gain) touch it. KSIP
-#       runs Google's APM itself, and the two in series once cut the input to
-#       around -90 dBFS. If the device refuses RAW, the stream is opened again
-#       without it. Playback is not changed. Which of the two the capture
-#       stream got is told to the bridge (KsipNoteCaptureRaw), which shows it.
+#       the WASAPI streams ask for AUDCLNT_STREAMOPTIONS_RAW when the bridge
+#       wants it (KsipWantRaw; both, by default), so that no endpoint APO
+#       changes the audio KSIP processes. The microphone is read before
+#       Windows' or the OEM's communication APOs (their echo cancellation,
+#       noise suppression and gain) touch it: KSIP runs Google's APM itself,
+#       and the two in series once cut the input to around -90 dBFS. The
+#       speaker plays what KSIP sent, which the echo cancellation takes as its
+#       reference, without bass, surround or loudness effects. If the device
+#       refuses RAW, the stream is opened again without it; which of the two a
+#       stream got is told to the bridge (KsipNoteRaw), which shows it.
 #   modules/audio_device/win/core_audio_{input,output}_win.cc
 #       StartRecording and StartPlayout mark the stream active before Start()
 #       spawns the audio thread, not after it returns. The thread's first
@@ -78,6 +81,16 @@ rtc_static_library("ksip_webrtc_audio") {{
 '''
 
 
+def replace_one_of(text: str, forms: list[str], new: str, what: str) -> str:
+    """The patched form, put over WebRTC's own or an earlier KSIP one."""
+    if new in text:
+        return text
+    for form in forms:
+        if form in text:
+            return text.replace(form, new, 1)
+    raise RuntimeError(f"Unsupported WebRTC CoreAudio source: {what} anchor missing")
+
+
 def patch_raw_capture(source: Path):
     """Bypass Windows communication APOs before WebRTC APM when supported."""
     core_audio = (source / "modules" / "audio_device" / "win" /
@@ -89,22 +102,25 @@ def patch_raw_capture(source: Path):
         raise RuntimeError(
             "Unsupported partial KSIP RAW patch in core_audio_utility_win.cc")
     raw_replacement = f"""  {RAW_BEGIN}
-  // KSIP runs Google APM itself. Avoid applying an endpoint communication
-  // APO (AEC/NS/AGC) to the same capture stream first.
-  if (raw_capture) props.Options |= AUDCLNT_STREAMOPTIONS_RAW;
+  // KSIP runs Google APM itself. Its streams take RAW mode when the bridge
+  // wants it, so that no endpoint APO changes the audio around it.
+  const bool raw = ksip_flow != eAll && KsipWantRaw(ksip_flow == eCapture);
+  if (raw) props.Options |= AUDCLNT_STREAMOPTIONS_RAW;
   {RAW_END}"""
     set_properties_replacement = f"""  error = client->SetClientProperties(&props);
   {RAW_FALLBACK_BEGIN}
 #if (NTDDI_VERSION >= NTDDI_WINBLUE)
-  if (FAILED(error.Error()) && raw_capture &&
+  if (FAILED(error.Error()) && raw &&
       props.Options == AUDCLNT_STREAMOPTIONS_RAW) {{
-    RTC_LOG(LS_WARNING)
-        << "RAW audio capture is unavailable; retrying without RAW mode";
+    RTC_LOG(LS_WARNING) << "RAW audio "
+                        << (ksip_flow == eCapture ? "capture" : "playout")
+                        << " is unavailable; retrying without RAW mode";
     props.Options = AUDCLNT_STREAMOPTIONS_NONE;
     error = client->SetClientProperties(&props);
   }}
-  if (raw_capture && SUCCEEDED(error.Error()))
-    KsipNoteCaptureRaw(props.Options == AUDCLNT_STREAMOPTIONS_RAW);
+  if (ksip_flow != eAll && SUCCEEDED(error.Error()))
+    KsipNoteRaw(ksip_flow == eCapture,
+                props.Options == AUDCLNT_STREAMOPTIONS_RAW);
 #endif
   {RAW_FALLBACK_END}
   if (FAILED(error.Error())) {{
@@ -147,48 +163,45 @@ def patch_raw_capture(source: Path):
             len(RAW_FALLBACK_END)]
         text = text[:fallback_start] + new_fallback + text[fallback_finish:]
 
-    old_signature = "HRESULT SetClientProperties(IAudioClient2* client) {"
     new_signature = ("HRESULT SetClientProperties(IAudioClient2* client, "
-                     "bool raw_capture) {")
-    if new_signature not in text:
-        if old_signature not in text:
-            raise RuntimeError(
-                "Unsupported WebRTC CoreAudio source: function anchor missing")
-        text = text.replace(old_signature, new_signature, 1)
+                     "EDataFlow ksip_flow) {")
+    text = replace_one_of(text, [
+        "HRESULT SetClientProperties(IAudioClient2* client) {",
+        "HRESULT SetClientProperties(IAudioClient2* client, bool raw_capture) {",
+    ], new_signature, "function")
     core_audio.write_text(text, encoding="utf-8")
 
     header = (source / "modules" / "audio_device" / "win" /
               "core_audio_utility_win.h")
     header_text = header.read_text(encoding="utf-8")
-    old_declaration = "HRESULT SetClientProperties(IAudioClient2* client);"
+    # A stream of KSIP's names its flow; eAll, the default, is one of
+    # WebRTC's own, which takes no RAW mode and is not told to the bridge.
     new_declaration = ("HRESULT SetClientProperties(IAudioClient2* client, "
-                       "bool raw_capture = false);")
-    note_declaration = ("// KSIP: defined by the bridge, told whether capture "
-                        "got RAW.\nvoid KsipNoteCaptureRaw(bool raw);")
-    if new_declaration not in header_text:
-        if old_declaration not in header_text:
-            raise RuntimeError(
-                "Unsupported WebRTC CoreAudio header: declaration anchor missing")
-        header_text = header_text.replace(old_declaration, new_declaration, 1)
-    if note_declaration not in header_text:
-        header_text = header_text.replace(
-            new_declaration, new_declaration + "\n" + note_declaration, 1)
+                       "EDataFlow ksip_flow = eAll);\n"
+                       "// KSIP: defined by the bridge: whether a stream is to "
+                       "take RAW mode,\n// and whether it did.\n"
+                       "bool KsipWantRaw(bool capture);\n"
+                       "void KsipNoteRaw(bool capture, bool raw);")
+    header_text = header_text.replace(
+        "\n// KSIP: defined by the bridge, told whether capture got RAW."
+        "\nvoid KsipNoteCaptureRaw(bool raw);", "")
+    header_text = replace_one_of(header_text, [
+        "HRESULT SetClientProperties(IAudioClient2* client);",
+        "HRESULT SetClientProperties(IAudioClient2* client, "
+        "bool raw_capture = false);",
+    ], new_declaration, "declaration")
     header.write_text(header_text, encoding="utf-8")
 
     base = (source / "modules" / "audio_device" / "win" /
             "core_audio_base_win.cc")
     base_text = base.read_text(encoding="utf-8")
-    old_call = """core_audio_utility::SetClientProperties(
-            static_cast<IAudioClient2*>(audio_client.Get()))"""
-    new_call = """core_audio_utility::SetClientProperties(
-            static_cast<IAudioClient2*>(audio_client.Get()),
-            GetDataFlow() == eCapture)"""
-    if new_call not in base_text:
-        if old_call not in base_text:
-            raise RuntimeError(
-                "Unsupported WebRTC CoreAudio base: call anchor missing")
-        base_text = base_text.replace(old_call, new_call, 1)
-        base.write_text(base_text, encoding="utf-8")
+    call = """core_audio_utility::SetClientProperties(
+            static_cast<IAudioClient2*>(audio_client.Get())"""
+    base_text = replace_one_of(base_text, [
+        call + ")",
+        call + ",\n            GetDataFlow() == eCapture)",
+    ], call + ",\n            GetDataFlow())", "call")
+    base.write_text(base_text, encoding="utf-8")
 
 
 def patch_active_before_start(source: Path):

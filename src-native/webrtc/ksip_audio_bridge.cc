@@ -16,18 +16,33 @@
 #include "system_wrappers/include/metrics.h"
 
 namespace {
-// How the last capture stream was opened: 0 not yet, 1 RAW, 2 without it.
-std::atomic<int> capture_raw{0};
+// For the capture and the playout: whether its stream is to take RAW mode,
+// and how the last one was opened (0 not yet, 1 RAW, 2 without it).
+struct RawMode {
+  std::atomic<bool> wanted{true};
+  std::atomic<int> taken{0};
+};
+RawMode capture_raw, playout_raw;
 }  // namespace
 
-// Called by WebRTC's CoreAudio once a capture stream has its properties
-// (the RAW patch in scripts/build/patch-webrtc.py).
-void webrtc::webrtc_win::core_audio_utility::KsipNoteCaptureRaw(bool raw) {
-  capture_raw = raw ? 1 : 2;
+// Asked and told by WebRTC's CoreAudio as a stream gets its properties (the
+// RAW patch in scripts/build/patch-webrtc.py).
+bool webrtc::webrtc_win::core_audio_utility::KsipWantRaw(bool capture) {
+  return (capture ? capture_raw : playout_raw).wanted;
+}
+void webrtc::webrtc_win::core_audio_utility::KsipNoteRaw(bool capture, bool raw) {
+  (capture ? capture_raw : playout_raw).taken = raw ? 1 : 2;
 }
 
+extern "C" void ksip_audio_set_raw(int capture, int playout) {
+  capture_raw.wanted = capture != 0;
+  playout_raw.wanted = playout != 0;
+}
 extern "C" int ksip_audio_capture_raw(void) {
-  return capture_raw.load();
+  return capture_raw.taken;
+}
+extern "C" int ksip_audio_playout_raw(void) {
+  return playout_raw.taken;
 }
 
 int ksip_audio::Initialize() {

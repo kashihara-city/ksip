@@ -48,7 +48,7 @@ int NoiseLevel(const char *level) {
 }
 int module_init() {
     uint32_t delay = 20;
-    bool aec = true, high_pass = true, agc = false, detail = false;
+    bool aec = true, high_pass = true, agc = false, detail = false, raw_microphone = true, raw_speaker = true;
     char level[24] = "high";
     conf_get_u32(conf_cur(), "webrtc_aec_delay_ms", &delay);
     conf_get_bool(conf_cur(), "ksip_aec_enabled", &aec);
@@ -56,6 +56,11 @@ int module_init() {
     conf_get_str(conf_cur(), "ksip_noise_suppression", level, sizeof level);
     conf_get_bool(conf_cur(), "ksip_agc", &agc);
     conf_get_bool(conf_cur(), "ksip_detail_log", &detail);
+    // RAW mode for the streams, so that no effects of the device change their
+    // audio; both by default, each its own switch for a setting to come.
+    conf_get_bool(conf_cur(), "ksip_raw_microphone", &raw_microphone);
+    conf_get_bool(conf_cur(), "ksip_raw_speaker", &raw_speaker);
+    ksip_audio_set_raw(raw_microphone, raw_speaker);
     const ksip_audio_processing processing{aec, high_pass, NoiseLevel(level), agc};
     const bool enabled = aec || high_pass || processing.noise_suppression >= 0 || agc;
     // Set before creating, so that the device warnings of a failing start show up.
@@ -110,8 +115,9 @@ extern "C" int ksip_audio_add_state(struct odict *od) {
     // Not up, the session has had nothing to do: no input, no output, no
     // failures, which is what it says.
     playback_session::add_state(audio);
-    // Whether the last capture stream took RAW mode; not there before the first.
+    // Whether the last capture and playout streams took RAW mode; not there before the first.
     if (const int raw = g_audio ? ksip_audio_capture_raw() : 0) odict_entry_add(audio, "capture_raw", ODICT_BOOL, raw == 1);
+    if (const int raw = g_audio ? ksip_audio_playout_raw() : 0) odict_entry_add(audio, "playout_raw", ODICT_BOOL, raw == 1);
     err = odict_entry_add(od, "audio", ODICT_OBJECT, audio);
     mem_deref(audio);
     return err;

@@ -7,7 +7,9 @@ from admx_model import ACCOUNT, ADMX, Profile, exe_path, policies, setting
 # on purpose. Anything else KSIP has and the templates lack is a gap.
 LEFT_OUT = {'microphone', 'speaker', 'network_adapter',
             # The person's alone: adjusted where the phone is used, never fixed.
-            'microphone_gain', 'speaker_gain', 'aec_delay_ms'}
+            'microphone_gain', 'speaker_gain', 'aec_delay_ms',
+            # As the devices in use allow, which are the person's.
+            'raw_microphone', 'raw_speaker'}
 # Where the template's dialog shows another starting value than KSIP's
 # default, and why that is right.
 DEFAULT_EXCEPTIONS = {

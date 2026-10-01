@@ -77,6 +77,8 @@ pub struct AudioState {
     /// The last capture stream took RAW mode (false: the device refused it,
     /// and its effects process the microphone first); none before the first.
     pub capture_raw: Option<bool>,
+    /// The same for the last playout stream.
+    pub playout_raw: Option<bool>,
 }
 #[derive(Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]

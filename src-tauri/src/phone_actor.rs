@@ -1020,6 +1020,7 @@ impl Phone {
             v.microphone_fallback = audio.microphone.input == "silence";
             // Only while a call's microphone is the device, open as the engine says.
             v.microphone_raw = if audio.microphone.input == "device" { audio.capture_raw } else { None };
+            v.speaker_raw = if audio.speaker.playing { audio.playout_raw } else { None };
         }
         v.transfer = report.transfer;
         v.parking = report.parking;
@@ -1062,6 +1063,7 @@ impl Phone {
         v.detail_log_active = false;
         v.microphone_fallback = false;
         v.microphone_raw = None;
+        v.speaker_raw = None;
         v.transfer = Transfer::default();
         v.parking.clear();
         v.audio_processing_stats = None;
@@ -1111,6 +1113,7 @@ impl Phone {
         v.detail_log_active = false;
         v.microphone_fallback = false;
         v.microphone_raw = None;
+        v.speaker_raw = None;
         v.recording = false;
         v.calls.clear();
         v.transfer = Transfer::default();
@@ -1151,6 +1154,7 @@ impl Phone {
         v.detail_log_active = false;
         v.microphone_fallback = false;
         v.microphone_raw = None;
+        v.speaker_raw = None;
         v.calls.clear();
         v.transfer = Transfer::default();
         v.parking.clear();
@@ -2304,7 +2308,7 @@ mod tests {
         assert!(!p.view.detail_log_active);
     }
     #[test]
-    fn whether_the_microphone_is_raw_is_shown_only_while_a_calls_microphone_is_the_device() {
+    fn whether_the_microphone_and_speaker_are_raw_is_shown_only_while_a_call_has_each() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
         p.view.running = true;
@@ -2317,19 +2321,28 @@ mod tests {
             }
             audio
         };
-        p.apply_report(1, report_with(audio("device", None), None));
+        // The speaker: shown while a call plays on it, as the engine says.
+        let mut playing = audio("device", Some(true));
+        playing["speaker"]["playing"] = json!(true);
+        playing["playout_raw"] = json!(false);
+        p.apply_report(1, report_with(playing.clone(), None));
+        assert_eq!((p.view.microphone_raw, p.view.speaker_raw), (Some(true), Some(false)));
+        playing["speaker"]["playing"] = json!(false);
+        p.apply_report(2, report_with(playing, None));
+        assert_eq!(p.view.speaker_raw, None, "nothing plays, nothing is said of the speaker");
+        p.apply_report(3, report_with(audio("device", None), None));
         assert_eq!(p.view.microphone_raw, None, "nothing is said until the engine says it");
-        p.apply_report(2, report_with(audio("device", Some(false)), None));
+        p.apply_report(4, report_with(audio("device", Some(false)), None));
         assert_eq!(p.view.microphone_raw, Some(false));
-        p.apply_report(3, report_with(audio("device", Some(true)), None));
+        p.apply_report(5, report_with(audio("device", Some(true)), None));
         assert_eq!(p.view.microphone_raw, Some(true));
         // The calls over, the microphone closed: gone.
-        p.apply_report(4, report_with(audio("none", Some(true)), None));
+        p.apply_report(6, report_with(audio("none", Some(true)), None));
         assert_eq!(p.view.microphone_raw, None);
         // Silence standing in for a microphone that would not start is not the device.
-        p.apply_report(5, report_with(audio("silence", Some(true)), None));
+        p.apply_report(7, report_with(audio("silence", Some(true)), None));
         assert_eq!(p.view.microphone_raw, None);
-        p.apply_report(6, report_with(audio("device", Some(true)), None));
+        p.apply_report(8, report_with(audio("device", Some(true)), None));
         p.close_calls_on_exit(None);
         assert_eq!(p.view.microphone_raw, None, "the engine gone, so is what it said");
     }

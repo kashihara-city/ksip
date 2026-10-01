@@ -125,11 +125,11 @@ export function render({clearNotices=false}={}){
 function renderFooter(){
   const processing=state.settings,noiseOn=!!NOISE_LEVEL_NAMES[processing.noise_suppression],processingOn=!!processing.aec||!!processing.high_pass||noiseOn||!!processing.agc;
   $('processing-labels').textContent=['AEC '+(processing.aec?'ON':'OFF'),'HPF '+(processing.high_pass?'ON':'OFF'),'NS '+(noiseOn?t(NOISE_LEVEL_NAMES[processing.noise_suppression]):'OFF'),'AGC '+(processing.agc?'ON':'OFF')].join(' · ');
-  // How the call's microphone is open: RAW, or in red APO when the device
-  // refused RAW and its effects process it before KSIP does.
-  const raw=state.microphone_raw;
-  $('capture-path').hidden=raw!==true&&raw!==false;
-  $('capture-name').textContent=raw?'RAW':'APO';$('capture-name').classList.toggle('apo',raw===false);
+  // How the call's microphone and speaker are open, in that order: RAW, or in
+  // red APO when the device's effects process that audio; - for one not open.
+  const mic=state.microphone_raw,speaker=state.speaker_raw;
+  $('capture-path').hidden=typeof mic!=='boolean'&&typeof speaker!=='boolean';$('capture-path').title=t('AUDIO_RAW_TITLE');
+  for(const [id,raw] of [['capture-name',mic],['playout-name',speaker]]){$(id).textContent=raw===true?'RAW':raw===false?'APO':'-';$(id).classList.toggle('apo',raw===false);}
   // A codec and an encryption belong to a call, so outside one this stays empty.
   $('codec-label').textContent=callSummary(current());$('codec-label').classList.toggle('unencrypted',fellBack(current()));
   const metrics=state.audio_processing_stats;

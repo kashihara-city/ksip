@@ -117,10 +117,15 @@ int ksip_audio_recording_running(ksip_audio *audio);
 int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
 int ksip_audio_get_device_info(ksip_audio *audio,
                                ksip_audio_device_info *info);
-/* How the last capture stream was opened: 0 not yet, 1 in RAW mode, 2
-   without it (the device refused RAW, so its effects, the APOs, process the
-   microphone before KSIP's processing does). */
+/* Whether the microphone and the speaker streams opened from now on ask for
+   RAW mode, so that no effects of the device (APOs) change their audio; both
+   do unless told otherwise. */
+void ksip_audio_set_raw(int capture, int playout);
+/* How the last capture or playout stream was opened: 0 not yet, 1 in RAW
+   mode, 2 without it (not asked for, or refused by the device, so its
+   effects process the audio). */
 int ksip_audio_capture_raw(void);
+int ksip_audio_playout_raw(void);
 /* Supplied by the baresip ksip_audio module for other in-process modules. */
 int ksip_audio_get_current_stats(ksip_audio_stats *stats);
 

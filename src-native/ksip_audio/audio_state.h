@@ -17,14 +17,15 @@ struct odict;
 //   "audio": {"ready": bool, "processing": bool,
 //             "microphone": {"input": "device" | "silence" | "none", "failures": n, "last_result": n},
 //             "speaker": {"playing": bool, "failures": n, "last_result": n},
-//             "capture_raw": bool}
+//             "capture_raw": bool, "playout_raw": bool}
 // "ready" is false when the module is not up (not loaded, or its bridge
 // would not start); "processing" is echo cancellation, the high-pass filter,
 // the noise suppression or the AGC, any of them on. "failures" counts every
 // start of that side that failed, whichever path tried it (a new stream, the
 // old player put back, the stream handed back); "last_result" is the
 // bridge's result for the last of them, there once "failures" is not 0.
-// "capture_raw" is there once a capture stream has been opened: true when it
-// took RAW mode, false when the device refused it and its effects (APOs)
-// process the microphone before KSIP's processing does.
+// "capture_raw" and "playout_raw" are there once a capture or a playout
+// stream has been opened: true when it took RAW mode, false when it was not
+// asked for (ksip_raw_microphone, ksip_raw_speaker) or the device refused it,
+// and the device's effects (APOs) process that audio.
 extern "C" int ksip_audio_add_state(struct odict *od);

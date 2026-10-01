@@ -153,7 +153,7 @@ export function openSettings(){
   $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();syncKeepalive();
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
-  $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;
+  $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;$('raw_microphone').checked=state.settings.raw_microphone!==false;$('raw_speaker').checked=state.settings.raw_speaker!==false;
   $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
@@ -201,7 +201,7 @@ async function calibrateAec(careful){
 // A settings file's values (as import_settings_file hands them over) go
 // into the dialog as they are; what the file leaves out stays as the dialog
 // has it. Nothing is saved until the dialog is.
-const SWITCHES=['auto_answer','aec','high_pass','agc','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
+const SWITCHES=['auto_answer','aec','high_pass','agc','raw_microphone','raw_speaker','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
 const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language','dtmf_mode','keepalive'];
 const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
@@ -282,7 +282,7 @@ function heldSettings(){
     // against the save. One a policy fixes is the policy's (collectSettings).
     buttons:BUTTON_INDEXES.map(n=>!$('button_'+n+'_kind').value?{title:'',kind:'',number:'',transfer:'',pickup:''}:({title:$('button_'+n+'_title').value.trim(),kind:$('button_'+n+'_kind').value,number:$('button_'+n+'_kind').value==='dnd'?'':$('button_'+n+'_number').value.trim(),transfer:$('button_'+n+'_kind').value==='park'?$('button_'+n+'_transfer').value.trim():'',pickup:['dial','park'].includes($('button_'+n+'_kind').value)?$('button_'+n+'_pickup').value.trim():''})),
     auto_answer:$('auto_answer').checked,
-    aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,
+    aec:$('aec').checked,aec_delay_ms:Number($('aec_delay_ms').value),high_pass:$('high_pass').checked,noise_suppression:$('noise_suppression').value,agc:$('agc').checked,raw_microphone:$('raw_microphone').checked,raw_speaker:$('raw_speaker').checked,
     register_interval:Number($('register_interval').value),keepalive:$('keepalive').value,keepalive_interval:Number($('keepalive_interval').value),detail_log:$('detail_log').checked,
     shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
