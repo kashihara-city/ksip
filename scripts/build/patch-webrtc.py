@@ -20,6 +20,14 @@
 #       the thread for good: the device stayed open and the start reported
 #       success, but no audio was delivered again. A call then sent no RTP,
 #       heard nothing from a PBX that waits for it, and recorded nothing.
+#   modules/audio_device/win/core_audio_input_win.cc
+#       a capture packet Windows marks AUDCLNT_BUFFERFLAGS_SILENT is delivered
+#       as the zeros WebRTC already fills it with, instead of being dropped.
+#       The flag means the data is to be taken as silence, not that there is
+#       none; dropped, a call stops sending RTP for as long as it lasts (a
+#       device may mark its packets so while muted), with what that brings: a
+#       PBX that waits for RTP sends none back, and a firewall closes the way
+#       in. The three microphones tried did not mark muted packets so.
 #
 # Building and embedding (no change to what the library does):
 #   ksip_bridge/                   the KSIP bridge sources copied from
@@ -43,6 +51,8 @@ RAW_FALLBACK_BEGIN = "// KSIP RAW FALLBACK BEGIN"
 RAW_FALLBACK_END = "// KSIP RAW FALLBACK END"
 ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
+SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
+SILENT_END = "// KSIP SILENT DELIVERED END"
 TARGET = f'''{BEGIN}
 rtc_static_library("ksip_webrtc_audio") {{
   visibility = [ "*" ]
@@ -219,6 +229,54 @@ def patch_active_before_start(source: Path):
         path.write_text(text, encoding="utf-8")
 
 
+def patch_silent_delivered(source: Path):
+    """Deliver a capture packet marked silent as zeros instead of dropping it."""
+    original = """    if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+      webrtc::ExplicitZeroMemory(
+          audio_data, format_.Format.nBlockAlign * num_frames_to_read);
+      RTC_DLOG(LS_WARNING) << "Captured audio is replaced by silence";
+    } else {
+      // Copy recorded audio in `audio_data` to the WebRTC sink using the
+      // FineAudioBuffer object.
+      fine_audio_buffer_->DeliverRecordedData(
+          std::span(reinterpret_cast<const int16_t*>(audio_data),
+                    format_.Format.nChannels * num_frames_to_read),
+
+          latency_ms_);
+    }"""
+    replacement = f"""    {SILENT_BEGIN}
+    // Silent means the data is to be taken as silence: it goes on as the
+    // zeros filled in here, so that the stream does not stop while it lasts.
+    if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {{
+      webrtc::ExplicitZeroMemory(
+          audio_data, format_.Format.nBlockAlign * num_frames_to_read);
+      RTC_DLOG(LS_WARNING) << "Captured audio is replaced by silence";
+    }}
+    // Copy recorded audio in `audio_data` to the WebRTC sink using the
+    // FineAudioBuffer object.
+    fine_audio_buffer_->DeliverRecordedData(
+        std::span(reinterpret_cast<const int16_t*>(audio_data),
+                  format_.Format.nChannels * num_frames_to_read),
+
+        latency_ms_);
+    {SILENT_END}"""
+    path = source / "modules" / "audio_device" / "win" / "core_audio_input_win.cc"
+    text = path.read_text(encoding="utf-8")
+    present = [SILENT_BEGIN in text, SILENT_END in text]
+    if any(present) and not all(present):
+        raise RuntimeError("Unsupported partial KSIP silent patch in core_audio_input_win.cc")
+    if all(present):
+        start = text.index(SILENT_BEGIN) - 4
+        finish = text.index(SILENT_END, start) + len(SILENT_END)
+        text = text[:start] + replacement + text[finish:]
+    else:
+        if text.count(original) != 1:
+            raise RuntimeError(
+                "Unsupported WebRTC CoreAudio source: silent packet anchor missing")
+        text = text.replace(original, replacement, 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -226,6 +284,7 @@ def main():
     source = args.source.resolve()
     patch_raw_capture(source)
     patch_active_before_start(source)
+    patch_silent_delivered(source)
     bridge = source / "ksip_bridge"
     bridge.mkdir(exist_ok=True)
     for name in ["ksip_audio_bridge.h", "ksip_audio_bridge_internal.h",

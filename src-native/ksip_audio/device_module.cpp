@@ -4,6 +4,7 @@
 // the stream.
 #include "audio_session.h"
 #include "audio_state.h"
+#include "microphone_mute.h"
 #include <cerrno>
 #include <cstring>
 
@@ -76,6 +77,7 @@ int module_init() {
     }
     g_ready = true;
     g_processing = enabled;
+    microphone_mute::start(g_audio);
     // For the log only: the app reads the module's state (audio_state.h).
     if (enabled)
         info("ksip_audio: Google WebRTC ADM + APM initialized (processing enabled:"
@@ -85,6 +87,7 @@ int module_init() {
     return 0;
 }
 int module_close() {
+    microphone_mute::stop();
     g_ready = false;
     g_processing = false;
     cmd_unregister(baresip_commands(), commands);
