@@ -3,7 +3,7 @@
 # marked in the source and re-applied over its own marks, so running this
 # twice gives the same result.
 #
-# Behaviour of the audio device (the only change of that kind):
+# Behaviour of the audio device:
 #   modules/audio_device/win/core_audio_utility_win.{cc,h}
 #   modules/audio_device/win/core_audio_base_win.cc
 #       the WASAPI capture stream asks for AUDCLNT_STREAMOPTIONS_RAW, so the
