@@ -47,8 +47,9 @@ struct Clock {
 // time; after it the devices are closed, so nothing is held while idle.
 constexpr uint64_t kLingerMs = 3000;
 
-// `Play` has `bool started` and `const char *device()`; `Source` has `bool
-// started`. The module's auplay_st and ausrc_st do; a test's records do too.
+// `Play` has `bool started`, `const char *device()` and `set_device(const
+// char *)`; `Source` has `bool started`. The module's auplay_st and ausrc_st
+// do; a test's records do too.
 template <class Play, class Source>
 class Core {
 public:
@@ -149,6 +150,7 @@ public:
             hooks.stop_fallback(active_source);
             active_source = nullptr;
         }
+        source_device = device;
         const bool running = adm.recording_running();
         const int result = adm.start_recording(device, fresh);
         if (result) {
@@ -168,6 +170,60 @@ public:
         if (gone->started) adm.detach_recording();
         active_source = nullptr;
         keep_warm();
+    }
+    // The person chose other devices while a call is up: the streams that are
+    // up are opened again on them, for the same player and source, so the
+    // call goes on through the new ones, and every player is moved to the new
+    // speaker, so that a stream handed back goes there too. A null device
+    // leaves that side alone (another module has it). What is not up opens on
+    // the new devices when it next starts, the configuration having them. A
+    // device that will not start leaves the call on the one it had; a
+    // microphone that cannot be had at all is replaced by silence, as for a
+    // new source.
+    void switch_devices(const char *microphone, const char *speaker) {
+        if (speaker) {
+            const std::string previous = active_playout ? active_playout->device() : "";
+            for (Play *p : players) p->set_device(speaker);
+            if (active_playout && active_playout->started && previous != speaker) {
+                const int result = adm.start_playout(speaker, active_playout);
+                if (result == 0) {
+                    hooks.log("ksip_audio: the call's speaker switched\n");
+                } else {
+                    failed(true, speaker, result);
+                    for (Play *p : players) p->set_device(previous.c_str());
+                    const int restored = adm.start_playout(previous.c_str(), active_playout);
+                    if (restored == 0) hooks.log("ksip_audio: the call stays on the speaker it had\n");
+                    else {
+                        failed(true, previous.c_str(), restored);
+                        active_playout->started = false;
+                    }
+                }
+            }
+        }
+        if (microphone && active_source && source_device != microphone) {
+            const std::string previous = source_device;
+            source_device = microphone;
+            // A source on silence tries the device again too.
+            if (!active_source->started) hooks.stop_fallback(active_source);
+            int result = adm.start_recording(microphone, active_source);
+            if (result == 0) {
+                active_source->started = true;
+                hooks.log("ksip_audio: the call's microphone switched\n");
+                return;
+            }
+            failed(false, microphone, result);
+            if (active_source->started) {
+                source_device = previous;
+                result = adm.start_recording(previous.c_str(), active_source);
+                if (result == 0) {
+                    hooks.log("ksip_audio: the call stays on the microphone it had\n");
+                    return;
+                }
+                failed(false, previous.c_str(), result);
+            }
+            active_source->started = false;
+            hooks.start_fallback(active_source);
+        }
     }
     Play *playout() const { return active_playout; }
     Source *source() const { return active_source; }
@@ -211,5 +267,8 @@ private:
     std::vector<Play *> players;
     Play *active_playout = nullptr;
     Source *active_source = nullptr;
+    // The microphone the current source asked for, so that a switch knows
+    // whether it changes and where to go back to.
+    std::string source_device;
 };
 } // namespace playback_session

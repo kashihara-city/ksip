@@ -120,6 +120,9 @@ void close() {
     g_audio = nullptr;
 }
 ksip_audio *bridge() { return g_audio; }
+void switch_devices(const char *microphone, const char *speaker) {
+    if (g_audio) g_core.switch_devices(microphone, speaker);
+}
 namespace {
 void AddFailures(odict *side, const Core<auplay_st, ausrc_st>::Failures &failures) {
     odict_entry_add(side, "failures", ODICT_INT, static_cast<int64_t>(failures.count));

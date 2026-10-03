@@ -23,8 +23,22 @@ int StateCommand(re_printf *pf, void *) {
     mem_deref(od);
     return err;
 }
+// The devices the configuration names now (ksip_audio_devices has just set
+// them) taken by the streams that are up: a change made during a call
+// reaches that call. A side this module does not have is left alone.
+int SwitchCommand(re_printf *pf, void *) {
+    const struct config *cfg = conf_config();
+    if (!cfg || !g_ready) return ENODEV;
+    const auto chosen = [](const char *module, const char *device) -> const char * {
+        if (str_cmp(module, "ksip_audio")) return nullptr;
+        return device[0] ? device : "default";
+    };
+    playback_session::switch_devices(chosen(cfg->audio.src_mod, cfg->audio.src_dev), chosen(cfg->audio.play_mod, cfg->audio.play_dev));
+    return re_hprintf(pf, "Audio streams on the configured devices\n");
+}
 const cmd commands[] = {
     {"ksip_audio_state", 0, 0, "The audio module's state as JSON (audio_state.h)", StateCommand},
+    {"ksip_audio_switch", 0, 0, "Move the streams that are up onto the configured devices", SwitchCommand},
 };
 
 bool Valid(const struct auplay_prm *p) { return p->srate == playback_session::kRate && p->ch == playback_session::kChannels && p->fmt == AUFMT_S16LE; }

@@ -35,6 +35,7 @@ struct Player {
     std::string name;
     bool started = false;
     const char *device() const { return name.c_str(); }
+    void set_device(const char *device) { name = device; }
 };
 struct Source {
     bool started = false;
@@ -170,6 +171,50 @@ void a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goe
     check(f.fallbacks.empty(), "the fallback of the replaced source is stopped");
     f.core.source_gone(&next);
     check(f.adm.recording == nullptr && f.clock.linger, "the microphone is detached and idles");
+}
+// The devices chosen again during a call: the streams that are up move to
+// them, for the same player and source.
+void a_switch_during_a_call_moves_the_streams_that_are_up() {
+    Fixture f;
+    Player ring{"speaker-a"}, call{"speaker-a"};
+    Source mic;
+    f.core.take_playout(&ring);
+    f.core.take_playout(&call);
+    f.core.take_source(&mic, "mic-a");
+    f.adm.diary.clear();
+    f.log.clear();
+    f.core.switch_devices("mic-b", "speaker-b");
+    check(f.adm.diary.size() == 2 && f.adm.diary[0] == "start_playout speaker-b" && f.adm.diary[1] == "start_recording mic-b",
+          "the speaker and the microphone of the call are opened again on the new devices");
+    check(f.adm.playing == &call && call.started && f.adm.recording == &mic && mic.started, "for the same player and source");
+    check(std::string(ring.device()) == "speaker-b", "a player waiting behind the call is moved too, for its hand-back");
+    check(f.logged("speaker switched") && f.logged("microphone switched"), "both switches are said so");
+    f.adm.diary.clear();
+    f.core.switch_devices("mic-b", "speaker-b");
+    check(f.adm.diary.empty(), "the same devices again change nothing");
+    f.core.switch_devices(nullptr, nullptr);
+    check(f.adm.diary.empty(), "a side another module has is left alone");
+}
+void a_switch_to_a_device_that_will_not_start_keeps_the_call_on_the_old_one() {
+    Fixture f;
+    Player call{"speaker-a"};
+    Source mic;
+    f.core.take_playout(&call);
+    f.core.take_source(&mic, "mic-a");
+    f.adm.broken = {"speaker-broken", "mic-broken"};
+    f.adm.diary.clear();
+    f.core.switch_devices("mic-broken", "speaker-broken");
+    check(f.adm.playing == &call && call.started && std::string(call.device()) == "speaker-a", "the call keeps the speaker it had");
+    check(f.adm.recording == &mic && mic.started && f.fallbacks.empty(), "and the microphone it had, not silence");
+    check(f.logged("failed speaker-broken -3") && f.logged("failed mic-broken -3"), "the failures are on record");
+    check(f.core.speaker_failures().count == 1 && f.core.microphone_failures().count == 1, "and counted, each on its side");
+    // Where the old microphone cannot be had either, silence stands in.
+    f.adm.broken = {"mic-c", "mic-a"};
+    f.core.switch_devices("mic-c", "speaker-a");
+    check(!mic.started && f.fallbacks.size() == 1 && f.fallbacks[0] == &mic, "with neither microphone, the call goes on with silence");
+    f.adm.broken.clear();
+    f.core.switch_devices("mic-d", "speaker-a");
+    check(mic.started && f.fallbacks.empty() && f.adm.recording == &mic, "a source on silence takes the next microphone chosen");
 }
 // A source goes as the module lets it go: its fallback first, then the core.
 void StopAll(Fixture &f, Source &source) {
@@ -737,6 +782,8 @@ int main() {
     a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle();
     a_restore_that_fails_too_lets_the_streams_idle();
     a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goes();
+    a_switch_during_a_call_moves_the_streams_that_are_up();
+    a_switch_to_a_device_that_will_not_start_keeps_the_call_on_the_old_one();
     the_state_follows_the_microphone_from_silence_to_the_device_and_back();
     the_state_says_the_speaker_plays_after_a_failed_start_handed_back();
     a_failure_of_the_speaker_is_not_hidden_by_a_later_one_of_the_microphone();

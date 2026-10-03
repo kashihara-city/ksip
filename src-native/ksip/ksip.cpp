@@ -111,8 +111,9 @@ int detail_log(re_printf *pf, void *arg) {
 // decided as each stream opens, the default in place of a device that is not
 // there (device_selection.cc, alert_player.h). baresip reads the devices out
 // of its configuration when a call's audio starts, so the configuration is
-// what changes here; a call that is up keeps the devices it opened, and the
-// app does not switch while one is up. baresip's own auplay command would
+// what changes here for the calls to come; a call that is up is moved onto
+// them by the audio module (ksip_audio_switch), so that a choice made during
+// a call reaches it. baresip's own auplay command would
 // also move the alert sounds onto the call's player, which only takes the
 // call's 48 kHz, so the alert stays with its own player (ksip_alert) and
 // just follows the speaker.
@@ -125,7 +126,10 @@ int audio_devices(re_printf *pf, void *arg) {
     str_ncpy(cfg->audio.src_dev, microphone.c_str(), sizeof(cfg->audio.src_dev));
     str_ncpy(cfg->audio.play_dev, speaker.c_str(), sizeof(cfg->audio.play_dev));
     str_ncpy(cfg->audio.alert_dev, speaker.c_str(), sizeof(cfg->audio.alert_dev));
-    info("ksip: audio devices from the next call on, microphone %s, speaker %s\n", microphone.c_str(), speaker.c_str());
+    info("ksip: audio devices, microphone %s, speaker %s\n", microphone.c_str(), speaker.c_str());
+    static const char switch_command[] = "ksip_audio_switch";
+    const int err = cmd_process_long(baresip_commands(), switch_command, sizeof(switch_command) - 1, pf, nullptr);
+    if (err) warning("ksip: the calls that are up could not be moved onto the devices (%m)\n", err);
     return re_hprintf(pf, "Audio devices set\n");
 }
 const cmd commands[] = {
@@ -134,7 +138,7 @@ const cmd commands[] = {
     {"ksip_action", 0, CMD_PRM, "Operate a specific call", action},
     {"ksip_parking", 0, CMD_PRM, "Watch up to fifty-four numbers through dialog-state subscriptions", subscriptions::configure},
     {"ksip_shutdown", 0, 0, "Release KSIP subscriptions before quit", subscriptions::shutdown},
-    {"ksip_audio_devices", 0, CMD_PRM, "Use these microphone and speaker endpoint ids from the next call on", audio_devices},
+    {"ksip_audio_devices", 0, CMD_PRM, "Use these microphone and speaker endpoint ids, for the calls that are up too", audio_devices},
     {"ksip_detail_log", 0, CMD_PRM, "Turn the detail log on or off while running", detail_log},
 };
 int init() {

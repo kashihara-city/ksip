@@ -1670,11 +1670,11 @@ async fn initialize(s: Shared) {
         s.borrow_mut().show_error(e);
     }
 }
-/// Hands the saved microphone and speaker to the running engine for the
-/// calls from now on. The engine used to be restarted for a change of
-/// device, which meant a new registration and a second or more without a
-/// phone. The phone is in maintenance, so no call is up: the change reaches
-/// the next call and no running one.
+/// Hands the saved microphone and speaker to the running engine: for the
+/// calls to come, and for a call that is up, which the engine moves onto them
+/// at once (ksip_audio_switch). The engine used to be restarted for a change
+/// of device, which meant a new registration and a second or more without a
+/// phone.
 async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), String> {
     let endpoints = s.borrow().services.resolve_audio_endpoints(settings);
     request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
@@ -1685,29 +1685,40 @@ async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), St
     p.take_endpoints(&endpoints);
     Ok(())
 }
+/// Saves a microphone or speaker chosen from the list (or "default"), and
+/// says whether an engine runs to hand it to.
+fn save_audio_choice(s: &Shared, kind: &str, device: String) -> Result<(Settings, bool), String> {
+    let mut p = s.borrow_mut();
+    if !matches!(kind, "microphone" | "speaker")
+        || (device != "default" && !p.view.devices.iter().any(|entry| entry.kind == kind && entry.id == device))
+    {
+        return Err(message("SETTINGS_AUDIO_DEVICE_INVALID"));
+    }
+    let mut settings = p.services.settings()?;
+    if kind == "microphone" {
+        settings.microphone = device;
+    } else {
+        settings.speaker = device;
+    }
+    validate(&settings)?;
+    p.services.save_settings(&settings)?;
+    p.view.settings = settings.clone();
+    Ok((settings, p.link.is_some()))
+}
 async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(), String> {
-    let owner = enter_maintenance(s).await?;
-    let saved = {
-        let mut p = s.borrow_mut();
-        (|| -> Result<(Settings, bool), String> {
-            if !matches!(kind, "microphone" | "speaker")
-                || (device != "default" && !p.view.devices.iter().any(|entry| entry.kind == kind && entry.id == device))
-            {
-                return Err(message("SETTINGS_AUDIO_DEVICE_INVALID"));
-            }
-            let mut settings = p.services.settings()?;
-            if kind == "microphone" {
-                settings.microphone = device;
-            } else {
-                settings.speaker = device;
-            }
-            validate(&settings)?;
-            p.services.save_settings(&settings)?;
-            p.view.settings = settings.clone();
-            Ok((settings, p.link.is_some()))
-        })()
+    let owner = match enter_maintenance(s).await {
+        Ok(owner) => owner,
+        // A call is up: the choice goes to the engine at once, which moves
+        // the call onto it. Without the maintenance, which a call refuses,
+        // and without a restart when the engine does not take it, which would
+        // end the call; the choice is saved either way, for the next start.
+        Err(e) if e == message("CALL_IN_PROGRESS") => {
+            let (settings, running) = save_audio_choice(s, kind, device)?;
+            return if running { apply_audio_endpoints(s, &settings).await } else { Ok(()) };
+        }
+        Err(e) => return Err(e),
     };
-    let outcome = match saved {
+    let outcome = match save_audio_choice(s, kind, device) {
         Err(e) => Err(e),
         Ok((_, false)) => Ok(false),
         Ok((settings, true)) => match apply_audio_endpoints(s, &settings).await {

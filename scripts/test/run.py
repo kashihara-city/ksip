@@ -11,7 +11,7 @@ SUITE = [
     ('offline', 'rust.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'audio-devices.py'),
     ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'settings-dialog.py'), ('offline', 'no-secrets.py'),
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'), ('offline', 'sbom.py'),
-    ('device', 'webrtc-device.ps1'),
+    ('device', 'webrtc-device.ps1'), ('device', 'pbx-device-switch.py'),
     ('loopback', 'loopback-control.py'), ('loopback', 'loopback-call.py'), ('loopback', 'loopback-gain.py'), ('loopback', 'loopback-silent-mic.py'), ('loopback', 'loopback-trust.py'), ('loopback', 'loopback-keepalive.py'), ('loopback', 'loopback-transfer-notify.py'), ('loopback', 'loopback-subscription-retry.py'),
     ('pbx', 'pbx-transfer.py'), ('pbx', 'pbx-codec.py'), ('pbx', 'pbx-tcp.py'), ('pbx', 'pbx-keepalive.py'), ('pbx', 'pbx-tls.py'), ('pbx', 'pbx-osrtp.py'), ('pbx', 'pbx-pai.py'), ('pbx', 'pbx-blf-54.py'), ('pbx', 'pbx-dtmf.py'),
     ('pbx', 'pbx-record-switch.py'), ('pbx', 'pbx-early-media.py'), ('pbx', 'pbx-playback.py'), ('pbx', 'pbx-live-aec.py'),

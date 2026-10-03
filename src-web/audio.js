@@ -115,7 +115,9 @@ export function init(){
   $('open-sound-control').addEventListener('click',()=>invoke('open_sound_control').catch(e=>{setError(String(e));logUi('open sound control',e);render();}));
   for(const kind of kinds)$(kind).addEventListener('change',async()=>{
     const previous=state.settings[kind],device=$(kind).value;
-    $(kind+'-volume-status').textContent=t('RECONNECTING');
+    // During a call the engine moves the call onto the device; otherwise a
+    // device it does not take restarts it.
+    $(kind+'-volume-status').textContent=t(state.calls.length?'AUDIO_SWITCHING':'RECONNECTING');
     try{await run(()=>invoke('select_audio_device',{kind,device}));}
     catch{$(kind).value=previous;}
   });

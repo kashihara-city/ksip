@@ -33,6 +33,7 @@ struct auplay_st {
     // The endpoint this player asked for, so that it can take the stream back.
     char device_name[160];
     const char *device() const { return device_name; }
+    void set_device(const char *device) { str_ncpy(device_name, device && device[0] ? device : "default", sizeof(device_name)); }
 };
 struct ausrc_st {
     ausrc_read_h *handler;
@@ -54,6 +55,9 @@ ksip_audio *bridge();
 // from whoever had it.
 int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handler, void *arg);
 int allocate_source(ausrc_st **out, const char *device, ausrc_read_h *handler, void *arg);
+// The devices chosen again while a call is up, taken by the streams that
+// are up now (session_core.h's switch_devices); null leaves a side alone.
+void switch_devices(const char *microphone, const char *speaker);
 // The session's part of the module's state (audio_state.h): "microphone"
 // and "speaker", added to `audio`.
 void add_state(odict *audio);

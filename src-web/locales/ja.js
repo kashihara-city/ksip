@@ -67,6 +67,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_MONITOR_START_FAILED:'Windowsのマイク監視を開始できません',
       AUDIO_OUTPUT_LEVEL:'出力レベル',
       AUDIO_REFRESH:'音声デバイスを更新',
+      AUDIO_SWITCHING:'切り替え中…',
       AUDIO_SAMPLE_FORMAT_UNSUPPORTED:'選択した音声デバイスのサンプル形式には対応していません',
       AUDIO_SPEAKER:'スピーカー',
       AUDIO_SPEAKER_DEFAULT:'Windowsの既定の通信スピーカー',

@@ -67,6 +67,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_MONITOR_START_FAILED:'The Windows microphone monitor could not be started',
       AUDIO_OUTPUT_LEVEL:'Output level',
       AUDIO_REFRESH:'Refresh audio devices',
+      AUDIO_SWITCHING:'Switching…',
       AUDIO_SAMPLE_FORMAT_UNSUPPORTED:'The sample format of the chosen audio device is not supported',
       AUDIO_SPEAKER:'Speaker',
       AUDIO_SPEAKER_DEFAULT:'Windows default communication speaker',

@@ -67,6 +67,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_MONITOR_START_FAILED:'無法啟動 Windows 的麥克風監看',
       AUDIO_OUTPUT_LEVEL:'輸出音量',
       AUDIO_REFRESH:'重新整理音訊裝置',
+      AUDIO_SWITCHING:'切換中…',
       AUDIO_SAMPLE_FORMAT_UNSUPPORTED:'不支援所選音訊裝置的取樣格式',
       AUDIO_SPEAKER:'喇叭',
       AUDIO_SPEAKER_DEFAULT:'Windows 預設通訊喇叭',
