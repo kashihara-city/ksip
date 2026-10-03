@@ -486,6 +486,24 @@ button {
   border-radius:9px;
   background:#f8faf9;
 }
+/* What "No Windows Firewall prompt" decides, boxed as the calibration is;
+   while it is on, a bar on the left says it holds them. */
+.fw-scope {
+  margin-top:12px;
+  padding:12px;
+  border:1px solid #dce5e0;
+  border-radius:9px;
+  background:#f8faf9;
+}
+.fw-scope.active {
+  border-left:4px solid #246650;
+  padding-left:9px;
+  background:#f1f6f3;
+}
+.fw-scope > .check:first-child {
+  margin-top:0;
+  font-weight:600;
+}
 .calibration strong {
   font-size:12px;
 }

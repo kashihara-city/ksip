@@ -163,7 +163,7 @@ impl Services {
         // here until the engine has connected, so the port is never free.
         let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
         let ctrl = listener.local_addr().map_err(err)?.port();
-        if ctrl == s.sip_port || (s.rtp_port..=s.rtp_port + 20).contains(&ctrl) {
+        if (s.sip_port != 0 && ctrl == s.sip_port) || (s.rtp_port != 0 && (s.rtp_port..=s.rtp_port + 20).contains(&ctrl)) {
             return Err(message("ENGINE_CONTROL_PORT_TAKEN"));
         }
         let (address, adapter) = Self::binding(s)?;
@@ -258,7 +258,9 @@ impl Services {
         }
         put(format!("ksip_microphone_gain {}", s.microphone_gain));
         put(format!("ksip_speaker_gain {}", s.speaker_gain));
-        put(format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20));
+        // 0: RTP and RTCP on ports the system picks (the libre change in
+        // scripts/build/patch-baresip.py); otherwise a range of twenty.
+        put(if s.rtp_port == 0 { "rtp_ports 0".to_string() } else { format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20) });
         put("rtp_timeout 60".into());
         put(format!("ksip_ctrl_connect 127.0.0.1:{ctrl}"));
         for module in [
@@ -362,6 +364,7 @@ mod tests {
             assert!(config.contains("ksip_aec_enabled yes"));
             assert!(config.contains("ksip_raw_microphone yes") && config.contains("ksip_raw_speaker yes"), "RAW unless turned off");
             assert!(config.contains("filter_registrar UDP,TCP,TLS"), "requests only from the registrar, by default");
+            assert!(config.contains(":17060\n") && config.contains("rtp_ports 17100-17120"), "ports of KSIP's own as set");
             assert!(config.contains("ksip_high_pass yes"));
             assert!(config.contains("ksip_noise_suppression high"));
             assert!(config.contains("ksip_agc no"));

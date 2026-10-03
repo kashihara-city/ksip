@@ -175,8 +175,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             network_adapter: String::new(),
-            sip_port: 5060,
-            rtp_port: 10000,
+            // 0: ports the system picks, which the Windows Firewall does not
+            // ask about (no listener of a port of KSIP's own choosing).
+            sip_port: 0,
+            rtp_port: 0,
             microphone: "default".into(),
             speaker: "default".into(),
             microphone_gain: 100,
@@ -944,10 +946,13 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     if !s.network_adapter.trim().is_empty() {
         crate::native::adapter_address(s.network_adapter.trim())?;
     }
-    if s.sip_port < 1024 || s.rtp_port < 1024 || s.rtp_port > 65400 || !s.rtp_port.is_multiple_of(2) {
+    // 0 is a port the system picks; a port of KSIP's own is 1024 or above.
+    let sip = s.sip_port == 0 || s.sip_port >= 1024;
+    let rtp = s.rtp_port == 0 || ((1024..=65400).contains(&s.rtp_port) && s.rtp_port.is_multiple_of(2));
+    if !sip || !rtp {
         return Err(message("SETTINGS_PORT_RANGE"));
     }
-    if (s.rtp_port..=s.rtp_port + 20).contains(&s.sip_port) {
+    if s.sip_port != 0 && s.rtp_port != 0 && (s.rtp_port..=s.rtp_port + 20).contains(&s.sip_port) {
         return Err(message("SETTINGS_PORT_OVERLAP"));
     }
     for dev in [&s.microphone, &s.speaker] {
@@ -1284,6 +1289,14 @@ mod tests {
         let rejected = |s: Settings| validate(&s).is_err();
         assert!(rejected(Settings { microphone: "default\nmodule evil".into(), ..Settings::default() }));
         assert!(rejected(Settings { sip_port: 10000, rtp_port: 10000, ..Settings::default() }));
+        // 0 is a port the system picks, for either; a port of KSIP's own is 1024 or above.
+        assert_eq!((Settings::default().sip_port, Settings::default().rtp_port), (0, 0), "the system's ports, by default");
+        assert!(!rejected(Settings::default()));
+        assert!(!rejected(Settings { sip_port: 0, rtp_port: 10000, ..Settings::default() }));
+        assert!(!rejected(Settings { sip_port: 5060, rtp_port: 0, ..Settings::default() }));
+        assert!(rejected(Settings { sip_port: 1023, ..Settings::default() }));
+        assert!(rejected(Settings { rtp_port: 2, ..Settings::default() }));
+        assert!(rejected(Settings { rtp_port: 10001, ..Settings::default() }));
         assert!(rejected(Settings { aec_delay_ms: 501, ..Settings::default() }));
         assert!(rejected(Settings { noise_suppression: "loud".into(), ..Settings::default() }));
         assert!(rejected(Settings { ca_file: "C:\\ca.pem\nsip_verify_server no".into(), ..Settings::default() }));
@@ -1779,7 +1792,7 @@ mod tests {
         assert_eq!((s.sip_port, s.aec, s.browser_integration, s.tray_after_call), (5080, false, true, -1));
         assert_eq!(s.language, "7");
         assert_eq!(unreadable, ["rtp_port", "agc", "register_interval", "detail_log"]);
-        assert_eq!((s.rtp_port, s.agc, s.register_interval), (10000, false, 300), "what cannot be read keeps its default");
+        assert_eq!((s.rtp_port, s.agc, s.register_interval), (0, false, 300), "what cannot be read keeps its default");
     }
     #[test]
     fn a_number_is_reduced_to_what_the_registrar_dials() {
@@ -1964,7 +1977,7 @@ mod tests {
             assert_eq!(empty["account_valid"], true);
             assert_eq!(empty["valid"], false, "but nobody signed in: a connect would not go ahead");
             assert_eq!(empty["error"], message("SIP_ACCOUNT_REQUIRED"));
-            assert_eq!(empty["settings"]["sip_port"], 5060);
+            assert_eq!(empty["settings"]["sip_port"], 0);
             assert_eq!(empty["account"]["server"], crate::storage::DEFAULT_SERVER);
             assert_eq!(empty["account"]["signed_in"], false);
             assert_eq!(empty["stored"]["aec"], serde_json::json!({"type": "REG_DWORD", "value": 1}));
@@ -2042,7 +2055,7 @@ mod tests {
         let exported = export_settings(&guard.store());
         let back = import_settings(&exported.to_string(), |_| false).unwrap();
         assert!(back["invalid"].as_array().unwrap().is_empty() && back["unreadable"].as_array().unwrap().is_empty());
-        assert_eq!(back["settings"]["sip_port"], 5060);
+        assert_eq!(back["settings"]["sip_port"], 0);
         assert_eq!(back["buttons"].as_array().unwrap().len(), CustomButton::COUNT);
     }
     #[test]

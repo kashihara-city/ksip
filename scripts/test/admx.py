@@ -16,6 +16,9 @@ DEFAULT_EXCEPTIONS = {
     # KSIP's default -1 (never) is what disabling the policy gives; the dialog
     # offers ten seconds as a starting point for enabling it.
     'tray_after_call',
+    # KSIP's default 0 is ports Windows picks, which a policy does not fix: it
+    # fixes a port of KSIP's own, and the dialog offers the usual one to start.
+    'sip_port', 'rtp_port',
 }
 # Values the template writes that mean the same as KSIP's default.
 SAME_MEANING = {('transport', 'udp'): ''}
