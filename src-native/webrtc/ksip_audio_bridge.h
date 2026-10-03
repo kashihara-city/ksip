@@ -115,6 +115,12 @@ void ksip_audio_stop_recording(ksip_audio *audio);
 void ksip_audio_detach_recording(ksip_audio *audio);
 int ksip_audio_recording_running(ksip_audio *audio);
 int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
+/* Whether an endpoint is there for the calls: among the active endpoints
+   WebRTC lists for the side (1), or not (0, also for a bad argument). The one
+   test of "is the chosen device there" in the engine: the calls open the
+   default in place of one that is not (device_selection.cc), and the alert
+   sounds do the same through it (alert_player.h). "default" is always there. */
+int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout);
 /* The endpoint open on each side, by name and id: the one WebRTC last opened,
    whichever way it was chosen (the default in place of a device that is not
    there, or the default WebRTC moves to by itself when the device in use goes

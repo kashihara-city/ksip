@@ -3,7 +3,8 @@
 // the rule the calls follow too (device_selection.cc). baresip's wasapi
 // module plays them, as before; this player, "ksip_alert", only decides the
 // endpoint wasapi is given, as each sound starts, so a speaker that is back
-// is used again from the next sound on. Given an endpoint Windows still
+// is used again from the next sound on. Whether the speaker is there is the
+// bridge's one test (ksip_audio_endpoint_listed). Given an endpoint Windows still
 // knows but cannot use, wasapi opened nothing and the phone rang silently.
 //
 // Threads: baresip's main thread (menu starts the sounds there). Lifetime:

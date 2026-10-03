@@ -132,6 +132,12 @@ void ksip_audio::StoreDevice(bool playout, const char *name, const char *id) {
   stored_id = id ? id : "";
 }
 
+extern "C" int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout) {
+  if (!audio || !id || !id[0]) return 0;
+  if (std::strcmp(id, "default") == 0) return 1;
+  return audio->Listed(id, playout != 0) ? 1 : 0;
+}
+
 extern "C" int ksip_audio_get_device_info(ksip_audio *audio,
                                             ksip_audio_device_info *info) {
   if (!audio || !info) return -1;

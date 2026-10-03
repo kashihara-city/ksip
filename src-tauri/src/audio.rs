@@ -169,6 +169,10 @@ fn flow_of(kind: &str) -> EDataFlow {
 /// `unplugged()`, and one it does not know fails GetDevice with
 /// ERROR_NOT_FOUND (both "not there" to `error`). Every look at a chosen
 /// device goes through here: the volume, the meters and the calibration.
+/// It is the engine's test in the app's process: the engine takes a device
+/// for there when WebRTC lists it among the active endpoints
+/// (ksip_audio_endpoint_listed, device_selection.cc), and opens the default
+/// in its place otherwise, which is what the window then shows.
 ///
 /// # Safety
 /// COM must be initialised on the calling thread while the device is used.

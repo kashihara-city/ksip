@@ -1,10 +1,5 @@
-// The alert sounds' player; see alert_player.h. Apart from the other files of
-// the module, as microphone_mute.cpp is, for the Windows audio headers.
-#include <windows.h>
-#include <mmdeviceapi.h>
-#include <re.h>
-#include <baresip.h>
-#include <string>
+// The alert sounds' player; see alert_player.h.
+#include "audio_session.h"
 #include "alert_player.h"
 
 namespace alert_player {
@@ -17,27 +12,12 @@ struct Alert {
 };
 void destroy(void *arg) { mem_deref(static_cast<Alert *>(arg)->inner); }
 
-// Whether Windows has the render endpoint with this id and can use it now
-// (DEVICE_STATE_ACTIVE: not unplugged, not disabled), the test the bridge
-// makes against the endpoints WebRTC lists, which are the active ones.
+// Whether the chosen speaker is there, by the test the calls go by (the
+// bridge's list of the endpoints WebRTC can open), so that the ringtone and
+// the call are never on different speakers for it.
 bool usable(const char *id) {
-    // On baresip's main thread COM is up already (microphone_mute.cpp); a
-    // thread without it gets it for the look.
-    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    IMMDeviceEnumerator *devices = nullptr;
-    IMMDevice *device = nullptr;
-    DWORD state = 0;
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&devices));
-    if (SUCCEEDED(hr)) {
-        // Endpoint ids are plain ASCII ({0.0.0.00000000}.{GUID}).
-        std::wstring wide(id, id + strlen(id));
-        hr = devices->GetDevice(wide.c_str(), &device);
-    }
-    if (SUCCEEDED(hr)) hr = device->GetState(&state);
-    if (device) device->Release();
-    if (devices) devices->Release();
-    if (SUCCEEDED(com)) CoUninitialize();
-    return SUCCEEDED(hr) && (state & DEVICE_STATE_ACTIVE);
+    ksip_audio *bridge = playback_session::bridge();
+    return bridge && ksip_audio_endpoint_listed(bridge, id, 1);
 }
 
 int allocate(struct auplay_st **out, const struct auplay *, struct auplay_prm *prm, const char *device,
