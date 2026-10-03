@@ -19,9 +19,13 @@
 
 namespace {
 // For the capture and the playout: whether its stream is to take RAW mode,
-// and how the last one was opened (0 not yet, 1 RAW, 2 without it).
+// what its properties were last set to, and how the last stream that opened
+// was opened (0 not yet, 1 RAW, 2 without it). A stream can take RAW mode in
+// its properties and still fail to open (Windows' privacy settings refuse
+// the microphone at Initialize), so it counts only once it has opened.
 struct RawMode {
   std::atomic<bool> wanted{true};
+  std::atomic<int> noted{0};
   std::atomic<int> taken{0};
 };
 RawMode capture_raw, playout_raw;
@@ -50,13 +54,17 @@ std::string ksip_audio_bridge::OpenedEndpoint(bool playout) {
   return endpoint.id;
 }
 
-// Asked and told by WebRTC's CoreAudio as a stream gets its properties (the
-// RAW patch in scripts/build/patch-webrtc.py).
+// Asked and told by WebRTC's CoreAudio as a stream gets its properties and
+// once it has opened (the RAW patch in scripts/build/patch-webrtc.py).
 bool webrtc::webrtc_win::core_audio_utility::KsipWantRaw(bool capture) {
   return (capture ? capture_raw : playout_raw).wanted;
 }
 void webrtc::webrtc_win::core_audio_utility::KsipNoteRaw(bool capture, bool raw) {
-  (capture ? capture_raw : playout_raw).taken = raw ? 1 : 2;
+  (capture ? capture_raw : playout_raw).noted = raw ? 1 : 2;
+}
+void webrtc::webrtc_win::core_audio_utility::KsipNoteOpened(bool capture) {
+  RawMode& mode = capture ? capture_raw : playout_raw;
+  mode.taken = mode.noted.load();
 }
 
 extern "C" void ksip_audio_set_raw(int capture, int playout) {

@@ -56,14 +56,27 @@ RAW_END = "// KSIP RAW CAPTURE END"
 RAW_FALLBACK_BEGIN = "// KSIP RAW FALLBACK BEGIN"
 RAW_FALLBACK_END = "// KSIP RAW FALLBACK END"
 DEVICE_DECLARATION = ("// KSIP: defined by the bridge: the endpoint a stream "
-                      "opens.\nvoid KsipNoteDevice(bool capture, "
-                      "const std::string& id);")
+                      "opens, and that it opened (the RAW mode noted for it "
+                      "then stands).\nvoid KsipNoteDevice(bool capture, "
+                      "const std::string& id);\nvoid KsipNoteOpened(bool capture);")
 DEVICE_ANCHOR = """  RTC_LOG(LS_INFO) << "Unique device identifier: device_id=" << device_id
                    << ", role=" << RoleToString(role);
 """
 DEVICE_CALL = """  // KSIP: the endpoint this stream opens, for the bridge.
   core_audio_utility::KsipNoteDevice(GetDataFlow() == eCapture, device_id_);
 """
+OPENED_ANCHOR = """  audio_client_ = audio_client;
+  audio_session_control_ = audio_session_control;
+
+  return true;
+}"""
+OPENED_CALL = """  audio_client_ = audio_client;
+  audio_session_control_ = audio_session_control;
+
+  // KSIP: opened; the RAW mode noted for it stands.
+  core_audio_utility::KsipNoteOpened(GetDataFlow() == eCapture);
+  return true;
+}"""
 ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
@@ -202,6 +215,9 @@ def patch_raw_capture(source: Path):
         "HRESULT SetClientProperties(IAudioClient2* client, "
         "bool raw_capture = false);",
     ], new_declaration, "declaration")
+    header_text = header_text.replace(
+        "\n// KSIP: defined by the bridge: the endpoint a stream opens."
+        "\nvoid KsipNoteDevice(bool capture, const std::string& id);", "")
     if DEVICE_DECLARATION not in header_text:
         header_text = header_text.replace(
             new_declaration, new_declaration + "\n" + DEVICE_DECLARATION, 1)
@@ -224,6 +240,14 @@ def patch_raw_capture(source: Path):
             raise RuntimeError(
                 "Unsupported WebRTC CoreAudio base: device anchor missing")
         base_text = base_text.replace(DEVICE_ANCHOR, DEVICE_ANCHOR + DEVICE_CALL, 1)
+    # A stream whose properties took RAW mode may still fail to open (a
+    # microphone Windows' privacy settings refuse fails at Initialize): what
+    # was noted counts once it has opened.
+    if OPENED_CALL not in base_text:
+        if base_text.count(OPENED_ANCHOR) != 1:
+            raise RuntimeError(
+                "Unsupported WebRTC CoreAudio base: opened anchor missing")
+        base_text = base_text.replace(OPENED_ANCHOR, OPENED_CALL, 1)
     base.write_text(base_text, encoding="utf-8")
 
 
