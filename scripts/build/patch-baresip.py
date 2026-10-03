@@ -2,11 +2,15 @@
 # What is changed, and why. Each file is first restored from the pinned
 # archive, so running this twice gives the same result.
 #
-# Behaviour of the SIP engine (the only change of that kind):
+# Behaviour of the SIP engine:
 #   re/src/sipevent/subscribe.c   an un-SUBSCRIBE is over with its 2xx; libre
 #                                 would otherwise hold the SIP stack up to ten
 #                                 seconds for a terminating NOTIFY that some
 #                                 PBXs never send, and quitting took that long.
+#   re/src/rtp/rtp.c              "rtp_ports 0", which libre refused, puts RTP
+#                                 and RTCP on ports the system picks (no
+#                                 listener the Windows Firewall asks about).
+#                                 A port range takes the code it always did.
 #
 # Building and embedding (no change to what goes on the wire):
 #   re/cmake/re-config.cmake      empty the OpenSSL cache variables when neither
@@ -17,7 +21,10 @@
 #                                 the KSIP modules copied in below and the
 #                                 embedded entry point.
 #
-# Nothing else in re or baresip is touched. The SRTP module in particular is
+# Nothing else in re or baresip is touched; baresip itself is as released.
+# What the system-picked ports need besides (an empty datagram that opens the
+# way back for a DTLS handshake the peer starts) is the ksip module's
+# (system_ports.cpp), for those calls alone. The SRTP module in particular is
 # pristine: KSIP's osrtp / sdes / dtls map to baresip's own srtp / srtp-mand /
 # dtls_srtp modes.
 from pathlib import Path
@@ -36,7 +43,7 @@ def restore(archive_name: str, base: Path, relative_paths: list[str]):
 
 
 re_base = ROOT / "temp/vendor/re"
-restore("re", re_base, ["cmake/re-config.cmake", "src/sipevent/subscribe.c"])
+restore("re", re_base, ["cmake/re-config.cmake", "src/sipevent/subscribe.c", "src/rtp/rtp.c"])
 
 # Build: libre's CMake leaves the OpenSSL variables unset when TLS comes from
 # LibreSSL, and a later reference to them then fails.
@@ -76,6 +83,83 @@ text = text.replace(wait, '''		/* KSIP: a subscription the application dropped i
 			tmr_start(&sub->tmr, NOTIFY_TIMEOUT,
 				  notify_timeout_handler, sub);''')
 subscribe.write_text(text)
+
+# "rtp_ports 0": RTP and RTCP on ports the system picks. A socket bound to a
+# port of its own choosing is a listener to the Windows Firewall, which then
+# asks whether to allow the program on public and private networks; one the
+# system gives a port to is not, and the replies to what it sends come back
+# through the firewall's state. libre refused a range of 0-0 (EINVAL), so the
+# new path runs for that setting alone; a range takes the same code as before.
+# The pair is the usual one, an even RTP port and RTCP on the next (RFC 3550
+# section 11), which the SDP implies without saying it: a peer sends RTCP
+# there whatever a=rtcp says (Asterisk does). The system hands ports out
+# nearly in turn, so a second socket lands next to the first; when it does
+# not, it becomes the RTP candidate and another is asked for. Should no pair
+# come of it, the last two are kept: the audio goes, the peer's RTCP may not
+# arrive (the ksip module warns of it).
+rtp = re_base / "src/rtp/rtp.c"
+text = rtp.read_text()
+range_listen = "static int udp_range_listen(struct rtp_sock *rs, const struct sa *ip,\n"
+check = "\tif (!ip || min_port >= max_port || !recvh)\n"
+listen = "\t\terr = udp_range_listen(rs, ip, min_port, max_port);\n"
+if text.count(range_listen) != 1 or text.count(check) != 1 or text.count(listen) != 1:
+    raise SystemExit("patch-baresip: rtp_listen in rtp.c has changed")
+text = text.replace(range_listen, '''/* KSIP: "rtp_ports 0", RTP and RTCP on ports the system picks: an even
+ * RTP port and RTCP on the next, as near as the system allows. */
+static int udp_system_listen(struct rtp_sock *rs, const struct sa *ip)
+{
+\tstruct udp_sock *us_rtp = NULL, *us_rtcp = NULL;
+\tstruct sa any = *ip, rtp, rtcp;
+\tint tries = 64;
+\tint err;
+
+\tsa_set_port(&any, 0);
+
+\terr = udp_listen(&us_rtp, &any, udp_recv_handler, rs);
+\tif (!err)
+\t\terr = udp_local_get(us_rtp, &rtp);
+
+\twhile (!err) {
+\t\terr = udp_listen(&us_rtcp, &any, rtcp_recv_handler, rs);
+\t\tif (!err)
+\t\t\terr = udp_local_get(us_rtcp, &rtcp);
+\t\tif (err)
+\t\t\tbreak;
+\t\tif ((sa_port(&rtp) % 2 == 0 &&
+\t\t     sa_port(&rtcp) == sa_port(&rtp) + 1) || !--tries)
+\t\t\tbreak;
+
+\t\t/* the second socket is the next RTP candidate */
+\t\tmem_deref(us_rtp);
+\t\tus_rtp = us_rtcp;
+\t\tus_rtcp = NULL;
+\t\trtp = rtcp;
+\t\tudp_handler_set(us_rtp, udp_recv_handler, rs);
+\t}
+
+\tif (err) {
+\t\tmem_deref(us_rtcp);
+\t\tmem_deref(us_rtp);
+\t\treturn err;
+\t}
+
+\trs->local = *ip;
+\tsa_set_port(&rs->local, sa_port(&rtp));
+\trs->sock_rtp = us_rtp;
+\trs->sock_rtcp = us_rtcp;
+
+\treturn 0;
+}
+
+
+''' + range_listen)
+text = text.replace(check, "\tif (!ip || (min_port >= max_port && (min_port || max_port)) ||\n\t    !recvh)\n")
+text = text.replace(listen, '''\t\tif (!min_port && !max_port)
+\t\t\terr = udp_system_listen(rs, ip);
+\t\telse
+\t\t\terr = udp_range_listen(rs, ip, min_port, max_port);
+''')
+rtp.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
 restore("baresip", baresip, ["src/main.c", "CMakeLists.txt"])

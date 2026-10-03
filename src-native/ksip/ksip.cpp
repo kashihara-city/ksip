@@ -15,6 +15,7 @@
 #include "sip_account.h"
 #include "calls.h"
 #include "subscriptions.h"
+#include "system_ports.h"
 #include "transfer.h"
 #include "trust_state.h"
 
@@ -50,6 +51,7 @@ void event(bevent_ev ev, bevent *e, void *) {
     auto c = bevent_get_call(e);
     if (!c || !call_id(c)) return;
     std::string id = call_id(c);
+    system_ports::on_event(ev, c);
     if (calls::on_event(ev, e, c, id)) return;
     transfer::on_event(ev, e, c, id);
     if (ev == BEVENT_CALL_CLOSED) {
