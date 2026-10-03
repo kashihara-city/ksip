@@ -1,13 +1,13 @@
 // The subscriptions this phone holds at the server: the dialog state of the
 // numbers the buttons watch (RFC 4235), and the message summary of its own
-// voicemail box. It owns the slots, the retry timer and their release.
+// voicemail box. It owns the slots, their retry timers and their release.
 //
 // Threads: baresip's main thread only (commands, SIP events, the timer).
 // Lifetime: module-static state; init() once at module load, close() at
 // unload after the calls and the transfer (ksip.cpp), never re-initialised.
 // Every subscription's reference is dropped from its own closed handler or
-// from clear(); the retry timer is the only thing that outlives a
-// registration, and it is cancelled in close().
+// from clear(); the retry timers are the only thing that outlives a
+// registration, and they are cancelled in close().
 #pragma once
 #include <cmath>
 #include <algorithm>
