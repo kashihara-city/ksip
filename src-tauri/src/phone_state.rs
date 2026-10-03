@@ -43,10 +43,6 @@ pub struct Snapshot {
     /// The same for the speaker, while a call plays on it.
     #[serde(default)]
     pub speaker_raw: Option<bool>,
-    /// The saved microphone or speaker was not there when the engine started,
-    /// so the default is in use. The saved choice stands; nothing is written.
-    pub microphone_missing: bool,
-    pub speaker_missing: bool,
     pub microphone_id: String,
     pub speaker_id: String,
     pub account: AccountView,

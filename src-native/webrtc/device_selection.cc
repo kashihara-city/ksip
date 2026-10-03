@@ -66,9 +66,10 @@ int ksip_audio::SetDevice(const char *id, bool playout, bool &in_place) {
         : adm->RecordingDeviceName(static_cast<uint16_t>(role_index), name, guid);
     if (!result) return Select(playout, role_index, name, guid);
   }
-  // A chosen device that is not there (unplugged, its hub without power):
-  // the call goes through the Windows default communications device, as the
-  // app does for a start without the saved device, rather than failing with
+  // A chosen device that is not there (unplugged, its hub without power,
+  // never on this machine): the call goes through the Windows default
+  // communications device, as the alert sounds do (alert_player.h) and the
+  // window's volume shows, rather than failing with
   // no device, which ended an outgoing call at its answer and left an
   // incoming one silent both ways. The request stays the chosen device, so
   // the next stream once it is back opens it again. Written at warning

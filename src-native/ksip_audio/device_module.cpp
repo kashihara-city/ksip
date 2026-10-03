@@ -1,9 +1,10 @@
 // The audio device module: registers the KSIP source and player with
 // baresip, brings the WebRTC bridge up on the settings, and hands each
 // request for a player or a source to the session, which decides who has
-// the stream.
+// the stream; and the player of the alert sounds (alert_player.h).
 #include "audio_session.h"
 #include "audio_state.h"
+#include "alert_player.h"
 #include "microphone_mute.h"
 #include <cerrno>
 #include <cstring>
@@ -70,9 +71,11 @@ int module_init() {
     playback_session::open(g_audio);
     int error = ausrc_register(&g_source, baresip_ausrcl(), "ksip_audio", AllocateSource);
     error |= auplay_register(&g_player, baresip_auplayl(), "ksip_audio", AllocatePlayout);
+    error |= alert_player::start();
     error |= cmd_register(baresip_commands(), commands, RE_ARRAY_SIZE(commands));
     if (error) {
         cmd_unregister(baresip_commands(), commands);
+        alert_player::stop();
         g_source = static_cast<struct ausrc *>(mem_deref(g_source));
         g_player = static_cast<struct auplay *>(mem_deref(g_player));
         playback_session::close();
@@ -96,6 +99,7 @@ int module_close() {
     g_ready = false;
     g_processing = false;
     cmd_unregister(baresip_commands(), commands);
+    alert_player::stop();
     playback_session::close();
     g_source = static_cast<struct ausrc *>(mem_deref(g_source));
     g_player = static_cast<struct auplay *>(mem_deref(g_player));

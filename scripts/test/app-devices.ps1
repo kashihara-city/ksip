@@ -1,4 +1,4 @@
-﻿# Check that a saved microphone that is not there is replaced by the default without being overwritten, and comes back on refresh.
+﻿# Check that a saved microphone that is not there is handed to the engine as it is, the default serving in its place and shown so, without the choice being overwritten; and that a choice made again reaches the running engine on refresh, without a restart.
 param([string]$Folder = "$PSScriptRoot/../../temp/build/gui-ksip")
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/app-fixture.ps1"
@@ -23,15 +23,16 @@ try {
     $missing=Get-SavedMicrophone
     $app=Start-KsipApp "$Folder/ksip.exe" "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
-    # The engine runs on the default microphone, the notice says so, and the
+    # The engine is given the saved microphone as it is (its streams open the
+    # default in its place), the notice says the default is in use, and the
     # saved choice is untouched.
     $config=Get-Content $configPath -Raw
-    if($config -match [regex]::Escape("audio_source ksip_audio,$missing")){throw 'The engine was given the missing microphone'}
+    if($config -notmatch [regex]::Escape("audio_source ksip_audio,$missing")){throw 'The engine was not given the saved microphone as it is'}
     Wait-Text 'microphone-volume-status' '既定のデバイスを使用中' | Out-Null
     if((Get-SavedMicrophone) -ne $missing){throw 'The saved microphone was overwritten'}
     'PASS: 保存したマイクが無ければ既定で動き、設定は上書きしない'
-    # Once the saved device exists again, refreshing brings the engine back to it.
-    # The button sits on the main screen; the settings dialog is modal and would
+    # A microphone chosen again (here outside the window) reaches the engine
+    # on refresh. The button sits on the main screen; the settings dialog is modal and would
     # take the main screen out of the accessibility tree.
     # The running engine takes the device for its next call, without a restart;
     # the app writes down what it handed over.
@@ -53,7 +54,7 @@ try {
     $end=[DateTime]::UtcNow.AddSeconds(10)
     while(((Get-FallbackNotice) -match '既定のデバイスを使用中') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 300}
     if((Get-FallbackNotice) -match '既定のデバイスを使用中'){throw 'The fallback notice stayed after the refresh'}
-    'PASS: デバイスが戻ったら「音声デバイスを更新」で保存したマイクに戻る'
+    'PASS: 設定し直したマイクは「音声デバイスを更新」で、起動し直さずにエンジンへ渡る'
     @{version=$version;fallbackWithoutOverwrite=$true;refreshRestoresSavedDevice=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-devices-v$version.json"
     'PASS: real KSIP audio device fallback and refresh'

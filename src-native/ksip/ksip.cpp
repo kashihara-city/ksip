@@ -105,13 +105,16 @@ int detail_log(re_printf *pf, void *arg) {
     ksip_audio_set_log_level(on);
     return re_hprintf(pf, "Detail log %s\n", on ? "on" : "off");
 }
-// The microphone and speaker for the calls from now on, as endpoint ids, so
-// that a change of device does not need the engine restarted. baresip reads
-// the devices out of its configuration when a call's audio starts, so the
-// configuration is what changes here; a call that is up keeps the devices it
-// opened, and the app does not switch while one is up. baresip's own auplay
-// command would also move the alert sounds onto the call's player, which
-// only takes the call's 48 kHz, so the alert stays with its own module and
+// The microphone and speaker for the calls from now on, as endpoint ids (or
+// "default"), so that a change of device does not need the engine
+// restarted. They are the choices as saved: which endpoint serves one is
+// decided as each stream opens, the default in place of a device that is not
+// there (device_selection.cc, alert_player.h). baresip reads the devices out
+// of its configuration when a call's audio starts, so the configuration is
+// what changes here; a call that is up keeps the devices it opened, and the
+// app does not switch while one is up. baresip's own auplay command would
+// also move the alert sounds onto the call's player, which only takes the
+// call's 48 kHz, so the alert stays with its own player (ksip_alert) and
 // just follows the speaker.
 int audio_devices(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);

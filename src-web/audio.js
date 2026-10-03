@@ -29,6 +29,26 @@ function deviceWorks(where){
   if(unplugged[where])logUi(where,'device back');
   unplugged[where]=false;
 }
+// The endpoint the calls use for the choice: the chosen device, or the
+// default communications one in its place while it is unplugged, the
+// engine's own rule (device_selection.cc, alert_player.h). The volume and the
+// meter show, and change, what is in use; `inPlace` says the default stands
+// in. The default's own failure is written down apart, so that the chosen
+// one's going and coming stays one line each.
+async function onEndpoint(where,command,args){
+  try{const result=await invoke(command,args);deviceWorks(where);return {result,inPlace:false};}
+  catch(e){
+    if(String(e)!=='AUDIO_DEVICE_UNPLUGGED'||args.device==='default')throw e;
+    logDevice(where,e);
+    try{return {result:await invoke(command,{...args,device:'default'}),inPlace:true};}
+    catch(fallback){logUi(where+' (default)',fallback);throw {inPlace:fallback};}
+  }
+}
+// The error to show and whether it is still to be written down.
+function failure(where,e){
+  if(e&&typeof e==='object'&&'inPlace' in e)return e.inPlace;
+  logDevice(where,e);return e;
+}
 // The level and the mute are Windows' own for the device; either is set when
 // given, and both are read back, so the icons follow what a headset key or
 // another program did within a second. A change the person made always goes
@@ -46,18 +66,17 @@ async function refreshVolume(kind,level=null,mute=null){
   if(waiting&&waiting.device===device){level=waiting.level;mute=waiting.mute;}
   const sequence=++control.sequence;control.pending=true;
   try{
-    const result=await invoke('audio_volume',{kind,device,level,mute});
+    const {result,inPlace}=await onEndpoint('volume '+kind,'audio_volume',{kind,device,level,mute});
     if(sequence!==control.sequence||device!==volumeDevice(kind)||control.dragging)return;
-    deviceWorks('volume '+kind);
     $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';
     const notices=[];
     if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));
-    if(state[kind+'_missing'])notices.push(t('AUDIO_DEVICE_FALLBACK'));
+    if(inPlace)notices.push(t('AUDIO_DEVICE_FALLBACK'));
     if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));
     if(result.muted)notices.push(t('MICROPHONE_MUTED'));
     $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);
   }
-  catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logDevice('volume '+kind,e);}
+  catch(e){const error=failure('volume '+kind,e);control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(error));}
   finally{control.pending=false;render();if(control.queued)refreshVolume(kind);}
 }
 // A change waiting to be sent. The volume and the mute are kept apart: a
@@ -77,11 +96,10 @@ async function refreshPeak(kind){
   // In the tray nobody sees the meter, and not asking lets the microphone close.
   if(!ready||$('configuration').open||peakPending[kind]||state.window_visible===false)return;peakPending[kind]=true;
   try{
-    const result=await invoke('audio_peak',{kind,device:volumeDevice(kind)}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
-    deviceWorks('peak '+kind);
+    const {result}=await onEndpoint('peak '+kind,'audio_peak',{kind,device:volumeDevice(kind)}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
     $(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));
   }
-  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');logDevice('peak '+kind,e);}
+  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');failure('peak '+kind,e);}
   finally{peakPending[kind]=false;}
 }
 export async function pollVolumes(){await Promise.all(kinds.map(k=>refreshVolume(k)));setTimeout(pollVolumes,1000);}

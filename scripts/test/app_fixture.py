@@ -61,10 +61,15 @@ elif sys.argv[1]=='peer':
     try:
         (BASE/'ready').write_text('ready')
         deadline=time.monotonic()+180
+        # Each call is answered once: it stays INCOMING until the PBX's ACK
+        # comes, and answering it again then is refused (EINVAL), which ended
+        # this peer on a slow link.
+        answered=set()
         while time.monotonic()<deadline and not done.exists():
             state=peer.state()
             for c in state['calls']:
-                if c['state']=='INCOMING':peer.action('answer',c['id'])
+                if c['state']=='INCOMING' and c['id'] not in answered:
+                    answered.add(c['id']);peer.action('answer',c['id'])
             time.sleep(.15)
     finally:peer.close()
 elif sys.argv[1]=='caller':

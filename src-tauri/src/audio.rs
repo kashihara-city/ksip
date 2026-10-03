@@ -139,7 +139,12 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
     Ok(result?)
 }
 fn error(e: windows::core::Error) -> String {
-    if e.code() == unplugged().code() {
+    // Not there, either way: an endpoint Windows knows but cannot use, or one
+    // it does not know at all (GetDevice's ERROR_NOT_FOUND: a choice from
+    // another machine, a device removed for good). The engine opens the
+    // default in place of both (device_selection.cc), and the window shows
+    // the default then.
+    if e.code() == unplugged().code() || e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult() {
         return message("AUDIO_DEVICE_UNPLUGGED");
     }
     message_with("AUDIO_DEVICE_FAILED", [e])

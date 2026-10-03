@@ -240,8 +240,6 @@ impl Services {
             microphone_fallback: false,
             microphone_raw: None,
             speaker_raw: None,
-            microphone_missing: false,
-            speaker_missing: false,
             microphone_id: String::new(),
             speaker_id: String::new(),
             account,

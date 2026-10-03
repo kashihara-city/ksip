@@ -1,4 +1,4 @@
-"""Verify that a call whose chosen WASAPI microphone is not there still produces timed RTP: from the Windows default microphone opened in its place when the PC has one, else from silence standing in, with the failed start in the audio module's state; and no input once the call has gone."""
+"""Verify that a call whose chosen WASAPI microphone is not there still produces timed RTP: from the Windows default microphone opened in its place when the PC has one, else from silence standing in, with the failed start in the audio module's state; and no input once the call has gone. And that the ringtone of a chosen speaker that is not there goes to the default speaker (ksip_alert) rather than nowhere."""
 from pathlib import Path
 import array, json, math, os, socket, subprocess, threading, time, wave
 import engine_control
@@ -16,7 +16,7 @@ def source(path):
 
 
 class Phone:
-    def __init__(self, name, sip, ctrl, rtp, microphone):
+    def __init__(self, name, sip, ctrl, rtp, microphone, alert="aufile,NUL"):
         self.name, self.responses, self.events, self.serial = name, {}, [], 0
         self.cv = threading.Condition()
         self.directory = BASE / name
@@ -29,7 +29,8 @@ sip_cuser_random no
 call_max_calls 1
 audio_source {microphone}
 audio_player aufile,NUL
-audio_alert aufile,NUL
+audio_alert {alert}
+audio_path {(ROOT / "temp/build/native/share/baresip").as_posix()}
 ausrc_srate 48000
 auplay_srate 48000
 ausrc_channels 1
@@ -41,6 +42,7 @@ audec_format s16
 rtp_ports {rtp}-{rtp + 20}
 ksip_ctrl_connect 127.0.0.1:{ctrl}
 module g711.dll
+module wasapi.dll
 module ksip_audio.dll
 module aufile.dll
 module ksip_audio_filter.dll
@@ -142,7 +144,8 @@ module_app account.dll
 def main():
     phones = []
     try:
-        receiver = Phone("receiver", 17060, 17444, 18000, "aufile,source.wav")
+        # The receiver rings on a speaker that no machine has.
+        receiver = Phone("receiver", 17060, 17444, 18000, "aufile,source.wav", alert="ksip_alert,{KSIP-NO-SUCH-SPEAKER}")
         phones.append(receiver)
         sender = Phone("sender", 17062, 17445, 18100, "ksip_audio,{KSIP-NO-SUCH-DEVICE}")
         phones.append(sender)
@@ -169,6 +172,9 @@ def main():
         samples = array.array("h", recording.readframes(recording.getnframes()))[0 :: recording.getnchannels()]
     rms = math.sqrt(sum(value * value for value in samples) / max(1, len(samples)))
     log = (sender.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
+    ringing = (receiver.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
+    assert "ksip_alert: speaker {KSIP-NO-SUCH-SPEAKER} is not there" in ringing, ringing
+    print("PASS: the ringtone for a speaker that is not there went to the default speaker")
     assert len(samples) > rate * 3, (len(samples), rate)
     if during["microphone"]["input"] == "device":
         # A PC with a microphone: the default one is opened in place of the

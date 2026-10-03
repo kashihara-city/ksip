@@ -1234,8 +1234,6 @@ impl Phone {
         let v = &mut self.view;
         v.microphone_id = endpoints.microphone.clone();
         v.speaker_id = endpoints.speaker.clone();
-        v.microphone_missing = endpoints.microphone_missing;
-        v.speaker_missing = endpoints.speaker_missing;
     }
     /// Asks a worker for the chosen adapter's address, once per look, while
     /// the engine runs on an adapter and is wanted registered.
@@ -1614,11 +1612,12 @@ async fn stop_engine(s: &Shared) {
         stop_and_wait(s, engine).await;
     }
 }
-/// Reads the devices again and, when the engine runs and no call is going
-/// on, gives it the saved ones: a device that was unplugged and put back, or
-/// a new Windows default, is only picked up that way. A saved device that
-/// has come back is taken into use, and one that has gone gives way to the
-/// default; the engine is only restarted when it does not take the change.
+/// Reads the devices again for the lists and, when the engine runs and no
+/// call is going on, gives it the saved ones once more (a choice changed
+/// outside the window reaches it this way). A device unplugged and put back,
+/// or a new Windows default, needs none of this: each stream picks its
+/// endpoint as it opens (resolve_audio_endpoints). The engine is only
+/// restarted when it does not take the devices.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
     s.borrow_mut().work(|| Work::Devices(crate::audio::devices()));
     let devices = match await_work(s, DEVICES_TIMEOUT).await {
@@ -1677,7 +1676,7 @@ async fn initialize(s: Shared) {
 /// phone. The phone is in maintenance, so no call is up: the change reaches
 /// the next call and no running one.
 async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), String> {
-    let endpoints = s.borrow().services.resolve_audio_endpoints(settings)?;
+    let endpoints = s.borrow().services.resolve_audio_endpoints(settings);
     request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
     let mut p = s.borrow_mut();
     for note in endpoint_notes(settings, &endpoints, &p.view.devices) {

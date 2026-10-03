@@ -27,12 +27,17 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 /// The endpoints the engine is given for a saved choice, see
-/// `resolve_audio_endpoints`.
+/// `resolve_audio_endpoints`; and, for the log only, how they stand now.
 pub struct AudioEndpoints {
     pub microphone: String,
     pub speaker: String,
+    /// The chosen device is not there now (the default serves meanwhile).
     pub microphone_missing: bool,
     pub speaker_missing: bool,
+    /// The endpoint that serves the choice now, when Windows has one: the
+    /// device itself, or what "default" stands for at the moment.
+    pub microphone_now: Option<String>,
+    pub speaker_now: Option<String>,
 }
 /// What a start needs, worked out from the settings before the process
 /// exists: the plan the link spawns from, the endpoints the engine was
@@ -45,7 +50,8 @@ pub struct Prepared {
 }
 /// Which endpoints the engine got, by name and id, and when a saved one was
 /// not there. By name and id, so that a device the engine then cannot open
-/// can be told apart from a wrong choice.
+/// can be told apart from a wrong choice; for "default", the endpoint it
+/// stands for now.
 pub fn endpoint_notes(s: &Settings, endpoints: &AudioEndpoints, devices: &[Device]) -> Vec<String> {
     let mut notes = Vec::new();
     for (missing, kind) in [
@@ -53,13 +59,14 @@ pub fn endpoint_notes(s: &Settings, endpoints: &AudioEndpoints, devices: &[Devic
         (endpoints.speaker_missing, "speaker"),
     ] {
         if missing {
-            notes.push(format!("ksip: the saved {kind} is not there, using the default"));
+            notes.push(format!("ksip: the saved {kind} is not there, calls use the default until it is back"));
         }
     }
-    for (kind, id, chosen) in [
-        ("microphone", &endpoints.microphone, &s.microphone),
-        ("speaker", &endpoints.speaker, &s.speaker),
+    for (kind, chosen, now) in [
+        ("microphone", &s.microphone, &endpoints.microphone_now),
+        ("speaker", &s.speaker, &endpoints.speaker_now),
     ] {
+        let id = now.as_ref().unwrap_or(chosen);
         let name = devices
             .iter()
             .find(|d| d.kind == kind && d.id == *id)
@@ -118,37 +125,27 @@ impl Services {
         }
         Ok((crate::native::adapter_address(chosen)?, chosen.to_string()))
     }
-    /// The endpoints the engine is given for the saved choice: the device
-    /// itself when Windows has it, the default in its place otherwise. Nothing
-    /// is written back: the choice stands, and it is used again once the
-    /// device is back.
-    pub fn resolve_audio_endpoints(&self, s: &Settings) -> Result<AudioEndpoints, String> {
-        let mut microphone_missing = false;
-        let microphone = match crate::audio::volume("microphone", &s.microphone, None, None) {
-            Ok(volume) => volume.id,
-            Err(_) => {
-                microphone_missing = s.microphone != "default";
-                // The native source emits timed silent PCM when Windows has no
-                // usable capture endpoint, so a missing microphone must not
-                // prevent SIP registration or RTP transmission.
-                "default".into()
-            }
-        };
-        let mut speaker_missing = false;
-        let speaker = match crate::audio::volume("speaker", &s.speaker, None, None) {
-            Ok(volume) => volume.id,
-            Err(_) if s.speaker != "default" => {
-                speaker_missing = true;
-                crate::audio::volume("speaker", "default", None, None)?.id
-            }
-            Err(error) => return Err(error),
-        };
-        Ok(AudioEndpoints {
-            microphone,
-            speaker,
-            microphone_missing,
-            speaker_missing,
-        })
+    /// The endpoints the engine is given for the saved choice: the choice as
+    /// it is, "default" included. Which endpoint serves it is decided by each
+    /// stream as it opens: the chosen device while Windows can use it, the
+    /// default communications one in its place (device_selection.cc for the
+    /// calls, alert_player.h for the alert sounds). So a device that is back,
+    /// or a new Windows default, is used from the next call on, nothing is
+    /// written back, and a device that is not there keeps nobody from
+    /// registering (with no capture endpoint at all the native source sends
+    /// timed silence). How they stand now is looked at for the log only.
+    pub fn resolve_audio_endpoints(&self, s: &Settings) -> AudioEndpoints {
+        let now = |kind: &str, chosen: &str| crate::audio::volume(kind, chosen, None, None).ok().map(|v| v.id);
+        let microphone_now = now("microphone", &s.microphone);
+        let speaker_now = now("speaker", &s.speaker);
+        AudioEndpoints {
+            microphone: s.microphone.clone(),
+            speaker: s.speaker.clone(),
+            microphone_missing: s.microphone != "default" && microphone_now.is_none(),
+            speaker_missing: s.speaker != "default" && speaker_now.is_none(),
+            microphone_now,
+            speaker_now,
+        }
     }
     /// Works out everything a start needs and writes the engine's config:
     /// the endpoints for the saved devices, the control port, the address to
@@ -156,9 +153,8 @@ impl Services {
     /// is the link's to start.
     pub fn prepare_start(&self, s: &Settings, account: &Account, devices: &[Device]) -> Result<Prepared, String> {
         let exe = crate::native::engine_exe()?;
-        // Resolve the communications defaults once: the volume controls must
-        // target the same endpoints that the running engine actually opens.
-        let endpoints = self.resolve_audio_endpoints(s)?;
+        // The saved choices as they are; see resolve_audio_endpoints.
+        let endpoints = self.resolve_audio_endpoints(s);
         let microphone = endpoints.microphone.clone();
         let speaker = endpoints.speaker.clone();
         let profile = self.profile_dir();
@@ -212,7 +208,9 @@ impl Services {
         }
         put(format!("audio_player ksip_audio,{speaker}"));
         put(format!("audio_source ksip_audio,{microphone}"));
-        put(format!("audio_alert wasapi,{speaker}"));
+        // The alert sounds go through ksip_alert, which hands them to wasapi on
+        // the speaker, or on the default while the speaker is not there.
+        put(format!("audio_alert ksip_alert,{speaker}"));
         // A second call during a call is shown, not sounded. baresip would send
         // that tone through the call's player, and ksip_audio cannot play a
         // tone and the call at the same time.
