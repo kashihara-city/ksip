@@ -1,4 +1,4 @@
-"""Verify that an unavailable WASAPI microphone still produces timed RTP, and that the audio module reports the silence standing in and the failed start in its state, and no input once the call has gone."""
+"""Verify that a call whose chosen WASAPI microphone is not there still produces timed RTP: from the Windows default microphone opened in its place when the PC has one, else from silence standing in, with the failed start in the audio module's state; and no input once the call has gone."""
 from pathlib import Path
 import array, json, math, os, socket, subprocess, threading, time, wave
 import engine_control
@@ -170,6 +170,16 @@ def main():
     rms = math.sqrt(sum(value * value for value in samples) / max(1, len(samples)))
     log = (sender.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
     assert len(samples) > rate * 3, (len(samples), rate)
+    if during["microphone"]["input"] == "device":
+        # A PC with a microphone: the default one is opened in place of the
+        # chosen one, and the call carries what it picks up.
+        assert "recording device {KSIP-NO-SUCH-DEVICE} is not among" in log and "in its place" in log, log
+        assert during["ready"] and during["microphone"]["failures"] == 0, during
+        assert after["microphone"]["input"] == "none", after
+        print(json.dumps({"during": during, "after": after}, indent=2))
+        print("PASS: the missing WebRTC ADM microphone was replaced by the default one, RTP went on")
+        return
+    # No microphone at all (a PC without one, a CI runner): silence stands in.
     # G.711 μ-law's representation of digital silence decodes to about one
     # signed PCM unit, rather than necessarily to exactly zero.
     assert rms < 2, rms

@@ -80,7 +80,9 @@ struct ksip_audio final : public webrtc::AudioTransport {
   int Initialize();
 
   // device_selection.cc
-  int SetDevice(const char *id, bool playout);
+  int SetDevice(const char *id, bool playout, bool &in_place);
+  int SelectDefault(bool playout);
+  bool Listed(const char *id, bool playout);
   int Select(bool playout, int index, const char *name, const char *guid);
   void StoreDevice(bool playout, const char *name, const char *id);
 
@@ -128,9 +130,13 @@ struct ksip_audio final : public webrtc::AudioTransport {
   std::string playout_name;
   std::string playout_id;
   // What the last start asked for, as it asked ("default" included), so that
-  // a start for the same endpoint can take over the running stream.
+  // a start for the same endpoint can take over the running stream; and
+  // whether that stream runs on the default in place of the device asked for
+  // (it was not there), so that it is taken over only while it still is not.
   std::string recording_request;
   std::string playout_request;
+  bool recording_in_place = false;
+  bool playout_in_place = false;
   std::mutex apm_mutex;
   std::vector<int16_t> reverse_scratch;
   webrtc::PushResampler<int16_t> render_resampler;

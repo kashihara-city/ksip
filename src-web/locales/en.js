@@ -55,6 +55,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_START_FAILED:'The speaker could not be started (result {0}). Check the output device',
       AUDIO_DEVICE_SAVED_MISSING:'Saved device (not found)',
       AUDIO_DEVICE_UNAVAILABLE:'The chosen audio device is not available',
+      AUDIO_DEVICE_UNPLUGGED:'The chosen device is unplugged. Calls use the default device meanwhile, and the chosen one again from the next call once it is back',
       AUDIO_INPUT_LEVEL:'Input level',
       AUDIO_MICROPHONE:'Microphone',
       AUDIO_MICROPHONE_DEFAULT:'Windows default communication microphone',

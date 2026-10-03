@@ -208,6 +208,34 @@ int main(int argc, char **argv) {
     ksip_audio_destroy(audio);
     return result;
   }
+  // --missing-device: a chosen device that is not there (unplugged) opens
+  // the Windows default communications device in its place, for the
+  // playout and the recording, and a start that asks for it again while it
+  // is still not there takes the running stream over.
+  if (argc >= 2 && !std::strcmp(argv[1], "--missing-device")) {
+    const char *missing_playout = "{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}";
+    const char *missing_recording = "{0.0.1.00000000}.{00000000-0000-0000-0000-000000000000}";
+    for (int round = 0; round < 2; ++round) {
+      if (ksip_audio_start_playout(audio, missing_playout, RenderSilence, nullptr)) return 19;
+      if (ksip_audio_start_recording(audio, missing_recording, CaptureSamples, nullptr)) return 19;
+    }
+    ksip_audio_device_info device_info{};
+    if (ksip_audio_get_device_info(audio, &device_info)) return 13;
+    std::printf("In place of the missing devices: %s | %s, %s | %s\n",
+                device_info.playout_name, device_info.playout_id,
+                device_info.recording_name, device_info.recording_id);
+    if (!device_info.playout_id[0] || !std::strcmp(device_info.playout_id, missing_playout) ||
+        !device_info.recording_id[0] || !std::strcmp(device_info.recording_id, missing_recording))
+      return 20;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    ksip_audio_stop_recording(audio);
+    ksip_audio_stop_playout(audio);
+    ksip_audio_destroy(audio);
+    if (callbacks.load(std::memory_order_relaxed) < 10 ||
+        capture_callbacks.load(std::memory_order_relaxed) < 10)
+      return 21;
+    return 0;
+  }
   const bool test_capture = argc >= 2 &&
       (!std::strcmp(argv[1], "--capture") ||
        !std::strcmp(argv[1], "--identify") ||

@@ -18,6 +18,11 @@ if ($env:KSIP_TEST_AUDIO_DEVICE -eq '1') {
     & temp/build/test-webrtc-audio.exe --capture-restarts 400 $microphone 300
     if ($LASTEXITCODE -ne 0) { throw "WebRTC capture restart test failed ($LASTEXITCODE)" }
     Write-Host 'Google WebRTC capture restart test passed'
+    # A chosen device that is not there (an unplugged USB handset): the call
+    # goes through the default devices instead of failing with no device.
+    & temp/build/test-webrtc-audio.exe --missing-device
+    if ($LASTEXITCODE -ne 0) { throw "WebRTC missing device test failed ($LASTEXITCODE)" }
+    Write-Host 'Google WebRTC missing device test passed'
 }
 if ($env:KSIP_TEST_AUDIO_SIGNAL -eq '1') {
     $helper = 'temp/cargo-target/debug/examples/audio-devices.exe'

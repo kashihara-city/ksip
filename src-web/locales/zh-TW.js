@@ -55,6 +55,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_START_FAILED:'無法啟動喇叭（結果 {0}），請確認輸出裝置',
       AUDIO_DEVICE_SAVED_MISSING:'已儲存的裝置（找不到）',
       AUDIO_DEVICE_UNAVAILABLE:'所選音訊裝置無法使用',
+      AUDIO_DEVICE_UNPLUGGED:'所選裝置已拔除。通話暫時改用預設裝置，裝置接回後，從下一通電話起恢復使用',
       AUDIO_INPUT_LEVEL:'輸入音量',
       AUDIO_MICROPHONE:'麥克風',
       AUDIO_MICROPHONE_DEFAULT:'Windows 預設通訊麥克風',

@@ -1,7 +1,8 @@
 // Which endpoint the ADM opens for a request: the Windows default
 // communications device, or the endpoint whose id was asked for, matched
-// among everything WebRTC lists; and the name and id of what was chosen,
-// for the app to show.
+// among everything WebRTC lists (the default in its place while it is not
+// there); and the name and id of what was opened, for the app to show and
+// for the microphone mute to read.
 #include "bridge_state.h"
 
 #include <cstring>
@@ -10,20 +11,26 @@
 
 using ksip_audio_bridge::kRoleEntries;
 
-int ksip_audio::SetDevice(const char *id, bool playout) {
-  if (!id || !id[0] || std::strcmp(id, "default") == 0) {
-    const int result = playout
-        ? adm->SetPlayoutDevice(webrtc::AudioDeviceModule::kDefaultCommunicationDevice)
-        : adm->SetRecordingDevice(webrtc::AudioDeviceModule::kDefaultCommunicationDevice);
-    if (result) return result;
-    char name[webrtc::kAdmMaxDeviceNameSize] = {};
-    char guid[webrtc::kAdmMaxGuidSize] = {};
-    const int name_result = playout
-        ? adm->PlayoutDeviceName(static_cast<uint16_t>(-1), name, guid)
-        : adm->RecordingDeviceName(static_cast<uint16_t>(-1), name, guid);
-    if (!name_result) StoreDevice(playout, name, guid);
-    return 0;
-  }
+int ksip_audio::SelectDefault(bool playout) {
+  const int result = playout
+      ? adm->SetPlayoutDevice(webrtc::AudioDeviceModule::kDefaultCommunicationDevice)
+      : adm->SetRecordingDevice(webrtc::AudioDeviceModule::kDefaultCommunicationDevice);
+  if (result) return result;
+  // The name and id are those of the list's communications role entry
+  // (index 1, after the console one at 0: core_audio_utility_win.cc). Asked
+  // for at index -1 (the device type's value), the name was never there.
+  char name[webrtc::kAdmMaxDeviceNameSize] = {};
+  char guid[webrtc::kAdmMaxGuidSize] = {};
+  const int name_result = playout
+      ? adm->PlayoutDeviceName(1, name, guid)
+      : adm->RecordingDeviceName(1, name, guid);
+  if (!name_result) StoreDevice(playout, name, guid);
+  return 0;
+}
+
+int ksip_audio::SetDevice(const char *id, bool playout, bool &in_place) {
+  in_place = false;
+  if (!id || !id[0] || std::strcmp(id, "default") == 0) return SelectDefault(playout);
   // PlayoutDevices() and RecordingDevices() count the endpoints, but the
   // list that PlayoutDeviceName() and RecordingDeviceName() index has the
   // two role entries in front of them. A loop over the count alone never
@@ -59,12 +66,35 @@ int ksip_audio::SetDevice(const char *id, bool playout) {
         : adm->RecordingDeviceName(static_cast<uint16_t>(role_index), name, guid);
     if (!result) return Select(playout, role_index, name, guid);
   }
-  // Written at warning level, which the app's log always carries, so that a
-  // device the engine cannot find is explained next to the failure.
+  // A chosen device that is not there (unplugged, its hub without power):
+  // the call goes through the Windows default communications device, as the
+  // app does for a start without the saved device, rather than failing with
+  // no device, which ended an outgoing call at its answer and left an
+  // incoming one silent both ways. The request stays the chosen device, so
+  // the next stream once it is back opens it again. Written at warning
+  // level, which the app's log always carries, so that the device in use is
+  // explained. `in_place` says so to the caller.
   RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording")
                       << " device " << id << " is not among the " << count
-                      << " endpoints WebRTC lists:" << listing;
-  return -5;
+                      << " endpoints WebRTC lists:" << listing
+                      << "; using the default communications device in its place";
+  if (SelectDefault(playout)) return -5;
+  in_place = true;
+  return 0;
+}
+
+bool ksip_audio::Listed(const char *id, bool playout) {
+  const int count = playout ? adm->PlayoutDevices() : adm->RecordingDevices();
+  const int enumerated = count > 0 ? count + kRoleEntries : 0;
+  for (int i = 0; i < enumerated; ++i) {
+    char name[webrtc::kAdmMaxDeviceNameSize] = {};
+    char guid[webrtc::kAdmMaxGuidSize] = {};
+    const int result = playout
+        ? adm->PlayoutDeviceName(static_cast<uint16_t>(i), name, guid)
+        : adm->RecordingDeviceName(static_cast<uint16_t>(i), name, guid);
+    if (!result && std::strcmp(id, guid) == 0) return true;
+  }
+  return false;
 }
 
 int ksip_audio::Select(bool playout, int index, const char *name, const char *guid) {

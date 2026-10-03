@@ -16,6 +16,19 @@ export function deviceOptions(kind,selected){
   $(kind).replaceChildren(...options);$(kind).value=selected;
 }
 function volumeDevice(kind){return state.running?state[kind+'_id']:state.settings[kind]||'default';}
+// A device that is unplugged is written down when it goes and when it is
+// back, not once a minute for as long as it is gone (a night of it was more
+// than a thousand lines).
+const unplugged={};
+function logDevice(where,e){
+  const gone=String(e)==='AUDIO_DEVICE_UNPLUGGED';
+  if(!gone||!unplugged[where])logUi(where,e);
+  unplugged[where]=gone;
+}
+function deviceWorks(where){
+  if(unplugged[where])logUi(where,'device back');
+  unplugged[where]=false;
+}
 // The level and the mute are Windows' own for the device; either is set when
 // given, and both are read back, so the icons follow what a headset key or
 // another program did within a second. A change the person made always goes
@@ -35,6 +48,7 @@ async function refreshVolume(kind,level=null,mute=null){
   try{
     const result=await invoke('audio_volume',{kind,device,level,mute});
     if(sequence!==control.sequence||device!==volumeDevice(kind)||control.dragging)return;
+    deviceWorks('volume '+kind);
     $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';
     const notices=[];
     if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));
@@ -43,7 +57,7 @@ async function refreshVolume(kind,level=null,mute=null){
     if(result.muted)notices.push(t('MICROPHONE_MUTED'));
     $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);
   }
-  catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logUi('volume '+kind,e);}
+  catch(e){control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));logDevice('volume '+kind,e);}
   finally{control.pending=false;render();if(control.queued)refreshVolume(kind);}
 }
 // A change waiting to be sent. The volume and the mute are kept apart: a
@@ -64,9 +78,10 @@ async function refreshPeak(kind){
   if(!ready||$('configuration').open||peakPending[kind]||state.window_visible===false)return;peakPending[kind]=true;
   try{
     const result=await invoke('audio_peak',{kind,device:volumeDevice(kind)}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
+    deviceWorks('peak '+kind);
     $(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));
   }
-  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');logUi('peak '+kind,e);}
+  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');logDevice('peak '+kind,e);}
   finally{peakPending[kind]=false;}
 }
 export async function pollVolumes(){await Promise.all(kinds.map(k=>refreshVolume(k)));setTimeout(pollVolumes,1000);}

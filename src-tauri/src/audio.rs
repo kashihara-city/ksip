@@ -139,7 +139,16 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
     Ok(result?)
 }
 fn error(e: windows::core::Error) -> String {
+    if e.code() == unplugged().code() {
+        return message("AUDIO_DEVICE_UNPLUGGED");
+    }
     message_with("AUDIO_DEVICE_FAILED", [e])
+}
+/// What an endpoint Windows still knows but cannot use (unplugged, its hub
+/// without power, disabled) is answered with: a message of its own, where
+/// E_INVALIDARG once read "the parameter is incorrect" every second.
+fn unplugged() -> windows::core::Error {
+    windows::core::Error::from_hresult(windows::Win32::Foundation::ERROR_DEVICE_NOT_CONNECTED.to_hresult())
 }
 /// The capture client and meter for one microphone, started.
 ///
@@ -155,10 +164,13 @@ unsafe fn open_microphone_session(device_id: &str) -> windows::core::Result<MicS
         enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
     };
     let endpoint: IMMEndpoint = device.cast()?;
-    if endpoint.GetDataFlow()? != eCapture || device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
+    if endpoint.GetDataFlow()? != eCapture {
         return Err(windows::core::Error::from_hresult(
             windows::Win32::Foundation::E_INVALIDARG,
         ));
+    }
+    if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
+        return Err(unplugged());
     }
     let meter: IAudioMeterInformation = device.Activate(CLSCTX_ALL, None)?;
     let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
@@ -327,11 +339,13 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>
                 enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
             };
             let endpoint: IMMEndpoint = device.cast()?;
-            if endpoint.GetDataFlow()? != flow || device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0
-            {
+            if endpoint.GetDataFlow()? != flow {
                 return Err(windows::core::Error::from_hresult(
                     windows::Win32::Foundation::E_INVALIDARG,
                 ));
+            }
+            if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
+                return Err(unplugged());
             }
             let control: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
             if let Some(level) = level {
@@ -393,11 +407,13 @@ pub fn peak(kind: &str, device_id: &str) -> Result<Peak, String> {
                 enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
             };
             let endpoint: IMMEndpoint = device.cast()?;
-            if endpoint.GetDataFlow()? != flow || device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0
-            {
+            if endpoint.GetDataFlow()? != flow {
                 return Err(windows::core::Error::from_hresult(
                     windows::Win32::Foundation::E_INVALIDARG,
                 ));
+            }
+            if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
+                return Err(unplugged());
             }
             let meter: IAudioMeterInformation = device.Activate(CLSCTX_ALL, None)?;
             Ok(Peak {

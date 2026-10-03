@@ -126,10 +126,18 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
   if (audio->adm->Playing()) {
     // A stream kept running on the same endpoint is taken over as it is; a
     // different endpoint means the device really changes.
-    bool same;
+    bool same, in_place;
     {
       std::lock_guard<std::mutex> lock(audio->device_mutex);
       same = audio->playout_request == request;
+      in_place = audio->playout_in_place;
+    }
+    // A stream opened in place of a chosen device that was not there is
+    // taken over only while it still is not: once it is back, a call right
+    // after the last one does not stay on the default.
+    if (same && in_place && audio->Listed(request.c_str(), true)) {
+      RTC_LOG(LS_WARNING) << "ksip_audio: playout device " << request << " is back, the stream is opened on it again";
+      same = false;
     }
     if (same) {
       audio->render_gate.Set(callback, arg);
@@ -138,11 +146,13 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
     ksip_audio_stop_playout(audio);
   }
   if (!audio->adm->Recording() && audio->ResetDiagnostics()) return -4;
-  if (audio->SetDevice(id, true)) return -5;
+  bool in_place = false;
+  if (audio->SetDevice(id, true, in_place)) return -5;
   if (audio->adm->InitPlayout()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->device_mutex);
     audio->playout_request = request;
+    audio->playout_in_place = in_place;
   }
   audio->render_gate.Set(callback, arg);
   if (audio->adm->StartPlayout()) {
@@ -171,10 +181,17 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
   if (!audio || !callback) return -1;
   const std::string request = id && id[0] ? id : "default";
   if (audio->adm->Recording()) {
-    bool same;
+    bool same, in_place;
     {
       std::lock_guard<std::mutex> lock(audio->device_mutex);
       same = audio->recording_request == request;
+      in_place = audio->recording_in_place;
+    }
+    // As with the playout: a stream in place of the chosen device is taken
+    // over only while that device is still not there.
+    if (same && in_place && audio->Listed(request.c_str(), false)) {
+      RTC_LOG(LS_WARNING) << "ksip_audio: recording device " << request << " is back, the stream is opened on it again";
+      same = false;
     }
     if (same) {
       audio->capture_gate.Set(callback, arg);
@@ -183,11 +200,13 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
     ksip_audio_stop_recording(audio);
   }
   if (!audio->adm->Playing() && audio->ResetDiagnostics()) return -4;
-  if (audio->SetDevice(id, false)) return -5;
+  bool in_place = false;
+  if (audio->SetDevice(id, false, in_place)) return -5;
   if (audio->adm->InitRecording()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->device_mutex);
     audio->recording_request = request;
+    audio->recording_in_place = in_place;
   }
   audio->capture_gate.Set(callback, arg);
   if (audio->adm->StartRecording()) {

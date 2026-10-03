@@ -55,6 +55,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_START_FAILED:'スピーカーを開始できません（結果 {0}）。出力先の機器を確認してください',
       AUDIO_DEVICE_SAVED_MISSING:'保存されたデバイス（未検出）',
       AUDIO_DEVICE_UNAVAILABLE:'選択した音声デバイスが利用できません',
+      AUDIO_DEVICE_UNPLUGGED:'選んだデバイスが外れています。通話には既定のデバイスを使い、戻れば次の通話から元のデバイスに戻ります',
       AUDIO_INPUT_LEVEL:'入力レベル',
       AUDIO_MICROPHONE:'マイク',
       AUDIO_MICROPHONE_DEFAULT:'Windowsの既定の通信マイク',
