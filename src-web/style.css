@@ -1120,6 +1120,14 @@ footer.aec-status {
   text-overflow:ellipsis;
   flex:0 1 auto;
 }
+.privacy-note {
+  margin:4px 0 0;
+  color:#a84035;
+  font-size:12px;
+}
+.privacy-note button {
+  margin-left:6px;
+}
 #codec-label.unencrypted,
 #capture-path .apo {
   color:#a84035;

@@ -18,9 +18,11 @@ import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null;
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,peakHandler=null,privacyOpened=0;
 window.__invoke=async(command,args)=>{
   if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
+  if(command==='audio_peak'&&peakHandler)return peakHandler(args);
+  if(command==='open_microphone_privacy'){privacyOpened++;return null;}
   // A digit's request takes a while, as one does when the app waits for the engine.
   if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);callsSent.push([args.id,args.value]);await new Promise(r=>setTimeout(r,240));return '';}
   if(command==='save_configuration'){saved=JSON.parse(JSON.stringify(args));throw 'TEST_SAVE_STOPPED';}
@@ -516,6 +518,21 @@ async function checks(){
   check($('no_fw_prompt').checked&&$('no_fw_prompt').disabled&&$('no_fw_prompt').closest('label').dataset.managed==='管理者が設定','a fixed keepalive interval fixes the switch, and says why',[$('no_fw_prompt').checked,$('no_fw_prompt').disabled]);
   $('configuration').close();
   managed.clear();render();
+  // Windows' privacy settings refusing the microphone: the meter's reading
+  // says so, the switch named under the microphone with a way to the
+  // settings; it goes once the microphone opens again.
+  if($('configuration').open)$('configuration').close();
+  state.window_visible=true;
+  let refuse=true;
+  peakHandler=args=>{if(args.kind==='microphone'&&refuse)throw 'MICROPHONE_PRIVACY_DESKTOP';return {id:args.device,peak:0.1};};
+  audio.pollAudioPeaks();
+  await new Promise(r=>setTimeout(r,300));
+  const privacyShown=!$('microphone-privacy').hidden,privacyText=$('microphone-privacy-text').textContent;
+  $('open-microphone-privacy').click();await settle();
+  refuse=false;await new Promise(r=>setTimeout(r,300));
+  check(privacyShown&&privacyText.includes('デスクトップ アプリ')&&privacyOpened===1&&$('microphone-privacy').hidden,
+    'a microphone the privacy settings refuse is said under it, the switch named, with the settings a click away; it goes once the microphone opens',[privacyShown,privacyText,privacyOpened,$('microphone-privacy').hidden]);
+  peakHandler=null;
 }
 try{await checks();}catch(e){check(false,'the checks ran to the end',String(e&&e.stack||e));}
 await fetch('/result',{method:'POST',body:JSON.stringify(results)});

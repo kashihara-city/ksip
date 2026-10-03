@@ -152,6 +152,7 @@ pub fn run(state: AppState) {
             commands::calibrate_aec,
             commands::select_audio_device,
             commands::open_sound_control,
+            commands::open_microphone_privacy,
             commands::open_link,
             commands::quit_app,
         ])

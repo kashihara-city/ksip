@@ -340,6 +340,15 @@ impl Services {
             .map_err(err)?;
         Ok(())
     }
+    /// Windows' Settings at Privacy & security > Microphone, where the
+    /// switches that refuse the microphone are turned on.
+    pub fn open_microphone_privacy(&self) -> Result<(), String> {
+        Process::new("explorer.exe")
+            .arg("ms-settings:privacy-microphone")
+            .spawn()
+            .map_err(err)?;
+        Ok(())
+    }
 }
 /// What the window and the desktop hold. It connects and nothing more: the
 /// services, the way into the phone actor, and the snapshot it publishes.

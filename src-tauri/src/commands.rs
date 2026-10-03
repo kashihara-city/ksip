@@ -312,6 +312,10 @@ pub fn open_sound_control(state: State<AppState>) -> Result<(), String> {
     state.services.open_sound_control()
 }
 #[tauri::command]
+pub fn open_microphone_privacy(state: State<AppState>) -> Result<(), String> {
+    state.services.open_microphone_privacy()
+}
+#[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }

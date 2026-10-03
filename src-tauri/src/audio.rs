@@ -149,6 +149,47 @@ fn error(e: windows::core::Error) -> String {
     }
     message_with("AUDIO_DEVICE_FAILED", [e])
 }
+/// Windows' privacy switches for the microphone, as Settings > Privacy &
+/// security > Microphone shows them, each Allow or Deny in the registry: the
+/// device's (HKLM, an administrator's), the user's for apps, and the user's
+/// for desktop apps, KSIP's own. A desktop app has the microphone only with
+/// all three on; with one off, opening it fails with E_ACCESSDENIED (the
+/// capture client's Initialize), on the meter's stream and the engine's alike.
+const PRIVACY_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+/// The first of the three that is off, as the message that names it; none
+/// when all read as on (or cannot be read).
+fn privacy_switch_off(device: &str, apps: &str, desktop: &str) -> Option<String> {
+    let off = |value: &str| value.trim().eq_ignore_ascii_case("deny");
+    if off(device) {
+        Some(message("MICROPHONE_PRIVACY_DEVICE"))
+    } else if off(apps) {
+        Some(message("MICROPHONE_PRIVACY_APPS"))
+    } else if off(desktop) {
+        Some(message("MICROPHONE_PRIVACY_DESKTOP"))
+    } else {
+        None
+    }
+}
+fn microphone_privacy_off() -> Option<String> {
+    use winreg::{enums::*, RegKey};
+    let read = |hive, path: &str| {
+        RegKey::predef(hive).open_subkey(path).and_then(|key| key.get_value::<String, _>("Value")).unwrap_or_default()
+    };
+    privacy_switch_off(
+        &read(HKEY_LOCAL_MACHINE, PRIVACY_KEY),
+        &read(HKEY_CURRENT_USER, PRIVACY_KEY),
+        &read(HKEY_CURRENT_USER, &format!(r"{PRIVACY_KEY}\NonPackaged")),
+    )
+}
+/// A microphone that would not open: refused by the privacy settings (the
+/// switch that is off named, or the settings in general when none reads as
+/// off), or as any device error.
+fn microphone_error(e: windows::core::Error) -> String {
+    if e.code() == windows::Win32::Foundation::E_ACCESSDENIED {
+        return microphone_privacy_off().unwrap_or_else(|| message("MICROPHONE_PRIVACY"));
+    }
+    error(e)
+}
 /// What an endpoint Windows still knows but cannot use (unplugged, its hub
 /// without power, disabled) is answered with: a message of its own, where
 /// E_INVALIDARG once read "the parameter is incorrect" every second.
@@ -238,6 +279,11 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                 }
             };
             let mut session: Option<MicSession> = None;
+            // Why the microphone did not open, for which endpoint and when:
+            // said until it opens, and opening is tried again once a second
+            // (the privacy switches are read only then), or at once for
+            // another endpoint.
+            let mut refused: Option<(String, String, Instant)> = None;
             loop {
                 // The meter is asked for ten times a second while the window is
                 // shown. Once the asking stops, the microphone is released, so
@@ -250,15 +296,31 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 };
-                if session
-                    .as_ref()
-                    .is_none_or(|value| value.requested_id != request.device_id)
-                {
+                // A stream Windows has taken away (a privacy switch turned off
+                // while it runs, the device gone) answers its client with an
+                // error, AUDCLNT_E_DEVICE_INVALIDATED, while the endpoint's
+                // meter reads on: it is let go, and the microphone opened again.
+                // SAFETY: the client is a live interface of the session, used on
+                // the thread whose COM it was made under.
+                if session.as_ref().is_some_and(|value| unsafe { value.client.GetCurrentPadding() }.is_err()) {
+                    session = None;
+                }
+                let elsewhere = session.as_ref().is_some_and(|value| value.requested_id != request.device_id)
+                    || refused.as_ref().is_some_and(|(_, id, _)| *id != request.device_id);
+                let due = refused.as_ref().is_none_or(|(_, _, at)| at.elapsed() >= Duration::from_secs(1));
+                if elsewhere || (session.is_none() && due) {
                     // SAFETY: COM is initialised on this thread by `_com`, declared
                     // before `session` and so dropped after it.
-                    session = unsafe { open_microphone_session(&request.device_id) }
-                        .map_err(error)
-                        .ok();
+                    match unsafe { open_microphone_session(&request.device_id) } {
+                        Ok(value) => {
+                            session = Some(value);
+                            refused = None;
+                        }
+                        Err(e) => {
+                            session = None;
+                            refused = Some((microphone_error(e), request.device_id.clone(), Instant::now()));
+                        }
+                    }
                 }
                 let result = match session.as_ref() {
                     // SAFETY: the meter is a live interface of the session, used on
@@ -270,7 +332,7 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                         })
                     }
                     .map_err(error),
-                    None => Err(message("AUDIO_MONITOR_START_FAILED")),
+                    None => Err(refused.as_ref().map_or_else(|| message("AUDIO_MONITOR_START_FAILED"), |(said, _, _)| said.clone())),
                 };
                 let _ = request.reply.send(result);
             }
@@ -829,6 +891,19 @@ pub fn calibrate_aec(
     aggregate_careful(runs, patterns.len(), &last_error)
 }
 
+#[cfg(test)]
+mod privacy_tests {
+    use super::privacy_switch_off;
+    use crate::message::message;
+    #[test]
+    fn the_privacy_switch_that_is_off_is_named_the_device_first() {
+        assert_eq!(privacy_switch_off("Allow", "Allow", "Allow"), None);
+        assert_eq!(privacy_switch_off("", "", ""), None, "nothing written is not a refusal");
+        assert_eq!(privacy_switch_off("Deny", "Deny", "Deny"), Some(message("MICROPHONE_PRIVACY_DEVICE")));
+        assert_eq!(privacy_switch_off("Allow", "deny", "Deny"), Some(message("MICROPHONE_PRIVACY_APPS")));
+        assert_eq!(privacy_switch_off("Allow", "Allow", "Deny "), Some(message("MICROPHONE_PRIVACY_DESKTOP")));
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

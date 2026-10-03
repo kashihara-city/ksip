@@ -92,14 +92,23 @@ function showMute(kind,muted){
   const control=volumes[kind],button=$(kind+'-mute'),label=t(muted?'AUDIO_UNMUTE':'AUDIO_MUTE');
   control.muted=muted;button.classList.toggle('muted',muted);button.setAttribute('aria-pressed',String(muted));button.title=label;button.setAttribute('aria-label',label);
 }
+// Windows' privacy settings refusing the microphone: said under it, the
+// switch that is off named, with a way to the settings; gone once the
+// microphone opens again (the meter tries with each reading).
+function showPrivacy(error){
+  const refused=error.startsWith('MICROPHONE_PRIVACY');
+  $('microphone-privacy').hidden=!refused;
+  if(refused)$('microphone-privacy-text').textContent=t(error);
+}
 async function refreshPeak(kind){
   // In the tray nobody sees the meter, and not asking lets the microphone close.
   if(!ready||$('configuration').open||peakPending[kind]||state.window_visible===false)return;peakPending[kind]=true;
   try{
     const {result}=await onEndpoint('peak '+kind,'audio_peak',{kind,device:volumeDevice(kind)}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
     $(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));
+    if(kind==='microphone')showPrivacy('');
   }
-  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');failure('peak '+kind,e);}
+  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');if(kind==='microphone')showPrivacy(String(e));failure('peak '+kind,e);}
   finally{peakPending[kind]=false;}
 }
 export async function pollVolumes(){await Promise.all(kinds.map(k=>refreshVolume(k)));setTimeout(pollVolumes,1000);}
@@ -112,6 +121,7 @@ export function init(){
     catch(e){$('device-status').textContent=t(String(e));logUi('refresh devices',e);}
     finally{$('refresh-devices').disabled=false;}
   });
+  $('open-microphone-privacy').addEventListener('click',()=>invoke('open_microphone_privacy').catch(e=>{setError(String(e));logUi('open microphone privacy',e);render();}));
   $('open-sound-control').addEventListener('click',()=>invoke('open_sound_control').catch(e=>{setError(String(e));logUi('open sound control',e);render();}));
   for(const kind of kinds)$(kind).addEventListener('change',async()=>{
     const previous=state.settings[kind],device=$(kind).value;
