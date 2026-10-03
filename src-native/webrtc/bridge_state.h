@@ -44,6 +44,7 @@ constexpr double kLevelSmoothing = 0.99;
 // names them: index 0 is the default device, index 1 the default
 // communications device, each with the endpoint id of whatever holds that role.
 constexpr int kRoleEntries = 2;
+constexpr int kCommunicationsEntry = 1;
 
 inline double FramePower(std::span<const int16_t> samples) {
   if (samples.empty()) return 0;
@@ -62,6 +63,10 @@ inline void UpdatePower(double frame_power, uint64_t frame_count, double &power)
 inline double PowerDbfs(double power) {
   return 10.0 * std::log10(std::max(power, 1e-10));
 }
+// ksip_audio_bridge.cc: the endpoint the last playout or capture stream
+// opened, as WebRTC says while it opens one (KsipNoteDevice), whichever way
+// it was chosen; empty before any.
+std::string OpenedEndpoint(bool playout);
 // apm.cc
 bool AnyProcessing(const ksip_audio_processing &p);
 webrtc::AudioProcessing::Config ApmConfig(const ksip_audio_processing &p);
@@ -80,9 +85,10 @@ struct ksip_audio final : public webrtc::AudioTransport {
   int Initialize();
 
   // device_selection.cc
-  int SetDevice(const char *id, bool playout, bool &in_place);
+  int SetDevice(const char *id, bool playout);
   int SelectDefault(bool playout);
   bool Listed(const char *id, bool playout);
+  bool Serves(const std::string &request, bool playout);
   int Select(bool playout, int index, const char *name, const char *guid);
   void StoreDevice(bool playout, const char *name, const char *id);
 
@@ -130,13 +136,9 @@ struct ksip_audio final : public webrtc::AudioTransport {
   std::string playout_name;
   std::string playout_id;
   // What the last start asked for, as it asked ("default" included), so that
-  // a start for the same endpoint can take over the running stream; and
-  // whether that stream runs on the default in place of the device asked for
-  // (it was not there), so that it is taken over only while it still is not.
+  // a start for the same endpoint can take over the running stream (Serves).
   std::string recording_request;
   std::string playout_request;
-  bool recording_in_place = false;
-  bool playout_in_place = false;
   std::mutex apm_mutex;
   std::vector<int16_t> reverse_scratch;
   webrtc::PushResampler<int16_t> render_resampler;

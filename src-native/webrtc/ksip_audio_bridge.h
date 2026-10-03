@@ -115,6 +115,10 @@ void ksip_audio_stop_recording(ksip_audio *audio);
 void ksip_audio_detach_recording(ksip_audio *audio);
 int ksip_audio_recording_running(ksip_audio *audio);
 int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
+/* The endpoint open on each side, by name and id: the one WebRTC last opened,
+   whichever way it was chosen (the default in place of a device that is not
+   there, or the default WebRTC moves to by itself when the device in use goes
+   away, whose name is then empty); before any stream, the one selected. */
 int ksip_audio_get_device_info(ksip_audio *audio,
                                ksip_audio_device_info *info);
 /* Whether the microphone and the speaker streams opened from now on ask for
@@ -126,10 +130,6 @@ void ksip_audio_set_raw(int capture, int playout);
    effects process the audio). */
 int ksip_audio_capture_raw(void);
 int ksip_audio_playout_raw(void);
-/* The endpoint the last capture stream opened, whichever way it was chosen
-   (WebRTC moves to the default by itself when the device in use goes away):
-   0 with its id in `out`, -1 before any or when it does not fit. */
-int ksip_audio_capture_endpoint(char *out, size_t size);
 /* Supplied by the baresip ksip_audio module for other in-process modules. */
 int ksip_audio_get_current_stats(ksip_audio_stats *stats);
 

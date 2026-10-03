@@ -54,7 +54,6 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_DEVICE_INIT_FAILED_DETAIL:'The audio device could not be started: {0}',
       AUDIO_SPEAKER_START_FAILED:'The speaker could not be started (result {0}). Check the output device',
       AUDIO_DEVICE_SAVED_MISSING:'Saved device (not found)',
-      AUDIO_DEVICE_UNAVAILABLE:'The chosen audio device is not available',
       AUDIO_DEVICE_UNPLUGGED:'The chosen device is unplugged',
       AUDIO_INPUT_LEVEL:'Input level',
       AUDIO_MICROPHONE:'Microphone',

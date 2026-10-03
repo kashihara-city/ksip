@@ -54,7 +54,6 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_DEVICE_INIT_FAILED_DETAIL:'音声デバイスを初期化できません: {0}',
       AUDIO_SPEAKER_START_FAILED:'スピーカーを開始できません（結果 {0}）。出力先の機器を確認してください',
       AUDIO_DEVICE_SAVED_MISSING:'保存されたデバイス（未検出）',
-      AUDIO_DEVICE_UNAVAILABLE:'選択した音声デバイスが利用できません',
       AUDIO_DEVICE_UNPLUGGED:'選んだデバイスが外れています',
       AUDIO_INPUT_LEVEL:'入力レベル',
       AUDIO_MICROPHONE:'マイク',

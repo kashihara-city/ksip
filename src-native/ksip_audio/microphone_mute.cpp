@@ -65,12 +65,9 @@ void tick(void *) {
     if (!g_bridge) return;
     // The endpoint the capture stream actually opened, the default WebRTC
     // moved to after the one in use went away included; before any stream,
-    // the one selected.
-    char opened[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
+    // the one selected (ksip_audio_get_device_info).
     ksip_audio_device_info device{};
-    const char *id = !ksip_audio_capture_endpoint(opened, sizeof(opened)) ? opened
-                     : !ksip_audio_get_device_info(g_bridge, &device) ? device.recording_id
-                                                                       : nullptr;
+    const char *id = !ksip_audio_get_device_info(g_bridge, &device) ? device.recording_id : nullptr;
     bool muted = false;
     if (!id || !read_mute(id, muted)) {
         // A mute that cannot be read any more (the endpoint gone) is not kept

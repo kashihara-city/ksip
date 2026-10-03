@@ -17,19 +17,18 @@ int ksip_audio::SelectDefault(bool playout) {
       : adm->SetRecordingDevice(webrtc::AudioDeviceModule::kDefaultCommunicationDevice);
   if (result) return result;
   // The name and id are those of the list's communications role entry
-  // (index 1, after the console one at 0: core_audio_utility_win.cc). Asked
-  // for at index -1 (the device type's value), the name was never there.
+  // (kCommunicationsEntry: core_audio_utility_win.cc). Asked for at index -1
+  // (the device type's value), the name was never there.
   char name[webrtc::kAdmMaxDeviceNameSize] = {};
   char guid[webrtc::kAdmMaxGuidSize] = {};
   const int name_result = playout
-      ? adm->PlayoutDeviceName(1, name, guid)
-      : adm->RecordingDeviceName(1, name, guid);
+      ? adm->PlayoutDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid)
+      : adm->RecordingDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid);
   if (!name_result) StoreDevice(playout, name, guid);
   return 0;
 }
 
-int ksip_audio::SetDevice(const char *id, bool playout, bool &in_place) {
-  in_place = false;
+int ksip_audio::SetDevice(const char *id, bool playout) {
   if (!id || !id[0] || std::strcmp(id, "default") == 0) return SelectDefault(playout);
   // PlayoutDevices() and RecordingDevices() count the endpoints, but the
   // list that PlayoutDeviceName() and RecordingDeviceName() index has the
@@ -74,14 +73,12 @@ int ksip_audio::SetDevice(const char *id, bool playout, bool &in_place) {
   // incoming one silent both ways. The request stays the chosen device, so
   // the next stream once it is back opens it again. Written at warning
   // level, which the app's log always carries, so that the device in use is
-  // explained. `in_place` says so to the caller.
+  // explained.
   RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording")
                       << " device " << id << " is not among the " << count
                       << " endpoints WebRTC lists:" << listing
                       << "; using the default communications device in its place";
-  if (SelectDefault(playout)) return -5;
-  in_place = true;
-  return 0;
+  return SelectDefault(playout) ? -5 : 0;
 }
 
 bool ksip_audio::Listed(const char *id, bool playout) {
@@ -95,6 +92,21 @@ bool ksip_audio::Listed(const char *id, bool playout) {
         : adm->RecordingDeviceName(static_cast<uint16_t>(i), name, guid);
     if (!result && std::strcmp(id, guid) == 0) return true;
   }
+  return false;
+}
+
+// Whether a stream running for `request` serves it as one opened for it now
+// would: on the endpoint asked for, or on the default because that one is
+// not there, whether the stream opened there in its place (SetDevice) or
+// WebRTC moved it there when the device in use went away (the endpoint
+// WebRTC says it opened tells which, OpenedEndpoint). "default" is WebRTC's
+// to follow. A stream on the default does not serve a device that is back.
+bool ksip_audio::Serves(const std::string &request, bool playout) {
+  if (request == "default") return true;
+  if (ksip_audio_bridge::OpenedEndpoint(playout) == request) return true;
+  if (!Listed(request.c_str(), playout)) return true;
+  RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording") << " device " << request
+                      << " is back, the stream is opened on it again";
   return false;
 }
 
@@ -123,14 +135,23 @@ void ksip_audio::StoreDevice(bool playout, const char *name, const char *id) {
 extern "C" int ksip_audio_get_device_info(ksip_audio *audio,
                                             ksip_audio_device_info *info) {
   if (!audio || !info) return -1;
+  // What is open on each side: the endpoint WebRTC last opened, which is not
+  // the one selected when WebRTC moved to the default by itself (the device
+  // in use went away); its name is not known here then. Before any stream,
+  // what was selected.
+  const std::string opened_recording = ksip_audio_bridge::OpenedEndpoint(false);
+  const std::string opened_playout = ksip_audio_bridge::OpenedEndpoint(true);
   std::lock_guard<std::mutex> lock(audio->device_mutex);
   *info = {};
   const auto copy = [](char *destination, const std::string &source) {
     std::strncpy(destination, source.c_str(), KSIP_AUDIO_DEVICE_TEXT_SIZE - 1);
   };
-  copy(info->recording_name, audio->recording_name);
-  copy(info->recording_id, audio->recording_id);
-  copy(info->playout_name, audio->playout_name);
-  copy(info->playout_id, audio->playout_id);
+  const auto side = [&](const std::string &opened, const std::string &name, const std::string &id, char *name_out, char *id_out) {
+    const bool moved = !opened.empty() && opened != id;
+    copy(name_out, moved ? std::string() : name);
+    copy(id_out, moved ? opened : id);
+  };
+  side(opened_recording, audio->recording_name, audio->recording_id, info->recording_name, info->recording_id);
+  side(opened_playout, audio->playout_name, audio->playout_id, info->playout_name, info->playout_id);
   return 0;
 }

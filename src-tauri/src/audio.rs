@@ -12,9 +12,9 @@ use windows::{
     Win32::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
         Media::Audio::{
-            eCapture, eCommunications, eRender,
+            eCapture, eCommunications, eRender, EDataFlow,
             Endpoints::{IAudioEndpointVolume, IAudioMeterInformation},
-            IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
+            IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator,
             IMMEndpoint, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_NOPERSIST, DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
         },
@@ -155,6 +155,39 @@ fn error(e: windows::core::Error) -> String {
 fn unplugged() -> windows::core::Error {
     windows::core::Error::from_hresult(windows::Win32::Foundation::ERROR_DEVICE_NOT_CONNECTED.to_hresult())
 }
+/// The data flow of a kind of device ("microphone" or "speaker").
+fn flow_of(kind: &str) -> EDataFlow {
+    if kind == "microphone" {
+        eCapture
+    } else {
+        eRender
+    }
+}
+/// The endpoint a choice names, for the flow asked: "default" is Windows'
+/// default communications endpoint, anything else an endpoint id. One of the
+/// other flow is a wrong argument; one Windows knows but cannot use is
+/// `unplugged()`, and one it does not know fails GetDevice with
+/// ERROR_NOT_FOUND (both "not there" to `error`). Every look at a chosen
+/// device goes through here: the volume, the meters and the calibration.
+///
+/// # Safety
+/// COM must be initialised on the calling thread while the device is used.
+unsafe fn endpoint(enumerator: &IMMDeviceEnumerator, flow: EDataFlow, device_id: &str) -> windows::core::Result<IMMDevice> {
+    let device = if device_id == "default" {
+        enumerator.GetDefaultAudioEndpoint(flow, eCommunications)?
+    } else {
+        let wide: Vec<u16> = device_id.encode_utf16().chain(Some(0)).collect();
+        enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
+    };
+    let as_endpoint: IMMEndpoint = device.cast()?;
+    if as_endpoint.GetDataFlow()? != flow {
+        return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_INVALIDARG));
+    }
+    if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
+        return Err(unplugged());
+    }
+    Ok(device)
+}
 /// The capture client and meter for one microphone, started.
 ///
 /// # Safety
@@ -162,21 +195,7 @@ fn unplugged() -> windows::core::Error {
 /// this thread before COM is uninitialised here.
 unsafe fn open_microphone_session(device_id: &str) -> windows::core::Result<MicSession> {
     let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-    let wide: Vec<u16> = device_id.encode_utf16().chain(Some(0)).collect();
-    let device = if device_id == "default" {
-        enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications)?
-    } else {
-        enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
-    };
-    let endpoint: IMMEndpoint = device.cast()?;
-    if endpoint.GetDataFlow()? != eCapture {
-        return Err(windows::core::Error::from_hresult(
-            windows::Win32::Foundation::E_INVALIDARG,
-        ));
-    }
-    if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
-        return Err(unplugged());
-    }
+    let device = endpoint(&enumerator, eCapture, device_id)?;
     let meter: IAudioMeterInformation = device.Activate(CLSCTX_ALL, None)?;
     let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
     // Initialize only reads the format during the call; the buffer frees it
@@ -332,26 +351,7 @@ pub fn volume(kind: &str, device_id: &str, level: Option<u8>, mute: Option<bool>
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let flow = if kind == "microphone" {
-                eCapture
-            } else {
-                eRender
-            };
-            let wide: Vec<u16> = device_id.encode_utf16().chain(Some(0)).collect();
-            let device = if device_id == "default" {
-                enumerator.GetDefaultAudioEndpoint(flow, eCommunications)?
-            } else {
-                enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
-            };
-            let endpoint: IMMEndpoint = device.cast()?;
-            if endpoint.GetDataFlow()? != flow {
-                return Err(windows::core::Error::from_hresult(
-                    windows::Win32::Foundation::E_INVALIDARG,
-                ));
-            }
-            if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
-                return Err(unplugged());
-            }
+            let device = endpoint(&enumerator, flow_of(kind), device_id)?;
             let control: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
             if let Some(level) = level {
                 if let Err(set_error) =
@@ -400,26 +400,7 @@ pub fn peak(kind: &str, device_id: &str) -> Result<Peak, String> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let flow = if kind == "microphone" {
-                eCapture
-            } else {
-                eRender
-            };
-            let wide: Vec<u16> = device_id.encode_utf16().chain(Some(0)).collect();
-            let device = if device_id == "default" {
-                enumerator.GetDefaultAudioEndpoint(flow, eCommunications)?
-            } else {
-                enumerator.GetDevice(PCWSTR(wide.as_ptr()))?
-            };
-            let endpoint: IMMEndpoint = device.cast()?;
-            if endpoint.GetDataFlow()? != flow {
-                return Err(windows::core::Error::from_hresult(
-                    windows::Win32::Foundation::E_INVALIDARG,
-                ));
-            }
-            if device.GetState()?.0 & DEVICE_STATE_ACTIVE.0 == 0 {
-                return Err(unplugged());
-            }
+            let device = endpoint(&enumerator, flow_of(kind), device_id)?;
             let meter: IAudioMeterInformation = device.Activate(CLSCTX_ALL, None)?;
             Ok(Peak {
                 id: take_string(device.GetId()?)?,
@@ -642,25 +623,10 @@ fn calibrate_once(
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(error)?;
-        let microphone_wide: Vec<u16> = microphone_id.encode_utf16().chain(Some(0)).collect();
-        let speaker_wide: Vec<u16> = speaker_id.encode_utf16().chain(Some(0)).collect();
-        let microphone = if microphone_id == "default" {
-            enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications)
-        } else {
-            enumerator.GetDevice(PCWSTR(microphone_wide.as_ptr()))
-        }
-        .map_err(error)?;
-        let speaker = if speaker_id == "default" {
-            enumerator.GetDefaultAudioEndpoint(eRender, eCommunications)
-        } else {
-            enumerator.GetDevice(PCWSTR(speaker_wide.as_ptr()))
-        }
-        .map_err(error)?;
-        if microphone.GetState().map_err(error)?.0 & DEVICE_STATE_ACTIVE.0 == 0
-            || speaker.GetState().map_err(error)?.0 & DEVICE_STATE_ACTIVE.0 == 0
-        {
-            return Err(message("AUDIO_DEVICE_UNAVAILABLE"));
-        }
+        // The chosen devices themselves, never the default in their place: a
+        // delay measured on a stand-in would be saved for the chosen ones.
+        let microphone = endpoint(&enumerator, eCapture, microphone_id).map_err(error)?;
+        let speaker = endpoint(&enumerator, eRender, speaker_id).map_err(error)?;
         let schedule: Vec<(usize, u8)> = variants
             .iter()
             .enumerate()

@@ -25,30 +25,29 @@ struct RawMode {
   std::atomic<int> taken{0};
 };
 RawMode capture_raw, playout_raw;
-// The endpoint the last capture stream opened (see ksip_audio_capture_endpoint),
-// made once and never destroyed, as WebRTC builds without exit-time destructors.
+// The endpoint the last capture and the last playout stream opened, whichever
+// way it was chosen (OpenedEndpoint), made once and never destroyed, as
+// WebRTC builds without exit-time destructors.
 struct Endpoint {
   std::mutex mutex;
   std::string id;
 };
-Endpoint& capture_endpoint() {
-  static Endpoint* const endpoint = new Endpoint();
-  return *endpoint;
+Endpoint& opened_endpoint(bool capture) {
+  static Endpoint* const capture_side = new Endpoint();
+  static Endpoint* const playout_side = new Endpoint();
+  return capture ? *capture_side : *playout_side;
 }
 }  // namespace
 
 void webrtc::webrtc_win::core_audio_utility::KsipNoteDevice(bool capture, const std::string& id) {
-  if (!capture) return;
-  Endpoint& endpoint = capture_endpoint();
+  Endpoint& endpoint = opened_endpoint(capture);
   std::lock_guard<std::mutex> lock(endpoint.mutex);
   endpoint.id = id;
 }
-extern "C" int ksip_audio_capture_endpoint(char *out, size_t size) {
-  Endpoint& endpoint = capture_endpoint();
+std::string ksip_audio_bridge::OpenedEndpoint(bool playout) {
+  Endpoint& endpoint = opened_endpoint(!playout);
   std::lock_guard<std::mutex> lock(endpoint.mutex);
-  if (!out || !size || endpoint.id.empty() || endpoint.id.size() >= size) return -1;
-  std::strncpy(out, endpoint.id.c_str(), size);
-  return 0;
+  return endpoint.id;
 }
 
 // Asked and told by WebRTC's CoreAudio as a stream gets its properties (the
@@ -124,35 +123,26 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
   if (!audio || !callback) return -1;
   const std::string request = id && id[0] ? id : "default";
   if (audio->adm->Playing()) {
-    // A stream kept running on the same endpoint is taken over as it is; a
-    // different endpoint means the device really changes.
-    bool same, in_place;
+    // A stream kept running for the same request is taken over as it is
+    // while it serves it as a new one would (ksip_audio::Serves); another
+    // request, or a device that is back, means the stream opens again.
+    bool same;
     {
       std::lock_guard<std::mutex> lock(audio->device_mutex);
       same = audio->playout_request == request;
-      in_place = audio->playout_in_place;
     }
-    // A stream opened in place of a chosen device that was not there is
-    // taken over only while it still is not: once it is back, a call right
-    // after the last one does not stay on the default.
-    if (same && in_place && audio->Listed(request.c_str(), true)) {
-      RTC_LOG(LS_WARNING) << "ksip_audio: playout device " << request << " is back, the stream is opened on it again";
-      same = false;
-    }
-    if (same) {
+    if (same && audio->Serves(request, true)) {
       audio->render_gate.Set(callback, arg);
       return 0;
     }
     ksip_audio_stop_playout(audio);
   }
   if (!audio->adm->Recording() && audio->ResetDiagnostics()) return -4;
-  bool in_place = false;
-  if (audio->SetDevice(id, true, in_place)) return -5;
+  if (audio->SetDevice(id, true)) return -5;
   if (audio->adm->InitPlayout()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->device_mutex);
     audio->playout_request = request;
-    audio->playout_in_place = in_place;
   }
   audio->render_gate.Set(callback, arg);
   if (audio->adm->StartPlayout()) {
@@ -181,32 +171,24 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
   if (!audio || !callback) return -1;
   const std::string request = id && id[0] ? id : "default";
   if (audio->adm->Recording()) {
-    bool same, in_place;
+    // As with the playout.
+    bool same;
     {
       std::lock_guard<std::mutex> lock(audio->device_mutex);
       same = audio->recording_request == request;
-      in_place = audio->recording_in_place;
     }
-    // As with the playout: a stream in place of the chosen device is taken
-    // over only while that device is still not there.
-    if (same && in_place && audio->Listed(request.c_str(), false)) {
-      RTC_LOG(LS_WARNING) << "ksip_audio: recording device " << request << " is back, the stream is opened on it again";
-      same = false;
-    }
-    if (same) {
+    if (same && audio->Serves(request, false)) {
       audio->capture_gate.Set(callback, arg);
       return 0;
     }
     ksip_audio_stop_recording(audio);
   }
   if (!audio->adm->Playing() && audio->ResetDiagnostics()) return -4;
-  bool in_place = false;
-  if (audio->SetDevice(id, false, in_place)) return -5;
+  if (audio->SetDevice(id, false)) return -5;
   if (audio->adm->InitRecording()) return -2;
   {
     std::lock_guard<std::mutex> lock(audio->device_mutex);
     audio->recording_request = request;
-    audio->recording_in_place = in_place;
   }
   audio->capture_gate.Set(callback, arg);
   if (audio->adm->StartRecording()) {
