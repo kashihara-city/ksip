@@ -108,6 +108,16 @@ THREAD_SPAWN_PATCHED = """  // KSIP: a thread left by a restart that failed (its
   // joined it) is joined first, so that a live one is spawned.
   if (!IsRestarting() && !audio_thread_.empty()) StopThread();
 """ + THREAD_SPAWN_ORIGINAL
+START_FAIL_ORIGINAL = """  if (FAILED(error.Error())) {
+    StopThread();
+    RTC_LOG(LS_ERROR) << "IAudioClient::Start failed: \""""
+START_FAIL_PATCHED = """  if (FAILED(error.Error())) {
+    // KSIP: not from the audio thread itself, which runs the internal
+    // restart: it would wait for its own end. That thread ends by itself
+    // once the restart handler returns false, and the next stop or start
+    // joins it.
+    if (!IsRestarting()) StopThread();
+    RTC_LOG(LS_ERROR) << "IAudioClient::Start failed: \""""
 ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
@@ -286,9 +296,11 @@ def patch_raw_capture(source: Path):
             "Unsupported WebRTC CoreAudio base: device switch anchor missing")
     base_text = replace_one_of(base_text, [SWITCH_ORIGINAL], SWITCH_PATCHED, "device switch")
     # A restart that failed: the audio thread's exit stops no client the
-    # restart released, and the next start joins the thread it left.
+    # restart released, the next start joins the thread it left, and a
+    # start that fails on that thread does not wait for the thread itself.
     for original, patched, what in ((THREAD_EXIT_ORIGINAL, THREAD_EXIT_PATCHED, "thread exit"),
-                                    (THREAD_SPAWN_ORIGINAL, THREAD_SPAWN_PATCHED, "thread spawn")):
+                                    (THREAD_SPAWN_ORIGINAL, THREAD_SPAWN_PATCHED, "thread spawn"),
+                                    (START_FAIL_ORIGINAL, START_FAIL_PATCHED, "start failure")):
         # The patched form keeps the original inside it, so it is looked for first.
         if patched in base_text:
             continue
