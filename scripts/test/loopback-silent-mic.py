@@ -1,4 +1,4 @@
-"""Verify that a call whose chosen WASAPI microphone is not there still produces timed RTP: from the Windows default microphone opened in its place when the PC has one, else from silence standing in, with the failed start in the audio module's state; and no input once the call has gone. And that the ringtone of a chosen speaker that is not there goes to the default speaker (ksip_alert) rather than nowhere."""
+"""Verify that a call whose chosen WASAPI microphone is not there still produces timed RTP: from the Windows default microphone opened in its place when the PC has one, else from silence standing in, with the failed start in the audio module's state; and no input once the call has gone. And that the ringtone of a chosen speaker that is not there goes to the default speaker (ksip_alert) rather than nowhere, or, on a PC with no speaker at all, is reported as a failed start rather than as a sound."""
 from pathlib import Path
 import array, json, math, os, socket, subprocess, threading, time, wave
 import engine_control
@@ -150,12 +150,18 @@ def main():
         phones.append(sender)
         sender.command("dial", "sip:receiver@127.0.0.1:17060")
         receiver.event("CALL_INCOMING")
-        # The ringtone, in the module's state: up, on the default in place of
-        # the speaker that is not there, by that endpoint's own id (a render
-        # endpoint's, not the word "default"), no failed start.
-        ringing_state = receiver.audio(lambda audio: audio.get("alert", {}).get("playing"))
-        assert ringing_state["alert"]["playing"] and ringing_state["alert"]["stand_in"], ringing_state
-        assert ringing_state["alert"]["endpoint"].startswith("{0.0.0.00000000}.{") and ringing_state["alert"]["failures"] == 0, ringing_state
+        # The ringtone, in the module's state. A PC with a speaker: up, on
+        # the default in place of the speaker that is not there, by that
+        # endpoint's own id (a render endpoint's, not the word "default"),
+        # no failed start. A PC with no speaker at all (a runner): the start
+        # fails as it is tried, counted, with nothing standing in; the
+        # engine says so and does not report a sound it cannot play.
+        ringing_state = receiver.audio(lambda audio: audio.get("alert", {}).get("playing") or audio.get("alert", {}).get("failures"))
+        ringing_alert = ringing_state["alert"]
+        if ringing_alert["playing"]:
+            assert ringing_alert["stand_in"] and ringing_alert["endpoint"].startswith("{0.0.0.00000000}.{") and ringing_alert["failures"] == 0, ringing_state
+        else:
+            assert ringing_alert["failures"] >= 1 and "endpoint" not in ringing_alert, ringing_state
         receiver.command("accept")
         receiver.event("CALL_ESTABLISHED")
         sender.event("CALL_ESTABLISHED")
@@ -179,7 +185,11 @@ def main():
     log = (sender.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
     ringing = (receiver.directory / "engine.log").read_text(encoding="utf-8", errors="replace")
     assert "ksip_alert: speaker {KSIP-NO-SUCH-SPEAKER} is not there" in ringing, ringing
-    print("PASS: the ringtone for a speaker that is not there went to the default speaker")
+    if ringing_alert["playing"]:
+        print("PASS: the ringtone for a speaker that is not there went to the default speaker")
+    else:
+        assert "the alert sound's stream did not open on default" in ringing, ringing
+        print("PASS: the ringtone for a speaker that is not there, on a PC with no speaker at all, is a failed start in the state, not a sound")
     assert len(samples) > rate * 3, (len(samples), rate)
     if during["microphone"]["input"] == "device":
         # A PC with a microphone: the default one is opened in place of the
