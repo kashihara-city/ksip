@@ -20,7 +20,7 @@
 //! is being worked on (a restart, a settings change, a calibration) it is
 //! in maintenance: the engine refuses calls meanwhile.
 use crate::app::Services;
-use crate::audio::{Calibration, Volume};
+use crate::audio::{Calibration, Target, Volume};
 use crate::engine_config::endpoint_notes;
 use crate::engine_link::{AudioState, EngineLink, EngineReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
@@ -233,10 +233,10 @@ enum Job {
     },
     SetVolume {
         kind: String,
-        device: String,
         level: Option<u16>,
         mute: Option<bool>,
-        reply: Reply<Volume>,
+        expected: Option<String>,
+        reply: Reply<(Volume, Target)>,
     },
     /// The adapter's address moved: connect again.
     Reconnect,
@@ -633,7 +633,7 @@ impl Actor {
             Command::SelectAudioDevice { kind, device, reply } => Job::SelectDevice { kind, device, reply },
             Command::RefreshDevices(reply) => Job::RefreshDevices(reply),
             Command::CalibrateAec { microphone, speaker, careful, reply } => Job::Calibrate { microphone, speaker, careful, reply },
-            Command::SetVolume { kind, device, level, mute, reply } => Job::SetVolume { kind, device, level, mute, reply },
+            Command::SetVolume { kind, level, mute, expected, reply } => Job::SetVolume { kind, level, mute, expected, reply },
         };
         self.queue.push_back((Instant::now(), job));
     }
@@ -755,8 +755,8 @@ impl Actor {
                 let result = calibrate_aec(&s, microphone, speaker, careful).await;
                 s.borrow().answer(reply, result);
             }),
-            Job::SetVolume { kind, device, level, mute, reply } => Box::pin(async move {
-                let result = set_volume(&s, &kind, &device, level, mute).await;
+            Job::SetVolume { kind, level, mute, expected, reply } => Box::pin(async move {
+                let result = set_volume(&s, &kind, level, mute, expected.as_deref()).await;
                 s.borrow().answer(reply, result);
             }),
             Job::Reconnect => Box::pin(async move {
@@ -1785,15 +1785,23 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
     leave_maintenance(s, owner).await;
     result
 }
-async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mute: Option<bool>) -> Result<Volume, String> {
-    let mut result = crate::audio::volume(kind, device, level.map(|value| value.min(100) as u8), mute)?;
+/// A volume or mute change for the endpoint in use for the kind at this
+/// moment, as the phone's own view has it (the engine's last report), not as
+/// the window saw it when it asked: a change meant for another endpoint
+/// than the one in use now (`expected`) is not made, and what is in use is
+/// answered along with its volume.
+async fn set_volume(s: &Shared, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<(Volume, Target), String> {
+    let (choice, call) = s.borrow().view.audio_choice(kind);
+    let target = crate::audio::target(kind, &choice, call.as_ref(), true)?;
+    let (level, mute) = crate::audio::volume_change_for(&target, expected, level, mute);
+    let mut result = crate::audio::volume(kind, &target.id, level.map(|value| value.min(100) as u8), mute)?;
     let Some(level) = level else {
         let p = s.borrow();
         let gain = if kind == "microphone" { p.view.settings.microphone_gain } else { p.view.settings.speaker_gain };
         if gain > 100 {
             result.level = gain;
         }
-        return Ok(result);
+        return Ok((result, target));
     };
     let gain = level.max(100);
     if s.borrow().link.is_some() {
@@ -1810,7 +1818,7 @@ async fn set_volume(s: &Shared, kind: &str, device: &str, level: Option<u16>, mu
     p.services.save_settings(&settings)?;
     p.view.settings = settings;
     result.level = level;
-    Ok(result)
+    Ok((result, target))
 }
 /// Saves the settings and the account, and answers; whether the engine then
 /// comes up on the new settings is a separate matter, told in the window's

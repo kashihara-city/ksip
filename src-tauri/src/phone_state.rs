@@ -13,14 +13,8 @@ use crate::storage::AccountView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// The endpoint a call's stream is on, as the engine opened it: its id, and
-/// whether it is another than the device chosen (the default in its place
-/// while that device is not there or would not start).
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
-pub struct CallEndpoint {
-    pub id: String,
-    pub stand_in: bool,
-}
+/// The endpoint a call's stream is on, as the engine opened it (audio.rs).
+pub use crate::audio::CallEndpoint;
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
     pub running: bool,
@@ -252,6 +246,18 @@ pub enum MaintenanceRefused {
     Held,
 }
 
+impl Snapshot {
+    /// What the volume, mute and meter for a kind of device go by (audio.rs,
+    /// target): the saved choice, and the endpoint a call's stream is on,
+    /// when one is.
+    pub fn audio_choice(&self, kind: &str) -> (String, Option<CallEndpoint>) {
+        if kind == "microphone" {
+            (self.settings.microphone.clone(), self.microphone_call.clone())
+        } else {
+            (self.settings.speaker.clone(), self.speaker_call.clone())
+        }
+    }
+}
 impl PhoneState {
     /// A new engine process: the calls of the old one are gone with it, and
     /// its reports, should any still arrive, are told apart by generation.

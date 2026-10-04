@@ -391,13 +391,7 @@ impl AppState {
     /// Read off the published snapshot without copying the rest of it: the
     /// meter asks ten times a second.
     pub fn audio_choice(&self, kind: &str) -> (String, Option<crate::phone_state::CallEndpoint>) {
-        self.published.with(|view| {
-            if kind == "microphone" {
-                (view.settings.microphone.clone(), view.microphone_call.clone())
-            } else {
-                (view.settings.speaker.clone(), view.speaker_call.clone())
-            }
-        })
+        self.published.with(|view| view.audio_choice(kind))
     }
     /// The saved software gain for a kind of device, in percent.
     pub fn audio_gain(&self, kind: &str) -> u16 {

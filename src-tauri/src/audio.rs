@@ -53,6 +53,63 @@ pub struct Resolved {
     pub id: String,
     pub stand_in: bool,
 }
+/// The endpoint a call's stream is on, as the engine opened it: its id, and
+/// whether it is another than the device chosen (the default in its place
+/// while that device is not there or would not start). Part of the phone's
+/// snapshot (phone_state.rs); defined here, since `target` reads it.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct CallEndpoint {
+    pub id: String,
+    pub stand_in: bool,
+}
+/// Where the window's volume, mute and meter for a kind of device go, and
+/// why (`target`). The window asks by kind alone and never works out an
+/// endpoint itself: the saved choice is what the person picked, which
+/// endpoint serves it now is the engine's to say for a call that is up (the
+/// call endpoint from its state report) and the app's to resolve otherwise
+/// (`resolve`), by the same rule.
+#[derive(Clone, Serialize, Debug, PartialEq)]
+pub struct Target {
+    pub id: String,
+    /// "call" while a call's stream is on the endpoint, "idle" otherwise.
+    pub origin: &'static str,
+    /// Another endpoint than the one chosen serves it: "absent" when the one
+    /// chosen is not there (the default in its place), "failed" when it is
+    /// there but the call could not use it (the one it had, or the default).
+    /// None while the choice itself serves, and for "default".
+    pub stand_in: Option<&'static str>,
+}
+/// The endpoint for the kind now, from the saved choice and the endpoint a
+/// call's stream is on when one is; `classify` says whether what stands in
+/// is to be told apart (a look at Windows for a call on another endpoint
+/// than the one chosen), which the volume wants and the meter can do without.
+pub fn target(kind: &str, choice: &str, call: Option<&CallEndpoint>, classify: bool) -> Result<Target, String> {
+    if let Some(call) = call {
+        let stand_in = if !classify || choice == "default" || call.id == choice {
+            None
+        } else {
+            match resolve(kind, choice) {
+                Ok(resolved) if !resolved.stand_in => Some("failed"),
+                _ => Some("absent"),
+            }
+        };
+        return Ok(Target { id: call.id.clone(), origin: "call", stand_in });
+    }
+    let resolved = resolve(kind, choice)?;
+    Ok(Target { id: resolved.id, origin: "idle", stand_in: resolved.stand_in.then_some("absent") })
+}
+/// A change meant for the endpoint the window was shown (`expected`) is
+/// made only while that is the one in use (`target`, looked up when the
+/// change is made): the call may have moved meanwhile (the device chosen
+/// back, the default standing in), and then nothing is changed and what is
+/// in use is answered.
+pub fn volume_change_for(target: &Target, expected: Option<&str>, level: Option<u16>, mute: Option<bool>) -> (Option<u16>, Option<bool>) {
+    if expected.is_some_and(|id| id != target.id) {
+        (None, None)
+    } else {
+        (level, mute)
+    }
+}
 #[derive(Clone, Serialize)]
 pub struct Calibration {
     pub measured_ms: u16,
@@ -993,6 +1050,30 @@ mod privacy_tests {
 mod tests {
     use super::*;
 
+    // The endpoint a call's stream is on is the target while there is one,
+    // whatever the choice stands for now; without a call the choice is
+    // resolved (a look at Windows, which "other" never gets to).
+    #[test]
+    fn a_call_endpoint_is_the_target_while_there_is_one() {
+        let on_mic = CallEndpoint { id: "{mic}".into(), stand_in: false };
+        let found = target("microphone", "{mic}", Some(&on_mic), true).unwrap();
+        assert_eq!(found, Target { id: "{mic}".into(), origin: "call", stand_in: None });
+        let elsewhere = CallEndpoint { id: "{default-mic}".into(), stand_in: true };
+        let found = target("microphone", "{mic}", Some(&elsewhere), false).unwrap();
+        assert_eq!(found, Target { id: "{default-mic}".into(), origin: "call", stand_in: None }, "not classified: the meter's way");
+        let found = target("microphone", "default", Some(&elsewhere), true).unwrap();
+        assert_eq!(found.stand_in, None, "the default asked for stands in for nothing");
+        assert!(target("other", "default", None, true).is_err());
+    }
+    // A change the window meant for the endpoint it was shown is made only
+    // while that is the one in use when the phone gets to it.
+    #[test]
+    fn a_change_meant_for_another_endpoint_than_the_one_in_use_is_not_made() {
+        let on_b = Target { id: "{b}".into(), origin: "call", stand_in: None };
+        assert_eq!(volume_change_for(&on_b, Some("{a}"), Some(50), Some(true)), (None, None), "the call moved from a to b: nothing is changed");
+        assert_eq!(volume_change_for(&on_b, Some("{b}"), Some(50), Some(true)), (Some(50), Some(true)));
+        assert_eq!(volume_change_for(&on_b, None, None, Some(false)), (None, Some(false)), "no expectation: changed where it is");
+    }
     #[test]
     fn a_mix_format_whose_samples_would_not_fit_is_refused() {
         use windows::Win32::Media::Audio::WAVE_FORMAT_PCM;

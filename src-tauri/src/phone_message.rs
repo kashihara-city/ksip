@@ -2,7 +2,7 @@
 //! and the links; what the engine link reports; and what work that ran
 //! outside the actor brings back. Every change to the phone's state starts
 //! as one of these, and they are handled one at a time, in order.
-use crate::audio::{Calibration, Device, Volume};
+use crate::audio::{Calibration, Device, Target, Volume};
 use crate::engine_link::{EngineLink, StopReport};
 use crate::settings::{CustomButton, Settings};
 use crate::storage::Account;
@@ -63,12 +63,15 @@ pub enum Command {
         reply: Reply<Calibration>,
     },
     /// A volume or mute change; reading the volume does not go through here.
+    /// The endpoint in use is looked up when the change is made (audio.rs,
+    /// target), and the change is made only while that is `expected`, the
+    /// one the window was shown; the answer says which it was.
     SetVolume {
         kind: String,
-        device: String,
         level: Option<u16>,
         mute: Option<bool>,
-        reply: Reply<Volume>,
+        expected: Option<String>,
+        reply: Reply<(Volume, Target)>,
     },
     /// Told by the desktop loop, which can see the window; the phone cannot.
     WindowVisible(bool),

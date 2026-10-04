@@ -2,7 +2,7 @@
 //! the phone actor or asks a service; none of them holds or changes any
 //! phone state of its own.
 use crate::app::AppState;
-use crate::audio::{Calibration, Peak};
+use crate::audio::{Calibration, Peak, Target};
 use crate::history::CallHistory;
 use crate::logs::{LogPage, LOG_APP};
 use crate::message::message;
@@ -251,41 +251,12 @@ pub async fn refresh_devices(state: State<'_, AppState>) -> Result<(), String> {
     let phone = state.phone.clone();
     blocking(move || phone.call(Command::RefreshDevices)).await
 }
-/// Where the window's volume, mute and meter for a kind of device go, and
-/// why. The window asks by kind alone and never works out an endpoint
-/// itself: the saved choice is what the person picked, which endpoint serves
-/// it now is the engine's to say for a call that is up (the snapshot's
-/// call endpoint, from its state report) and the app's to resolve otherwise
-/// (audio.rs, resolve), by the same rule.
-#[derive(Clone, Serialize, Debug, PartialEq)]
-pub struct Target {
-    pub id: String,
-    /// "call" while a call's stream is on the endpoint, "idle" otherwise.
-    pub origin: &'static str,
-    /// Another endpoint than the one chosen serves it: "absent" when the one
-    /// chosen is not there (the default in its place), "failed" when it is
-    /// there but the call could not use it (the one it had, or the default).
-    /// None while the choice itself serves, and for "default".
-    pub stand_in: Option<&'static str>,
-}
-/// The endpoint for the kind now; `classify` says whether what stands in is
-/// to be told apart (a look at Windows for a call on another endpoint than
-/// the one chosen), which the volume wants and the meter can do without.
+/// Where the window's volume, mute and meter for a kind of device go now
+/// (audio.rs, target), from the published snapshot: the saved choice, and
+/// the call's endpoint from the engine's state report.
 pub fn target(state: &AppState, kind: &str, classify: bool) -> Result<Target, String> {
     let (choice, call) = state.audio_choice(kind);
-    if let Some(call) = call {
-        let stand_in = if !classify || choice == "default" || call.id == choice {
-            None
-        } else {
-            match crate::audio::resolve(kind, &choice) {
-                Ok(resolved) if !resolved.stand_in => Some("failed"),
-                _ => Some("absent"),
-            }
-        };
-        return Ok(Target { id: call.id, origin: "call", stand_in });
-    }
-    let resolved = crate::audio::resolve(kind, &choice)?;
-    Ok(Target { id: resolved.id, origin: "idle", stand_in: resolved.stand_in.then_some("absent") })
+    crate::audio::target(kind, &choice, call.as_ref(), classify)
 }
 /// The device chosen not there, and there again: said once each way in the
 /// app's log, not once a second for as long as it is gone.
@@ -319,28 +290,29 @@ pub struct VolumeView {
 }
 /// Reads a volume, or sets it. Reading asks Windows and lays the saved gain
 /// over; setting goes through the phone, since the engine and the settings
-/// take the change too. A change meant for another endpoint than the one in
-/// use now (`expected`, the one the window was shown; the call moved
-/// meanwhile) is not made, and the answer says what is in use. The arguments
-/// are checked here, before anything is asked of Windows.
+/// take the change too, and the phone looks the endpoint in use up when it
+/// gets to the change, not before it is queued: a change meant for another
+/// endpoint than the one in use then (`expected`, the one the window was
+/// shown; the call moved meanwhile) is not made, and the answer says what
+/// is in use. The arguments are checked here, before anything is asked of
+/// Windows.
 pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<VolumeView, String> {
     if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
         return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
     }
-    let target = target(state, kind, true)?;
-    note_stand_in(state, kind, &target);
-    let (level, mute) = if expected.is_some_and(|id| id != target.id) { (None, None) } else { (level, mute) };
-    let result = if level.is_some() || mute.is_some() {
-        let (kind, device) = (kind.to_string(), target.id.clone());
-        state.phone.call(|reply| Command::SetVolume { kind, device, level, mute, reply })?
+    let (result, target) = if level.is_some() || mute.is_some() {
+        let (kind, expected) = (kind.to_string(), expected.map(str::to_string));
+        state.phone.call(|reply| Command::SetVolume { kind, level, mute, expected, reply })?
     } else {
+        let target = target(state, kind, true)?;
         let mut result = crate::audio::volume(kind, &target.id, None, None)?;
         let gain = state.audio_gain(kind);
         if gain > 100 {
             result.level = gain;
         }
-        result
+        (result, target)
     };
+    note_stand_in(state, kind, &target);
     Ok(VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in })
 }
 #[tauri::command]
