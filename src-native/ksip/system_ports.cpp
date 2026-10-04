@@ -58,9 +58,11 @@ void open_way_in(call *c, const char *why) {
     send_empty(rtcp_sock(rtp), &rtcp);
     info("ksip: empty datagrams to the peer's RTP and RTCP keep the way in open (%s)\n", why);
 }
-// Every kLookMs: a call up whose stream has sent nothing for kQuietMs has
-// its way in opened again. What was sent is read off the stream's own count
-// (the empty datagrams are not in it), and a call gone is forgotten.
+// Every kLookMs: a call whose stream has sent nothing for kQuietMs has its
+// way in opened again; a call up, or one answered early (a 183 with an
+// announcement the peer only sends), whose peer gave a media address
+// (open_way_in sees to that). What was sent is read off the stream's own
+// count (the empty datagrams are not in it), and a call gone is forgotten.
 void look(void *) {
     tmr_start(&g_look, kLookMs, look, nullptr);
     const uint64_t now = tmr_jiffies();
@@ -68,7 +70,7 @@ void look(void *) {
     for (le *u = list_head(uag_list()); u; u = u->next) {
         for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             call *c = static_cast<call *>(l->data);
-            if (call_state(c) != CALL_STATE_ESTABLISHED) continue;
+            if (call_state(c) != CALL_STATE_ESTABLISHED && call_state(c) != CALL_STATE_EARLY) continue;
             stream *s;
             sdp_media *m;
             struct rtp_sock *rtp;
