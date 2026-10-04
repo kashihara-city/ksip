@@ -22,6 +22,7 @@
 #include <rem.h>
 #include <baresip.h>
 #include <atomic>
+#include <string>
 #include <thread>
 #include "ksip_audio_bridge.h"
 #include "session_core.h"
@@ -63,4 +64,23 @@ Switch switch_devices(const char *microphone, const char *speaker);
 // The session's part of the module's state (audio_state.h): "microphone"
 // and "speaker", added to `audio`.
 void add_state(odict *audio);
+// The playout side of a core as audio_state.h writes a side: "playing",
+// "endpoint" and "stand_in" while up, "failures" and "last_result"; for the
+// call's speaker (the session's core) and for the alert sounds' (alert_player.h).
+template <class AnyCore>
+void add_playout_state(odict *audio, const char *name, AnyCore &core) {
+    odict *side = nullptr;
+    if (odict_alloc(&side, 8)) return;
+    odict_entry_add(side, "playing", ODICT_BOOL, core.playing());
+    const std::string endpoint = core.endpoint(true);
+    if (!endpoint.empty()) {
+        odict_entry_add(side, "endpoint", ODICT_STRING, endpoint.c_str());
+        odict_entry_add(side, "stand_in", ODICT_BOOL, core.stand_in(true));
+    }
+    const auto failures = core.speaker_failures();
+    odict_entry_add(side, "failures", ODICT_INT, static_cast<int64_t>(failures.count));
+    if (failures.count) odict_entry_add(side, "last_result", ODICT_INT, static_cast<int64_t>(failures.last_result));
+    odict_entry_add(audio, name, ODICT_OBJECT, side);
+    mem_deref(side);
+}
 } // namespace playback_session

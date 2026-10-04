@@ -21,6 +21,8 @@ struct odict;
 //                            "failures": n, "last_result": n},
 //             "speaker": {"playing": bool, "endpoint": id, "stand_in": bool,
 //                         "failures": n, "last_result": n},
+//             "alert": {"playing": bool, "endpoint": id, "stand_in": bool,
+//                       "failures": n, "last_result": n},
 //             "capture_raw": bool, "playout_raw": bool}
 // "ready" is false when the module is not up (not loaded, or its bridge
 // would not start); "processing" is echo cancellation, the high-pass filter,
@@ -34,7 +36,9 @@ struct odict;
 // that side that failed, whichever path tried it (a new stream, the old
 // player put back, the stream handed back, the default in a device's place);
 // "last_result" is the bridge's result for the last of them, there once
-// "failures" is not 0. "capture_raw" and "playout_raw" are there once a
+// "failures" is not 0. "alert" is the same for the alert sounds (the
+// ringtone), which play through their own player (alert_player.h): "playing"
+// while a sound is up, the endpoint it is on, and the starts that failed. "capture_raw" and "playout_raw" are there once a
 // capture or a playout stream has been opened: true when it took RAW mode,
 // false when it was not asked for (ksip_raw_microphone, ksip_raw_speaker) or
 // the device refused it, and the device's effects (APOs) process that audio.

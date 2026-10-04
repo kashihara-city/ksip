@@ -387,11 +387,14 @@ struct EngineNotices {
     no_trust: bool,
     /// The speaker's failed starts already said, by the speaker's own count.
     speaker_failures: u64,
+    /// The same for the alert sounds' player.
+    alert_failures: u64,
 }
 impl EngineNotices {
     /// What a report has to say that was not said: the audio module is not up,
-    /// the speaker would not start (a microphone that would not start is the
-    /// silence notice, not a banner), the trust store for TLS is empty.
+    /// the speaker or the ringtone would not start (a microphone that would
+    /// not start is the silence notice, not a banner), the trust store for
+    /// TLS is empty.
     fn news(&mut self, audio: Option<&AudioState>, trust: Option<u64>) -> Vec<String> {
         let mut said = Vec::new();
         if let Some(audio) = audio {
@@ -403,6 +406,11 @@ impl EngineNotices {
                 self.speaker_failures = audio.speaker.failures;
                 let result = audio.speaker.last_result.map(|r| r.to_string()).unwrap_or_default();
                 said.push(message_with("AUDIO_SPEAKER_START_FAILED", [result]));
+            }
+            if audio.alert.failures > self.alert_failures {
+                self.alert_failures = audio.alert.failures;
+                let result = audio.alert.last_result.map(|r| r.to_string()).unwrap_or_default();
+                said.push(message_with("ALERT_START_FAILED", [result]));
             }
         }
         // baresip only warns when it cannot load the trust list, and then
@@ -818,9 +826,9 @@ impl Phone {
         let starting = self.starting == Some(link.generation);
         match link.body {
             LinkBody::Log(text) => {
-                if held || starting {
-                    self.alert_failure_from_log(&text);
-                }
+                // Logged, and that is all: every state the window shows
+                // comes in the state report (apply_report), the ringtone's
+                // player included.
                 self.services.log(LOG_ENGINE, text);
             }
             LinkBody::Event(event) => {
@@ -918,18 +926,6 @@ impl Phone {
         let notice = message_with("ENGINE_EXITED", [code]);
         self.close_calls_on_exit(Some(notice.clone()));
         self.services.log(LOG_APP, notice);
-    }
-    /// The one thing still read from the engine's words. The ring tone plays
-    /// through baresip's own wasapi module (audio_alert), which says that
-    /// its device would not start only in its log. Everything else about
-    /// the audio and the trust store comes in the state report (apply_report).
-    /// Only the banner: the log changes no state.
-    fn alert_failure_from_log(&mut self, s: &str) -> bool {
-        if s.contains("wasapi/play:") && s.contains("failed") {
-            self.view.error = message_with("AUDIO_DEVICE_INIT_FAILED_DETAIL", [s]);
-            return true;
-        }
-        false
     }
     fn event(&mut self, e: &Value) {
         let kind = e["type"].as_str().unwrap_or("");
@@ -2508,10 +2504,32 @@ mod tests {
             p.handle_link(line(text));
         }
         assert!(!p.view.microphone_fallback && !p.view.aec_active && p.view.error.is_empty(), "the words are logged, and that is all");
-        // The ring tone's player is the one thing the log still speaks for.
+        // The ring tone's player included: its failures come in the report.
         p.handle_link(line("wasapi/play: IAudioClient_Initialize failed (0x88890008)"));
-        assert!(p.view.error.contains("IAudioClient_Initialize"));
-        assert!(!p.view.aec_active);
+        assert!(p.view.error.is_empty() && !p.view.aec_active);
+    }
+    #[test]
+    fn a_ringtone_that_would_not_start_is_said_once_from_the_report() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let report = |failures: u64| {
+            report_with(
+                json!({"ready": true, "processing": true,
+                       "microphone": {"input": "none", "failures": 0},
+                       "speaker": {"playing": false, "failures": 0},
+                       "alert": {"playing": true, "endpoint": "{spk}", "stand_in": true, "failures": failures, "last_result": -3}}),
+                None,
+            )
+        };
+        p.apply_report(1, report(0));
+        assert!(p.view.error.is_empty());
+        p.apply_report(2, report(1));
+        assert_eq!(p.view.error, message_with("ALERT_START_FAILED", ["-3"]));
+        p.view.error.clear();
+        p.apply_report(3, report(1));
+        assert!(p.view.error.is_empty(), "a failure already said is not said again");
+        p.apply_report(4, report(2));
+        assert_eq!(p.view.error, message_with("ALERT_START_FAILED", ["-3"]), "a later one is");
     }
     #[test]
     fn words_of_an_engine_no_longer_held_change_nothing() {
@@ -2534,8 +2552,7 @@ mod tests {
         p.starting = Some(3);
         let line = |body| LinkMessage { generation: 3, seq: 1, body };
         p.handle_link(line(LinkBody::Log("wasapi/play: IAudioClient_Start failed".into())));
-        assert!(p.view.error.contains("IAudioClient_Start"), "the ring tone's failure of an engine being started counts");
-        p.view.error.clear();
+        assert!(p.view.error.is_empty(), "the words of an engine being started are logged and no more");
         p.handle_link(line(LinkBody::Lost));
         assert!(p.starting_lost, "the start finds its engine gone when it reports");
         assert!(p.view.error.is_empty(), "nothing is said until the start reports");

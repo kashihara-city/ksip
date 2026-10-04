@@ -3,6 +3,7 @@
 // libre's timers and the fallback thread behind the core's interfaces, and
 // turns the bridge's PCM callbacks into baresip frames.
 #include "audio_session.h"
+#include "libre_clock.h"
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -11,9 +12,6 @@
 namespace playback_session {
 namespace {
 ksip_audio *g_audio;
-struct tmr g_linger;
-struct tmr g_handback;
-struct tmr g_watch;
 
 int Render(void *arg, int16_t *samples, size_t frames) {
     auto *state = static_cast<auplay_st *>(arg);
@@ -51,17 +49,7 @@ struct BridgeAdm final : Adm {
     }
     bool listed(const char *device, bool playout) override { return ksip_audio_endpoint_listed(g_audio, device, playout) != 0; }
 } g_adm;
-void HandBack(void *);
-void StopIdleStreams(void *);
-void WatchTick(void *);
-// libre's timers, as the core sees them.
-struct LibreClock final : Clock {
-    static tmr *of(Timer which) { return which == Timer::Linger ? &g_linger : which == Timer::HandBack ? &g_handback : &g_watch; }
-    void start(Timer which, uint64_t ms) override {
-        tmr_start(of(which), ms, which == Timer::Linger ? StopIdleStreams : which == Timer::HandBack ? HandBack : WatchTick, nullptr);
-    }
-    void cancel(Timer which) override { tmr_cancel(of(which)); }
-} g_clock;
+LibreClock g_clock;
 
 void StopFallback(ausrc_st *state) {
     state->fallback_run.store(false);
@@ -88,18 +76,6 @@ Core<auplay_st, ausrc_st> g_core(g_adm, g_clock,
                                   },
                                   StartFallback, StopFallback});
 
-void HandBack(void *) {
-    if (!g_audio) return;
-    g_core.hand_back();
-}
-void StopIdleStreams(void *) {
-    if (!g_audio) return;
-    g_core.stop_idle();
-}
-void WatchTick(void *) {
-    if (!g_audio) return;
-    g_core.watch_tick();
-}
 void PlayoutDestructor(void *arg) {
     auto *state = static_cast<auplay_st *>(arg);
     if (!g_audio) return;
@@ -122,14 +98,15 @@ const char *ConfiguredMicrophone() {
 
 void open(ksip_audio *bridge) {
     g_audio = bridge;
-    tmr_init(&g_linger);
-    tmr_init(&g_handback);
-    tmr_init(&g_watch);
+    g_clock.fire = [](Timer which) {
+        if (!g_audio) return;
+        if (which == Timer::Linger) g_core.stop_idle();
+        else if (which == Timer::HandBack) g_core.hand_back();
+        else g_core.watch_tick();
+    };
 }
 void close() {
-    tmr_cancel(&g_linger);
-    tmr_cancel(&g_handback);
-    tmr_cancel(&g_watch);
+    g_clock.cancel_all();
     g_audio = nullptr;
 }
 ksip_audio *bridge() { return g_audio; }
@@ -153,21 +130,15 @@ void AddEndpoint(odict *side, bool playout) {
 } // namespace
 void add_state(odict *audio) {
     static const char *const inputs[] = {"none", "device", "silence"};
-    odict *microphone = nullptr, *speaker = nullptr;
+    odict *microphone = nullptr;
     if (!odict_alloc(&microphone, 8)) {
         odict_entry_add(microphone, "input", ODICT_STRING, inputs[static_cast<int>(g_core.input())]);
         AddEndpoint(microphone, false);
         AddFailures(microphone, g_core.microphone_failures());
         odict_entry_add(audio, "microphone", ODICT_OBJECT, microphone);
     }
-    if (!odict_alloc(&speaker, 8)) {
-        odict_entry_add(speaker, "playing", ODICT_BOOL, g_core.playing());
-        AddEndpoint(speaker, true);
-        AddFailures(speaker, g_core.speaker_failures());
-        odict_entry_add(audio, "speaker", ODICT_OBJECT, speaker);
-    }
     mem_deref(microphone);
-    mem_deref(speaker);
+    add_playout_state(audio, "speaker", g_core);
 }
 
 int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handler, void *arg) {

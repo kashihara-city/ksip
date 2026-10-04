@@ -25,24 +25,28 @@ int StateCommand(re_printf *pf, void *) {
 }
 // The devices the configuration names now (ksip_audio_devices has just set
 // them) taken by the streams that are up: a change made during a call
-// reaches that call. A side this module does not have is left alone. What
-// came of each side is the answer, as JSON: {"microphone": word, "speaker":
+// reaches that call, and one made while an alert sound plays reaches the
+// sound. A side this module does not have is left alone. What came of each
+// is the answer, as JSON: {"microphone": word, "speaker": word, "alert":
 // word}, the words of session_core.h's Outcome ("not_up", "unchanged",
 // "moved", "kept", "down").
 int SwitchCommand(re_printf *pf, void *) {
     const struct config *cfg = conf_config();
     if (!cfg || !g_ready) return ENODEV;
-    const auto chosen = [](const char *module, const char *device) -> const char * {
-        if (str_cmp(module, "ksip_audio")) return nullptr;
+    const auto chosen = [](const char *module, const char *ours, const char *device) -> const char * {
+        if (str_cmp(module, ours)) return nullptr;
         return device[0] ? device : "default";
     };
-    const playback_session::Switch outcome =
-        playback_session::switch_devices(chosen(cfg->audio.src_mod, cfg->audio.src_dev), chosen(cfg->audio.play_mod, cfg->audio.play_dev));
+    const playback_session::Switch outcome = playback_session::switch_devices(chosen(cfg->audio.src_mod, "ksip_audio", cfg->audio.src_dev),
+                                                                              chosen(cfg->audio.play_mod, "ksip_audio", cfg->audio.play_dev));
+    // The alert sound that may be playing moves to the speaker too.
+    const playback_session::Outcome alert = alert_player::switch_speaker(chosen(cfg->audio.alert_mod, "ksip_alert", cfg->audio.alert_dev));
     odict *od = nullptr;
     int err = odict_alloc(&od, 4);
     if (err) return err;
     odict_entry_add(od, "microphone", ODICT_STRING, playback_session::outcome_name(outcome.microphone));
     odict_entry_add(od, "speaker", ODICT_STRING, playback_session::outcome_name(outcome.speaker));
+    odict_entry_add(od, "alert", ODICT_STRING, playback_session::outcome_name(alert));
     err = json_encode_odict(pf, od);
     mem_deref(od);
     return err;
@@ -144,6 +148,7 @@ extern "C" int ksip_audio_add_state(struct odict *od) {
     // Not up, the session has had nothing to do: no input, no output, no
     // failures, which is what it says.
     playback_session::add_state(audio);
+    alert_player::add_state(audio);
     // Whether the last capture and playout streams took RAW mode; not there before the first.
     if (const int raw = g_audio ? ksip_audio_capture_raw() : 0) odict_entry_add(audio, "capture_raw", ODICT_BOOL, raw == 1);
     if (const int raw = g_audio ? ksip_audio_playout_raw() : 0) odict_entry_add(audio, "playout_raw", ODICT_BOOL, raw == 1);

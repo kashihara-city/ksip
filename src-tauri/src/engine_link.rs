@@ -74,6 +74,9 @@ pub struct AudioState {
     pub processing: bool,
     pub microphone: MicrophoneState,
     pub speaker: SpeakerState,
+    /// The alert sounds' player (the ringtone), as a side of its own: up
+    /// while a sound plays, on its endpoint, with the starts that failed.
+    pub alert: SpeakerState,
     /// The last capture stream took RAW mode (false: the device refused it,
     /// and its effects process the microphone first); none before the first.
     pub capture_raw: Option<bool>,

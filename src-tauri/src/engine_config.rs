@@ -463,6 +463,7 @@ mod tests {
                     processing: true,
                     microphone: MicrophoneState { input: "none".into(), endpoint: None, stand_in: false, failures: 0, last_result: None },
                     speaker: SpeakerState { playing: false, endpoint: None, stand_in: false, failures: 0, last_result: None },
+                    alert: SpeakerState { playing: false, endpoint: None, stand_in: false, failures: 0, last_result: None },
                     // No call has opened the microphone yet.
                     capture_raw: None,
                     playout_raw: None,

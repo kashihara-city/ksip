@@ -154,7 +154,7 @@ def connect(caller,callee,extension,known=()):
 class Phone:
     def __init__(self,name,account,sip_port=None,rtp_port=None,audio_player='aufile,NUL',
                  audio_source=None,extra_config='',codecs=('g711','libg722','opus'),
-                 transport='UDP',mediaenc='',ca_file=''):
+                 transport='UDP',mediaenc='',ca_file='',audio_alert='aufile,NUL'):
         """codecs picks the loaded codec modules, so a narrowband peer can be simulated.
 
         transport/mediaenc/ca_file drive SIP over TLS and SRTP, the same keys the
@@ -194,7 +194,7 @@ call_max_calls 8
 call_hold_other_calls yes
 audio_source {audio_source}
 audio_player {audio_player}
-audio_alert aufile,NUL
+audio_alert {audio_alert}
 ausrc_srate 48000
 auplay_srate 48000
 ausrc_channels 1
