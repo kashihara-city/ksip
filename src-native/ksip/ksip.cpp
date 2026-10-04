@@ -115,10 +115,11 @@ int detail_log(re_printf *pf, void *arg) {
 // of its configuration when a call's audio starts, so the configuration is
 // what changes here for the calls to come; a call that is up is moved onto
 // them by the audio module (ksip_audio_switch), so that a choice made during
-// a call reaches it. baresip's own auplay command would
-// also move the alert sounds onto the call's player, which only takes the
-// call's 48 kHz, so the alert stays with its own player (ksip_alert) and
-// just follows the speaker.
+// a call reaches it, and what came of that for each side is the answer (its
+// JSON, see device_module.cpp; {} when the audio module is not up). baresip's
+// own auplay command would also move the alert sounds onto the call's
+// player, which only takes the call's 48 kHz, so the alert stays with its
+// own player (ksip_alert) and just follows the speaker.
 int audio_devices(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     config *cfg = conf_config();
@@ -131,8 +132,9 @@ int audio_devices(re_printf *pf, void *arg) {
     info("ksip: audio devices, microphone %s, speaker %s\n", microphone.c_str(), speaker.c_str());
     static const char switch_command[] = "ksip_audio_switch";
     const int err = cmd_process_long(baresip_commands(), switch_command, sizeof(switch_command) - 1, pf, nullptr);
-    if (err) warning("ksip: the calls that are up could not be moved onto the devices (%m)\n", err);
-    return re_hprintf(pf, "Audio devices set\n");
+    if (!err) return 0;
+    warning("ksip: the calls that are up could not be moved onto the devices (%m)\n", err);
+    return re_hprintf(pf, "{}");
 }
 const cmd commands[] = {
     {"ksip_login", 0, 0, "Load Windows SIP credential and register", sip_account::login},

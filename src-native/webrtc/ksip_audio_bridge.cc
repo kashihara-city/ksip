@@ -6,6 +6,7 @@
 #include "bridge_state.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -29,29 +30,48 @@ struct RawMode {
   std::atomic<int> taken{0};
 };
 RawMode capture_raw, playout_raw;
-// The endpoint the last capture and the last playout stream opened, whichever
-// way it was chosen (OpenedEndpoint), made once and never destroyed, as
-// WebRTC builds without exit-time destructors.
+// For the capture and the playout: the endpoint the stream being opened
+// asks Windows for (noted as WebRTC's CoreAudio initializes it), and the one
+// the last stream opened (that, once the initialization has succeeded; empty
+// again when the stream is stopped, or when a later initialization began and
+// did not succeed). In two steps like the RAW mode, since an endpoint asked
+// for can still fail to open. Made once and never destroyed, as WebRTC
+// builds without exit-time destructors.
 struct Endpoint {
   std::mutex mutex;
-  std::string id;
+  std::string noted;
+  std::string opened;
 };
-Endpoint& opened_endpoint(bool capture) {
+Endpoint& endpoint_of(bool capture) {
   static Endpoint* const capture_side = new Endpoint();
   static Endpoint* const playout_side = new Endpoint();
   return capture ? *capture_side : *playout_side;
 }
+void ClearOpened(bool capture) {
+  Endpoint& endpoint = endpoint_of(capture);
+  std::lock_guard<std::mutex> lock(endpoint.mutex);
+  endpoint.opened.clear();
+}
 }  // namespace
 
 void webrtc::webrtc_win::core_audio_utility::KsipNoteDevice(bool capture, const std::string& id) {
-  Endpoint& endpoint = opened_endpoint(capture);
+  Endpoint& endpoint = endpoint_of(capture);
   std::lock_guard<std::mutex> lock(endpoint.mutex);
-  endpoint.id = id;
+  // A stream is being opened: whatever was open on the side is gone.
+  endpoint.noted = id;
+  endpoint.opened.clear();
 }
 std::string ksip_audio_bridge::OpenedEndpoint(bool playout) {
-  Endpoint& endpoint = opened_endpoint(!playout);
+  Endpoint& endpoint = endpoint_of(!playout);
   std::lock_guard<std::mutex> lock(endpoint.mutex);
-  return endpoint.id;
+  return endpoint.opened;
+}
+extern "C" int ksip_audio_opened_endpoint(ksip_audio *audio, int playout, char *out, size_t size) {
+  if (!out || !size) return 0;
+  const std::string opened = audio ? ksip_audio_bridge::OpenedEndpoint(playout != 0) : std::string();
+  // Written whole or cut to what fits, null-terminated either way.
+  std::snprintf(out, size, "%s", opened.c_str());
+  return opened.empty() ? 0 : 1;
 }
 
 // Asked and told by WebRTC's CoreAudio as a stream gets its properties and
@@ -65,6 +85,9 @@ void webrtc::webrtc_win::core_audio_utility::KsipNoteRaw(bool capture, bool raw)
 void webrtc::webrtc_win::core_audio_utility::KsipNoteOpened(bool capture) {
   RawMode& mode = capture ? capture_raw : playout_raw;
   mode.taken = mode.noted.load();
+  Endpoint& endpoint = endpoint_of(capture);
+  std::lock_guard<std::mutex> lock(endpoint.mutex);
+  endpoint.opened = endpoint.noted;
 }
 
 extern "C" void ksip_audio_set_raw(int capture, int playout) {
@@ -161,7 +184,12 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
 }
 extern "C" void ksip_audio_stop_playout(ksip_audio *audio) {
   if (!audio) return;
-  if (audio->adm->Playing()) audio->adm->StopPlayout();
+  // The endpoint noted as open goes with the stream stopped here; one not
+  // playing (WebRTC's own restart in between, say) keeps its note.
+  if (audio->adm->Playing()) {
+    audio->adm->StopPlayout();
+    ClearOpened(false);
+  }
   audio->render_gate.ClearAndDrain();
 }
 extern "C" void ksip_audio_detach_playout(ksip_audio *audio) {
@@ -207,7 +235,10 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
 }
 extern "C" void ksip_audio_stop_recording(ksip_audio *audio) {
   if (!audio) return;
-  if (audio->adm->Recording()) audio->adm->StopRecording();
+  if (audio->adm->Recording()) {
+    audio->adm->StopRecording();
+    ClearOpened(true);
+  }
   audio->capture_gate.ClearAndDrain();
 }
 extern "C" void ksip_audio_detach_recording(ksip_audio *audio) {

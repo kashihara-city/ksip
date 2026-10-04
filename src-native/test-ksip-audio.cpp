@@ -40,21 +40,56 @@ struct Player {
 struct Source {
     bool started = false;
 };
+// The bridge as the core sees it, deciding what device_selection.cc
+// decides: a device that is not there (`absent`) has the default opened in
+// its place and the start succeed, a device that is there but would not
+// start (`broken`, by the name asked for or by the endpoint it opens) fails
+// the start, and a start for the request a running stream serves takes it
+// over as it is (ksip_audio::Serves), unless the device asked for is back.
 struct FakeAdm : playback_session::Adm {
     std::vector<std::string> diary;
     void *playing = nullptr, *recording = nullptr;
     bool playout_on = false, recording_on = false;
-    // Devices whose start fails, by name.
-    std::vector<std::string> broken;
-    bool fails(const char *device) {
-        for (auto &b : broken) if (b == device) return true;
-        return false;
+    std::vector<std::string> broken, absent;
+    std::string default_speaker = "default-speaker", default_microphone = "default-microphone";
+    std::string playout_request, recording_request, playout_opened, recording_opened;
+    static bool has(const std::vector<std::string> &list, const std::string &device) {
+        return std::find(list.begin(), list.end(), device) != list.end();
+    }
+    // "default" is listed while any device is: `absent` with "default" in it
+    // means no device at all, and then the default opens nothing either.
+    bool listed(const char *device, bool) override { return !has(absent, device); }
+    std::string opened(bool playout) override { return playout ? playout_opened : recording_opened; }
+    std::string endpoint_for(const std::string &request, bool playout) const {
+        return request == "default" || has(absent, request) ? (playout ? default_speaker : default_microphone) : request;
+    }
+    bool no_device_for(const std::string &request) const { return has(absent, "default") && (request == "default" || has(absent, request)); }
+    // ksip_audio::Serves: a stream on an endpoint that is gone serves
+    // nothing; otherwise a running stream for the same request is taken as
+    // it is unless the device asked for is back.
+    bool serves(const std::string &request, bool playout) {
+        const std::string on = opened(playout);
+        if (!on.empty() && !listed(on.c_str(), playout)) return false;
+        return request == "default" || on == request || !listed(request.c_str(), playout);
     }
     int start_playout(const char *device, void *player) override {
-        diary.push_back(std::string("start_playout ") + device);
-        if (fails(device)) return -3;
+        const std::string request = device;
+        if (playout_on && playout_request == request && serves(request, true)) {
+            diary.push_back("serve_playout " + request);
+            playing = player;
+            return 0;
+        }
+        diary.push_back("start_playout " + request);
+        playout_on = false;
+        playing = nullptr;
+        playout_opened.clear();
+        if (no_device_for(request)) return -5;
+        const std::string endpoint = endpoint_for(request, true);
+        if (has(broken, request) || has(broken, endpoint)) return -3;
         playing = player;
         playout_on = true;
+        playout_request = request;
+        playout_opened = endpoint;
         return 0;
     }
     void detach_playout() override {
@@ -66,12 +101,26 @@ struct FakeAdm : playback_session::Adm {
         diary.push_back("stop_playout");
         playout_on = false;
         playing = nullptr;
+        playout_opened.clear();
     }
     int start_recording(const char *device, void *source) override {
-        diary.push_back(std::string("start_recording ") + device);
-        if (fails(device)) return -3;
+        const std::string request = device;
+        if (recording_on && recording_request == request && serves(request, false)) {
+            diary.push_back("serve_recording " + request);
+            recording = source;
+            return 0;
+        }
+        diary.push_back("start_recording " + request);
+        recording_on = false;
+        recording = nullptr;
+        recording_opened.clear();
+        if (no_device_for(request)) return -5;
+        const std::string endpoint = endpoint_for(request, false);
+        if (has(broken, request) || has(broken, endpoint)) return -3;
         recording = source;
         recording_on = true;
+        recording_request = request;
+        recording_opened = endpoint;
         return 0;
     }
     void detach_recording() override {
@@ -83,16 +132,23 @@ struct FakeAdm : playback_session::Adm {
         diary.push_back("stop_recording");
         recording_on = false;
         recording = nullptr;
+        recording_opened.clear();
     }
+    // How many times a device was asked to start (not taken over as it was).
+    size_t starts(const char *entry) const { return std::count(diary.begin(), diary.end(), std::string(entry)); }
 };
 struct FakeClock : playback_session::Clock {
     std::vector<std::string> diary;
-    bool linger = false, handback = false;
-    void start(playback_session::Timer which, uint64_t ms) override {
-        (which == playback_session::Timer::Linger ? linger : handback) = true;
-        diary.push_back(std::string(which == playback_session::Timer::Linger ? "linger " : "handback ") + std::to_string(ms));
+    bool linger = false, handback = false, watch = false;
+    bool &flag(playback_session::Timer which) {
+        return which == playback_session::Timer::Linger ? linger : which == playback_session::Timer::HandBack ? handback : watch;
     }
-    void cancel(playback_session::Timer which) override { (which == playback_session::Timer::Linger ? linger : handback) = false; }
+    void start(playback_session::Timer which, uint64_t ms) override {
+        flag(which) = true;
+        const char *name = which == playback_session::Timer::Linger ? "linger " : which == playback_session::Timer::HandBack ? "handback " : "watch ";
+        diary.push_back(name + std::to_string(ms));
+    }
+    void cancel(playback_session::Timer which) override { flag(which) = false; }
 };
 struct Fixture {
     FakeAdm adm;
@@ -110,7 +166,13 @@ struct Fixture {
         for (auto &l : log) if (l.find(part) != std::string::npos) return true;
         return false;
     }
+    size_t logged_times(const char *part) const {
+        size_t n = 0;
+        for (auto &l : log) if (l.find(part) != std::string::npos) ++n;
+        return n;
+    }
 };
+using playback_session::Outcome;
 
 void the_newest_player_has_the_stream_and_the_one_before_gets_it_back() {
     Fixture f;
@@ -134,11 +196,12 @@ void a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from() {
     Fixture f;
     Player tone{"speaker-a"}, call{"speaker-broken"};
     f.core.take_playout(&tone);
-    f.adm.broken.push_back("speaker-broken");
+    f.adm.broken = {"speaker-broken", "default-speaker"};
     f.adm.diary.clear();
     check(f.core.take_playout(&call) == ENODEV, "the failed start is refused");
-    check(f.adm.diary.size() == 3 && f.adm.diary[0] == "detach_playout" && f.adm.diary[1] == "start_playout speaker-broken" && f.adm.diary[2] == "start_playout speaker-a",
-          "the old player is detached, the new start tried, the old start restored, in that order");
+    check(f.adm.diary.size() == 4 && f.adm.diary[0] == "detach_playout" && f.adm.diary[1] == "start_playout speaker-broken" &&
+              f.adm.diary[2] == "start_playout default" && f.adm.diary[3] == "start_playout speaker-a",
+          "the old player is detached, the new start tried, the default tried in its place, the old start restored, in that order");
     check(f.adm.playing == &tone && tone.started && f.core.playout() == &tone, "the old player has its stream back");
     check(f.logged("failed speaker-broken -3") && f.logged("handed back after a failed start"), "the failure and the hand-back are on record");
     check(!f.clock.linger, "nothing idles while the old player plays");
@@ -147,25 +210,50 @@ void a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from() {
 void a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle() {
     Fixture f;
     Player call{"speaker-broken"};
-    f.adm.broken.push_back("speaker-broken");
+    f.adm.broken = {"speaker-broken", "default-speaker"};
     check(f.core.take_playout(&call) == ENODEV && f.core.playout() == nullptr, "the start fails and nobody has the stream");
     check(f.clock.linger, "the idle streams are left to close in their own time");
 }
-void a_restore_that_fails_too_lets_the_streams_idle() {
+void a_restore_that_fails_too_leaves_the_player_the_owner_without_a_stream() {
     Fixture f;
     Player tone{"speaker-a"}, call{"speaker-broken"};
     f.core.take_playout(&tone);
-    f.adm.broken = {"speaker-broken", "speaker-a"};
-    check(f.core.take_playout(&call) == ENODEV && f.core.playout() == nullptr && !tone.started, "neither the new nor the old start works");
+    f.adm.broken = {"speaker-broken", "speaker-a", "default-speaker"};
+    check(f.core.take_playout(&call) == ENODEV && !tone.started, "neither the new nor the old start works");
+    check(f.core.playout() == &tone && !f.core.playing(), "the old player stays the owner, with no stream: a later try can start it");
     check(f.clock.linger, "the streams idle");
+}
+// A device that is there but would not start: the default in its place,
+// as the bridge does for one that is not there; a call does not fail for it.
+void a_speaker_that_would_not_start_has_the_default_in_its_place() {
+    Fixture f;
+    Player call{"speaker-broken"};
+    f.adm.broken = {"speaker-broken"};
+    check(f.core.take_playout(&call) == 0 && f.adm.playing == &call && call.started, "the player gets a stream");
+    check(f.adm.playout_opened == "default-speaker" && std::string(call.device()) == "speaker-broken", "on the default, the device asked for staying asked for");
+    check(f.logged("failed speaker-broken -3") && f.logged("the default plays in its place"), "the failure and the stand-in are on record");
+    check(f.core.speaker_failures().count == 1, "the failure is counted");
+    check(f.core.playing() && f.core.endpoint(true) == "default-speaker" && f.core.stand_in(true), "the state: playing, on the default, standing in");
+}
+void a_microphone_that_would_not_start_has_the_default_in_its_place() {
+    Fixture f;
+    Source mic;
+    f.adm.broken = {"mic-broken"};
+    check(f.core.take_source(&mic, "mic-broken") == 0 && mic.started && f.adm.recording == &mic, "the source records");
+    check(f.adm.recording_opened == "default-microphone" && f.fallbacks.empty(), "on the default, not on silence");
+    check(f.logged("the default records in its place") && f.core.microphone_failures().count == 1, "said and counted");
+    check(f.core.input() == playback_session::Input::Device && f.core.endpoint(false) == "default-microphone" && f.core.stand_in(false),
+          "the state: the device, the default standing in");
+    f.core.source_gone(&mic);
 }
 void a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goes() {
     Fixture f;
     Source mic;
-    f.adm.broken.push_back("mic-broken");
+    f.adm.broken = {"mic-broken", "default-microphone"};
     check(f.core.take_source(&mic, "mic-broken") == 0, "the call goes on without a microphone");
     check(f.fallbacks.size() == 1 && f.fallbacks[0] == &mic && !mic.started, "the fallback runs for the source");
-    check(f.logged("failed mic-broken -3"), "the failure is on record");
+    check(f.logged("failed mic-broken -3") && f.logged("failed default -3"), "the failures are on record, the default's too");
+    check(f.core.endpoint(false).empty() && !f.core.stand_in(false), "the state names no endpoint for silence");
     Source next;
     check(f.core.take_source(&next, "mic-ok") == 0 && next.started && f.adm.recording == &next, "a new source with a working microphone takes over");
     check(f.fallbacks.empty(), "the fallback of the replaced source is stopped");
@@ -183,17 +271,23 @@ void a_switch_during_a_call_moves_the_streams_that_are_up() {
     f.core.take_source(&mic, "mic-a");
     f.adm.diary.clear();
     f.log.clear();
-    f.core.switch_devices("mic-b", "speaker-b");
+    playback_session::Switch outcome = f.core.switch_devices("mic-b", "speaker-b");
     check(f.adm.diary.size() == 2 && f.adm.diary[0] == "start_playout speaker-b" && f.adm.diary[1] == "start_recording mic-b",
           "the speaker and the microphone of the call are opened again on the new devices");
     check(f.adm.playing == &call && call.started && f.adm.recording == &mic && mic.started, "for the same player and source");
     check(std::string(ring.device()) == "speaker-b", "a player waiting behind the call is moved too, for its hand-back");
     check(f.logged("speaker switched") && f.logged("microphone switched"), "both switches are said so");
+    check(outcome.speaker == Outcome::Moved && outcome.microphone == Outcome::Moved, "both sides answer that they moved");
     f.adm.diary.clear();
-    f.core.switch_devices("mic-b", "speaker-b");
-    check(f.adm.diary.empty(), "the same devices again change nothing");
-    f.core.switch_devices(nullptr, nullptr);
-    check(f.adm.diary.empty(), "a side another module has is left alone");
+    outcome = f.core.switch_devices("mic-b", "speaker-b");
+    check(f.adm.starts("start_playout speaker-b") == 0 && f.adm.starts("start_recording mic-b") == 0, "the same devices again open nothing again");
+    check(outcome.speaker == Outcome::Unchanged && outcome.microphone == Outcome::Unchanged, "and answer that nothing changed");
+    f.adm.diary.clear();
+    outcome = f.core.switch_devices(nullptr, nullptr);
+    check(f.adm.diary.empty() && outcome.speaker == Outcome::NotUp && outcome.microphone == Outcome::NotUp, "a side another module has is left alone");
+    Fixture idle;
+    outcome = idle.core.switch_devices("mic-b", "speaker-b");
+    check(outcome.speaker == Outcome::NotUp && outcome.microphone == Outcome::NotUp && idle.adm.diary.empty(), "with no call up there is nothing to move");
 }
 void a_switch_to_a_device_that_will_not_start_keeps_the_call_on_the_old_one() {
     Fixture f;
@@ -203,18 +297,46 @@ void a_switch_to_a_device_that_will_not_start_keeps_the_call_on_the_old_one() {
     f.core.take_source(&mic, "mic-a");
     f.adm.broken = {"speaker-broken", "mic-broken"};
     f.adm.diary.clear();
-    f.core.switch_devices("mic-broken", "speaker-broken");
+    playback_session::Switch outcome = f.core.switch_devices("mic-broken", "speaker-broken");
     check(f.adm.playing == &call && call.started && std::string(call.device()) == "speaker-a", "the call keeps the speaker it had");
     check(f.adm.recording == &mic && mic.started && f.fallbacks.empty(), "and the microphone it had, not silence");
     check(f.logged("failed speaker-broken -3") && f.logged("failed mic-broken -3"), "the failures are on record");
     check(f.core.speaker_failures().count == 1 && f.core.microphone_failures().count == 1, "and counted, each on its side");
-    // Where the old microphone cannot be had either, silence stands in.
+    check(outcome.speaker == Outcome::Kept && outcome.microphone == Outcome::Kept, "both sides answer that they kept what they had");
+    check(!f.core.stand_in(true) && !f.core.stand_in(false), "the devices they had are what they ask for again: no stand-in");
+    // Where the old microphone cannot be had either, the default stands in.
     f.adm.broken = {"mic-c", "mic-a"};
-    f.core.switch_devices("mic-c", "speaker-a");
-    check(!mic.started && f.fallbacks.size() == 1 && f.fallbacks[0] == &mic, "with neither microphone, the call goes on with silence");
+    outcome = f.core.switch_devices("mic-c", "speaker-a");
+    check(mic.started && f.fallbacks.empty() && f.adm.recording_opened == "default-microphone", "with neither microphone, the call goes on with the default");
+    check(outcome.microphone == Outcome::Kept && outcome.speaker == Outcome::Unchanged, "the microphone kept a stream, the speaker was left as it was");
+    check(f.core.stand_in(false) && f.logged("the default, in place of the one that would not start"), "the default stands in for the microphone chosen");
+    // And where the default cannot be had either, silence.
+    f.adm.broken = {"mic-d", "mic-c", "default-microphone"};
+    outcome = f.core.switch_devices("mic-d", "speaker-a");
+    check(!mic.started && f.fallbacks.size() == 1 && f.fallbacks[0] == &mic && outcome.microphone == Outcome::Down, "with nothing to record from, silence");
     f.adm.broken.clear();
-    f.core.switch_devices("mic-d", "speaker-a");
-    check(mic.started && f.fallbacks.empty() && f.adm.recording == &mic, "a source on silence takes the next microphone chosen");
+    outcome = f.core.switch_devices("mic-e", "speaker-a");
+    check(mic.started && f.fallbacks.empty() && f.adm.recording == &mic && outcome.microphone == Outcome::Moved, "a source on silence takes the next microphone chosen");
+}
+// A speaker whose starts all failed is the owner still, and a later choice
+// starts it: the same device again (it may work now) or another.
+void a_speaker_whose_starts_all_failed_is_started_by_a_later_choice() {
+    Fixture f;
+    Player call{"speaker-a"};
+    f.core.take_playout(&call);
+    f.adm.broken = {"speaker-b", "speaker-a", "default-speaker"};
+    playback_session::Switch outcome = f.core.switch_devices(nullptr, "speaker-b");
+    check(outcome.speaker == Outcome::Down && !f.core.playing() && f.core.playout() == &call, "nothing starts: the call has no playout, and keeps its owner");
+    check(f.core.endpoint(true).empty(), "the state names no endpoint");
+    f.adm.broken.clear();
+    outcome = f.core.switch_devices(nullptr, "speaker-b");
+    check(outcome.speaker == Outcome::Moved && f.core.playing() && f.adm.playing == &call && f.adm.playout_opened == "speaker-b",
+          "the same device chosen again is tried again, and plays");
+    f.adm.broken = {"speaker-c", "speaker-b", "default-speaker"};
+    f.core.switch_devices(nullptr, "speaker-c");
+    f.adm.broken.clear();
+    outcome = f.core.switch_devices(nullptr, "speaker-d");
+    check(outcome.speaker == Outcome::Moved && f.core.playing() && f.adm.playout_opened == "speaker-d", "another device chosen after the failures plays");
 }
 // A source goes as the module lets it go: its fallback first, then the core.
 void StopAll(Fixture &f, Source &source) {
@@ -226,17 +348,17 @@ void the_state_follows_the_microphone_from_silence_to_the_device_and_back() {
     Fixture f;
     check(f.core.input() == Input::None && f.core.microphone_failures().count == 0, "before any call there is no input and no failure");
     Source first, second, third, fourth;
-    f.adm.broken.push_back("mic-broken");
+    f.adm.broken = {"mic-broken", "default-microphone"};
     f.core.take_source(&first, "mic-broken");
-    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 1, "a microphone that would not open: the input is silence, one failure");
+    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 2, "a microphone that would not open, nor the default: the input is silence, two failures");
     check(f.core.microphone_failures().last_result == -3 && f.core.speaker_failures().count == 0, "the failure is the microphone's, with the bridge's result");
     f.core.take_source(&second, "mic-broken");
-    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 2, "silence replaced by silence: still silence, the failure counted again");
+    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 4, "silence replaced by silence: still silence, the failures counted again");
     f.core.take_source(&third, "mic-ok");
-    check(f.core.input() == Input::Device && f.core.microphone_failures().count == 2, "a later start that works: the input is the device, and the failures stay counted");
+    check(f.core.input() == Input::Device && f.core.microphone_failures().count == 4, "a later start that works: the input is the device, and the failures stay counted");
     f.adm.broken.push_back("mic-late");
     f.core.take_source(&fourth, "mic-late");
-    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 3, "the device replaced by one that fails: silence again");
+    check(f.core.input() == Input::Silence && f.core.microphone_failures().count == 6, "the device replaced by one that fails: silence again");
     StopAll(f, fourth);
     check(f.core.input() == Input::None, "the source gone: no input, whatever it was");
 }
@@ -244,17 +366,17 @@ void the_state_says_the_speaker_plays_after_a_failed_start_handed_back() {
     Fixture f;
     Player tone{"speaker-a"}, call{"speaker-broken"}, later{"speaker-a"};
     f.core.take_playout(&tone);
-    f.adm.broken.push_back("speaker-broken");
+    f.adm.broken = {"speaker-broken", "default-speaker"};
     f.core.take_playout(&call);
-    check(f.core.playout() == &tone && f.core.speaker_failures().count == 1 && f.core.speaker_failures().last_result == -3,
-          "the failed start is counted as the speaker's, and the tone plays on");
+    check(f.core.playout() == &tone && f.core.playing() && f.core.speaker_failures().count == 2 && f.core.speaker_failures().last_result == -3,
+          "the failed starts are counted as the speaker's, and the tone plays on");
     f.core.take_playout(&later);
-    check(f.core.playout() == &later && f.core.speaker_failures().count == 1, "a later start that works: the speaker plays, the failure stays counted");
+    check(f.core.playout() == &later && f.core.playing() && f.core.speaker_failures().count == 2, "a later start that works: the speaker plays, the failures stay counted");
     f.core.playout_gone(&later);
     f.core.hand_back();
     f.core.playout_gone(&tone);
     f.core.hand_back();
-    check(f.core.playout() == nullptr && f.core.speaker_failures().count == 1, "every player gone: nothing plays, and nothing failed in going");
+    check(f.core.playout() == nullptr && !f.core.playing() && f.core.speaker_failures().count == 2, "every player gone: nothing plays, and nothing failed in going");
 }
 void a_failure_of_the_speaker_is_not_hidden_by_a_later_one_of_the_microphone() {
     Fixture f;
@@ -272,21 +394,31 @@ void a_hand_back_that_fails_is_counted_as_the_speakers() {
     Player tone{"speaker-a"}, call{"speaker-b"};
     f.core.take_playout(&tone);
     f.core.take_playout(&call);
-    f.adm.broken.push_back("speaker-a");
+    f.adm.broken = {"speaker-a"};
     f.core.playout_gone(&call);
     f.log.clear();
     f.core.hand_back();
-    check(f.core.playout() == nullptr && f.clock.linger, "the player left cannot have the stream back, and the streams idle");
+    check(f.core.playout() == &tone && f.core.playing() && f.adm.playout_opened == "default-speaker", "the player left has the stream back on the default");
     check(f.core.speaker_failures().count == 1 && f.logged("failed speaker-a -3"), "the failed hand-back is counted and logged as the speaker's");
+    // With the default no better, the player left is the owner without a stream.
+    Fixture g;
+    Player tone2{"speaker-a"}, call2{"speaker-b"};
+    g.core.take_playout(&tone2);
+    g.core.take_playout(&call2);
+    g.adm.broken = {"speaker-a", "default-speaker"};
+    g.core.playout_gone(&call2);
+    g.core.hand_back();
+    check(g.core.playout() == &tone2 && !g.core.playing() && g.clock.linger, "the player left cannot have the stream back, stays the owner, and the streams idle");
+    check(g.core.speaker_failures().count == 2, "both failed starts are counted");
 }
 void a_restore_that_fails_after_a_failed_start_is_counted_too() {
     Fixture f;
     Player tone{"speaker-a"}, call{"speaker-broken"};
     f.core.take_playout(&tone);
-    f.adm.broken = {"speaker-broken", "speaker-a"};
+    f.adm.broken = {"speaker-broken", "speaker-a", "default-speaker"};
     f.core.take_playout(&call);
-    check(f.core.speaker_failures().count == 2 && f.logged("failed speaker-broken -3") && f.logged("failed speaker-a -3"),
-          "the new start and the restore of the old one are both counted and logged");
+    check(f.core.speaker_failures().count == 3 && f.logged("failed speaker-broken -3") && f.logged("failed default -3") && f.logged("failed speaker-a -3"),
+          "the new start, the default in its place and the restore of the old one are all counted and logged");
 }
 void the_microphone_is_opened_ahead_only_once_and_only_when_free() {
     Fixture f;
@@ -298,8 +430,250 @@ void the_microphone_is_opened_ahead_only_once_and_only_when_free() {
     Source mic;
     f.core.take_source(&mic, "mic-ok");
     check(f.adm.recording == &mic && f.logged("recording taken over, APM running"), "the source takes the stream that was opened ahead");
+    f.adm.diary.clear();
+    f.core.open_microphone_ahead("mic-ok");
+    check(f.adm.diary.empty(), "a microphone a source has is left alone");
+    StopAll(f, mic);
 }
-
+// ---- the watch: a device that was not there, back while the call is up
+// A stream opened on the default in place of a device that is not there
+// (as the bridge does) goes back to that device once it has been there for
+// two looks in a row; the state says what stands in meanwhile.
+void a_device_that_is_back_has_the_call_again_after_two_looks() {
+    Fixture f;
+    Player call{"speaker-x"};
+    Source mic;
+    f.adm.absent = {"speaker-x", "mic-x"};
+    f.core.take_playout(&call);
+    f.core.take_source(&mic, "mic-x");
+    check(f.adm.playout_opened == "default-speaker" && f.adm.recording_opened == "default-microphone", "the default serves on both sides");
+    check(f.core.stand_in(true) && f.core.stand_in(false) && f.core.endpoint(true) == "default-speaker", "which the state says");
+    check(f.clock.watch, "the watch runs");
+    check(f.core.speaker_failures().count == 0, "a device that is not there is no failed start");
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && f.clock.watch, "while the devices are not there, nothing is tried, and the watch goes on");
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty(), "the first look that finds a device back opens nothing yet");
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 1 && f.adm.starts("start_recording mic-x") == 1, "the second opens the streams on the devices again");
+    check(f.adm.playing == &call && call.started && f.adm.recording == &mic && mic.started, "for the same player and source");
+    check(f.adm.playout_opened == "speaker-x" && !f.core.stand_in(true) && !f.core.stand_in(false), "the state: on the devices, no stand-in");
+    check(f.logged("the speaker chosen is back") && f.logged("the microphone chosen is back") && f.logged("speaker switched"), "said so");
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && f.clock.watch, "on the devices, the watch goes on without opening anything");
+    StopAll(f, mic);
+    f.core.playout_gone(&call);
+    f.core.hand_back();
+    check(!f.clock.watch, "with nobody left, the watch stops");
+}
+void a_device_that_comes_and_goes_does_not_take_the_call_back_and_forth() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.adm.absent = {"speaker-x"};
+    f.core.take_playout(&call);
+    f.adm.diary.clear();
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty(), "a device there for one look, gone the next, then back for one: nothing yet");
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 1, "two looks in a row with it there: the stream goes back, once");
+}
+// A device back that would not start: the call stays where it was, and the
+// device is not tried again every second, only once it has gone and come
+// back again.
+void a_device_back_that_would_not_start_is_tried_again_once_it_has_gone_and_come_back() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.adm.absent = {"speaker-x"};
+    f.core.take_playout(&call);
+    f.adm.absent.clear();
+    f.adm.broken = {"speaker-x"};
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 1 && f.adm.playing == &call && call.started && f.adm.playout_opened == "default-speaker",
+          "the device back is tried, would not start, and the default plays on");
+    check(f.logged("would not start, the call stays where it was") && f.core.speaker_failures().count == 1, "said and counted");
+    for (int i = 0; i < 5; ++i) f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 1, "it is not tried again while it stays there");
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    f.adm.absent.clear();
+    f.adm.broken.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 2 && f.adm.playout_opened == "speaker-x", "gone and back again, it is tried again, and plays");
+}
+void the_default_asked_for_is_watched_only_for_the_device_in_use_going() {
+    Fixture f;
+    Player call{"default"};
+    Source mic;
+    f.core.take_playout(&call);
+    f.core.take_source(&mic, "default");
+    check(f.clock.watch, "watched, for the device in use going");
+    check(!f.core.stand_in(true) && !f.core.stand_in(false) && f.core.endpoint(true) == "default-speaker", "the state names the endpoint, which stands in for nothing");
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && f.clock.watch, "a look changes nothing while the device is there");
+    // Which device the default is, is WebRTC's: another default is not followed here.
+    f.adm.default_speaker = "other-speaker";
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && f.adm.playout_opened == "default-speaker", "a default that moved is left to WebRTC");
+    StopAll(f, mic);
+}
+// The only microphone unplugged under the call: WebRTC cannot move the
+// stream (no device to move to), counts it as running and says nothing. The
+// next look finds the endpoint in use gone and opens the stream again; with
+// no microphone at all silence stands in, until the microphone is back.
+void the_only_microphone_gone_under_the_call_is_silence_until_it_is_back() {
+    using playback_session::Input;
+    Fixture f;
+    Source mic;
+    f.core.take_source(&mic, "mic-x");
+    check(mic.started && f.adm.recording_opened == "mic-x" && f.clock.watch, "the call records from the microphone, watched");
+    f.adm.absent = {"mic-x", "default", "default-microphone"};
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && mic.started, "the first look that finds the endpoint in use gone leaves the stream alone (WebRTC may be moving it)");
+    f.core.watch_tick();
+    check(f.logged("the microphone in use is gone"), "the second look acts on it");
+    check(!mic.started && f.fallbacks.size() == 1 && f.core.input() == Input::Silence, "with no microphone at all, silence stands in");
+    check(f.adm.starts("start_recording mic-x") == 1 && f.adm.starts("start_recording default") == 1, "the microphone asked for and the default were tried");
+    check(f.core.endpoint(false).empty() && f.core.microphone_failures().count == 2, "the state names no endpoint, the two failed starts are counted");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.microphone_failures().count == 2, "while nothing is there, nothing is tried again");
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(mic.started && f.fallbacks.empty() && f.adm.recording_opened == "mic-x" && f.core.input() == Input::Device, "back after two looks: the call records from it again");
+    check(f.logged("the microphone chosen is back") && f.logged("microphone switched"), "said so");
+    StopAll(f, mic);
+}
+// A speaker gone under the call with another speaker there, which WebRTC
+// would move the stream to by itself; should it not, the next look does.
+void a_speaker_gone_under_the_call_has_the_default_at_the_next_look() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.core.take_playout(&call);
+    f.adm.absent = {"speaker-x"};
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty(), "the first look leaves the stream alone");
+    f.core.watch_tick();
+    check(f.logged("the speaker in use is gone") && call.started && f.adm.playout_opened == "default-speaker", "the second opens the default in its place");
+    check(f.core.stand_in(true) && f.core.speaker_failures().count == 0, "which the state says; a device gone is no failed start");
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.playout_opened == "speaker-x" && !f.core.stand_in(true), "back after two looks");
+}
+// An endpoint gone for one look only, as in the moment of a device change
+// in which Windows lists nothing, or while WebRTC moves the stream itself:
+// left alone.
+void an_endpoint_gone_for_one_look_only_is_left_alone() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.core.take_playout(&call);
+    f.adm.diary.clear();
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty() && !f.logged("is gone") && f.adm.playout_opened == "speaker-x", "nothing is opened again for a moment's absence");
+}
+// The looks come every quarter second only while a device is waited for
+// (the default stands in, or nothing does), and once a second otherwise,
+// also while an endpoint in use has just gone (WebRTC's own move is waited
+// for then, not a device).
+void the_looks_come_fast_only_while_a_device_is_waited_for() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.core.take_playout(&call);
+    check(f.clock.diary.back() == "watch 1000", "on its device: a look a second");
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    check(f.clock.diary.back() == "watch 1000", "the endpoint in use just gone: still a look a second");
+    f.core.watch_tick();
+    check(f.adm.playout_opened == "default-speaker" && f.clock.diary.back() == "watch 250", "the default standing in: a look every quarter second");
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.playout_opened == "speaker-x" && f.clock.diary.back() == "watch 1000", "back on its device: a look a second again");
+    Fixture g;
+    Player other{"speaker-y"};
+    g.adm.absent = {"speaker-y"};
+    g.core.take_playout(&other);
+    check(g.clock.diary.back() == "watch 250", "a device not there from the start: looked for every quarter second at once");
+    g.adm.absent.clear();
+    g.core.watch_tick();
+    g.core.watch_tick();
+    check(g.adm.playout_opened == "speaker-y", "and taken on the second look that finds it, a quarter second after the first");
+}
+// The default asked for, and the only speaker gone: nothing plays, and the
+// first device there again plays.
+void the_default_asked_for_follows_the_only_device_going_and_coming() {
+    Fixture f;
+    Player call{"default"};
+    f.core.take_playout(&call);
+    f.adm.absent = {"default", "default-speaker"};
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(!call.started && !f.core.playing() && f.core.playout() == &call, "no device at all: nothing plays, the player stays the owner");
+    check(f.adm.starts("start_playout default") == 1, "the default was tried once");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout default") == 1, "and not again while nothing is there");
+    f.adm.absent.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(call.started && f.core.playing() && f.adm.playout_opened == "default-speaker", "a device there again: the default plays again");
+}
+// WebRTC moves a stream to the default by itself when the device in use
+// goes away, which the core only sees by the endpoint the bridge reports:
+// the device coming back is acted on the same.
+void a_stream_webrtc_moved_by_itself_goes_back_to_its_device_too() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.core.take_playout(&call);
+    check(!f.core.stand_in(true) && f.clock.watch, "on its device, watched");
+    f.adm.playout_opened = "default-speaker";
+    f.adm.absent = {"speaker-x"};
+    f.core.watch_tick();
+    check(f.core.stand_in(true) && f.core.endpoint(true) == "default-speaker", "the state follows the bridge: the default stands in");
+    f.adm.absent.clear();
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout speaker-x") == 1 && f.adm.playout_opened == "speaker-x" && !f.core.stand_in(true), "back on its device after two looks");
+}
+// A device chosen again by the person while the default stands in for it
+// is looked at afresh: the bridge opens it when it is back.
+void the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once() {
+    Fixture f;
+    Player call{"speaker-x"};
+    f.adm.absent = {"speaker-x"};
+    f.core.take_playout(&call);
+    f.adm.diary.clear();
+    playback_session::Switch outcome = f.core.switch_devices(nullptr, "speaker-x");
+    check(outcome.speaker == Outcome::Unchanged && f.adm.starts("start_playout speaker-x") == 0, "while it is not there, nothing changes");
+    f.adm.absent.clear();
+    outcome = f.core.switch_devices(nullptr, "speaker-x");
+    check(outcome.speaker == Outcome::Moved && f.adm.playout_opened == "speaker-x" && !f.core.stand_in(true), "once it is there, the stream is opened on it");
+}
 // ---- the callback gate
 using Callback = int (*)(void *, int);
 std::atomic<int> callback_visits{0};
@@ -780,16 +1154,30 @@ int main() {
     the_newest_player_has_the_stream_and_the_one_before_gets_it_back();
     a_start_that_fails_gives_the_stream_back_to_the_player_it_took_it_from();
     a_start_that_fails_with_nobody_to_hand_back_to_lets_the_streams_idle();
-    a_restore_that_fails_too_lets_the_streams_idle();
+    a_restore_that_fails_too_leaves_the_player_the_owner_without_a_stream();
+    a_speaker_that_would_not_start_has_the_default_in_its_place();
+    a_microphone_that_would_not_start_has_the_default_in_its_place();
     a_microphone_that_will_not_open_is_replaced_by_silence_until_the_source_goes();
     a_switch_during_a_call_moves_the_streams_that_are_up();
     a_switch_to_a_device_that_will_not_start_keeps_the_call_on_the_old_one();
+    a_speaker_whose_starts_all_failed_is_started_by_a_later_choice();
     the_state_follows_the_microphone_from_silence_to_the_device_and_back();
     the_state_says_the_speaker_plays_after_a_failed_start_handed_back();
     a_failure_of_the_speaker_is_not_hidden_by_a_later_one_of_the_microphone();
     a_hand_back_that_fails_is_counted_as_the_speakers();
     a_restore_that_fails_after_a_failed_start_is_counted_too();
     the_microphone_is_opened_ahead_only_once_and_only_when_free();
+    a_device_that_is_back_has_the_call_again_after_two_looks();
+    a_device_that_comes_and_goes_does_not_take_the_call_back_and_forth();
+    a_device_back_that_would_not_start_is_tried_again_once_it_has_gone_and_come_back();
+    the_default_asked_for_is_watched_only_for_the_device_in_use_going();
+    the_only_microphone_gone_under_the_call_is_silence_until_it_is_back();
+    a_speaker_gone_under_the_call_has_the_default_at_the_next_look();
+    an_endpoint_gone_for_one_look_only_is_left_alone();
+    the_looks_come_fast_only_while_a_device_is_waited_for();
+    the_default_asked_for_follows_the_only_device_going_and_coming();
+    a_stream_webrtc_moved_by_itself_goes_back_to_its_device_too();
+    the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once();
     clearing_a_callback_waits_for_the_call_in_flight();
     clearing_from_inside_the_callback_does_not_wait_on_itself();
     a_late_set_after_the_clear_is_seen_by_the_next_call();

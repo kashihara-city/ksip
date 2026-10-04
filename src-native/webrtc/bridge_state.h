@@ -64,8 +64,9 @@ inline double PowerDbfs(double power) {
   return 10.0 * std::log10(std::max(power, 1e-10));
 }
 // ksip_audio_bridge.cc: the endpoint the last playout or capture stream
-// opened, as WebRTC says while it opens one (KsipNoteDevice), whichever way
-// it was chosen; empty before any.
+// opened, as WebRTC says once it has (KsipNoteDevice as it opens one,
+// KsipNoteOpened once it is open), whichever way it was chosen; empty before
+// any, after a stop, and while one that was asked for did not open.
 std::string OpenedEndpoint(bool playout);
 // apm.cc
 bool AnyProcessing(const ksip_audio_processing &p);

@@ -181,6 +181,8 @@ def main():
         # chosen one, and the call carries what it picks up.
         assert "recording device {KSIP-NO-SUCH-DEVICE} is not among" in log and "in its place" in log, log
         assert during["ready"] and during["microphone"]["failures"] == 0, during
+        # The state says which endpoint the call is on, and that it stands in for the one chosen.
+        assert during["microphone"]["stand_in"] and during["microphone"]["endpoint"], during
         assert after["microphone"]["input"] == "none", after
         print(json.dumps({"during": during, "after": after}, indent=2))
         print("PASS: the missing WebRTC ADM microphone was replaced by the default one, RTP went on")
@@ -193,6 +195,8 @@ def main():
     assert during["ready"] and during["microphone"]["input"] == "silence", during
     assert during["microphone"]["failures"] >= 1 and "last_result" in during["microphone"], during
     assert during["speaker"]["failures"] == 0, during
+    # Silence is on no endpoint: the state names none for the microphone.
+    assert "endpoint" not in during["microphone"], during
     assert after["microphone"]["input"] == "none" and after["microphone"]["failures"] == during["microphone"]["failures"], after
     print(json.dumps({"during": during, "after": after}, indent=2))
     print(json.dumps({"samples": len(samples), "rate": rate, "rms": rms}, indent=2))

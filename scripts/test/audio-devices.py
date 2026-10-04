@@ -40,11 +40,19 @@ def main():
             command('volume', kind, device, original['level'])
         restored = command('volume', kind, device)
         assert restored == original
+        # What a choice stands for now (resolve), by the engine's rule: a
+        # real endpoint is itself, 'default' is the default's own id, and one
+        # that is not there has the default in its place, said so.
+        assert command('resolve', kind, device) == {'id': device, 'stand_in': False}
+        assert command('resolve', kind, 'default') == {'id': original['id'], 'stand_in': False}
+        missing = command('resolve', kind, '{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}')
+        assert missing == {'id': original['id'], 'stand_in': True}, missing
+        command('resolve', other, device, success=False)
         results.append({'kind': kind, 'original': original, 'peak': peak, 'changed': changed, 'restored': restored})
     command('volume', 'speaker', 'missing-endpoint', success=False)
     report = {'implementation': 'Rust Core Audio', 'devices': devices, 'volumeReadWriteRestore': results, 'invalidArgumentsRejected': True}
     (ROOT / 'temp/reports/audio-devices-test.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-    print('PASS: enumeration, default/explicit endpoints, peak, volume read/write/restore, invalid arguments')
+    print('PASS: enumeration, default/explicit endpoints, resolve with the default standing in, peak, volume read/write/restore, invalid arguments')
 
 if __name__ == '__main__':
     main()

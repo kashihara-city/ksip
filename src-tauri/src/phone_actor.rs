@@ -21,12 +21,12 @@
 //! in maintenance: the engine refuses calls meanwhile.
 use crate::app::Services;
 use crate::audio::{Calibration, Volume};
-use crate::engine_config::{endpoint_notes, AudioEndpoints};
+use crate::engine_config::endpoint_notes;
 use crate::engine_link::{AudioState, EngineLink, EngineReport};
 use crate::logs::{stamp, LOG_APP, LOG_ENGINE, LOG_EVENT};
 use crate::message::{message, message_with};
 use crate::phone_message::{Command, LinkBody, LinkMessage, Message, Ready, Reply, StopOutcome, Work};
-use crate::phone_state::{automatic_recording_target, MaintenanceRefused, Mwi, PhoneState, Snapshot, Transfer};
+use crate::phone_state::{automatic_recording_target, CallEndpoint, MaintenanceRefused, Mwi, PhoneState, Snapshot, Transfer};
 use crate::recordings::recording_name;
 use crate::settings::{connect_prerequisites, dial_target, validate, validate_buttons, CustomButton, Settings, SAVE_MARK};
 use crate::storage::Account;
@@ -75,6 +75,10 @@ pub struct Published(Arc<Mutex<Snapshot>>);
 impl Published {
     pub fn read(&self) -> Snapshot {
         self.0.lock().unwrap().clone()
+    }
+    /// A look at the snapshot without copying it.
+    pub fn with<R>(&self, look: impl FnOnce(&Snapshot) -> R) -> R {
+        look(&self.0.lock().unwrap())
     }
     fn set(&self, view: &Snapshot) {
         *self.0.lock().unwrap() = view.clone();
@@ -1021,6 +1025,14 @@ impl Phone {
             // Only while a call's microphone is the device, open as the engine says.
             v.microphone_raw = if audio.microphone.input == "device" { audio.capture_raw } else { None };
             v.speaker_raw = if audio.speaker.playing { audio.playout_raw } else { None };
+            // The endpoint each call stream is on, from the engine alone: the
+            // window's volume and mute go to what the call really uses, not
+            // to what the choice would open now.
+            let call = |up: bool, endpoint: &Option<String>, stand_in: bool| {
+                endpoint.as_ref().filter(|_| up).map(|id| CallEndpoint { id: id.clone(), stand_in })
+            };
+            v.microphone_call = call(audio.microphone.input == "device", &audio.microphone.endpoint, audio.microphone.stand_in);
+            v.speaker_call = call(audio.speaker.playing, &audio.speaker.endpoint, audio.speaker.stand_in);
         }
         v.transfer = report.transfer;
         v.parking = report.parking;
@@ -1064,6 +1076,8 @@ impl Phone {
         v.microphone_fallback = false;
         v.microphone_raw = None;
         v.speaker_raw = None;
+        v.microphone_call = None;
+        v.speaker_call = None;
         v.transfer = Transfer::default();
         v.parking.clear();
         v.audio_processing_stats = None;
@@ -1114,6 +1128,8 @@ impl Phone {
         v.microphone_fallback = false;
         v.microphone_raw = None;
         v.speaker_raw = None;
+        v.microphone_call = None;
+        v.speaker_call = None;
         v.recording = false;
         v.calls.clear();
         v.transfer = Transfer::default();
@@ -1135,7 +1151,6 @@ impl Phone {
         self.maintenance_off_owed = false;
         self.live_owed = None;
         self.bound = ready.address;
-        self.take_endpoints(&ready.endpoints);
         self.link = Some(ready.link);
         self.view.running = true;
     }
@@ -1155,6 +1170,8 @@ impl Phone {
         v.microphone_fallback = false;
         v.microphone_raw = None;
         v.speaker_raw = None;
+        v.microphone_call = None;
+        v.speaker_call = None;
         v.calls.clear();
         v.transfer = Transfer::default();
         v.parking.clear();
@@ -1228,12 +1245,6 @@ impl Phone {
         self.view.recording = false;
         self.open_recording = None;
         self.view.error = message("RECORDING_START_FAILED");
-    }
-    /// Writes down which endpoints the engine got; the window shows the same.
-    fn take_endpoints(&mut self, endpoints: &AudioEndpoints) {
-        let v = &mut self.view;
-        v.microphone_id = endpoints.microphone.clone();
-        v.speaker_id = endpoints.speaker.clone();
     }
     /// Asks a worker for the chosen adapter's address, once per look, while
     /// the engine runs on an adapter and is wanted registered.
@@ -1541,7 +1552,6 @@ async fn start_engine(s: &Shared) -> Result<(), String> {
                 EngineLink::start(prepared.plan, generation, tx).map(|link| {
                     Box::new(Ready {
                         link,
-                        endpoints: prepared.endpoints,
                         address: prepared.address,
                         notes: prepared.notes,
                     })
@@ -1672,18 +1682,34 @@ async fn initialize(s: Shared) {
 }
 /// Hands the saved microphone and speaker to the running engine: for the
 /// calls to come, and for a call that is up, which the engine moves onto them
-/// at once (ksip_audio_switch). The engine used to be restarted for a change
-/// of device, which meant a new registration and a second or more without a
-/// phone.
+/// at once (ksip_audio_switch). What came of that for each side of the call
+/// is the engine's answer, logged; the window follows the engine's state
+/// report, which says which endpoint the call is on. The engine used to be
+/// restarted for a change of device, which meant a new registration and a
+/// second or more without a phone.
 async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), String> {
     let endpoints = s.borrow().services.resolve_audio_endpoints(settings);
-    request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
-    let mut p = s.borrow_mut();
+    let (_, answer) = request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
+    let p = s.borrow();
     for note in endpoint_notes(settings, &endpoints, &p.view.devices) {
         p.services.log(LOG_APP, note);
     }
-    p.take_endpoints(&endpoints);
+    if let Some(note) = switch_note(&answer) {
+        p.services.log(LOG_APP, note);
+    }
     Ok(())
+}
+/// The engine's answer to the devices handed to it, as a line for the log:
+/// what came of each side of a call that is up (device_module.cpp's
+/// words), or nothing when no call was up to move.
+fn switch_note(answer: &str) -> Option<String> {
+    let outcome: serde_json::Value = serde_json::from_str(answer).ok()?;
+    let side = |name: &str| outcome[name].as_str().unwrap_or("not_up").to_string();
+    let (microphone, speaker) = (side("microphone"), side("speaker"));
+    if microphone == "not_up" && speaker == "not_up" {
+        return None;
+    }
+    Some(format!("ksip: the call's devices: microphone {microphone}, speaker {speaker}"))
 }
 /// Saves a microphone or speaker chosen from the list (or "default"), and
 /// says whether an engine runs to hand it to.
@@ -1737,12 +1763,16 @@ async fn select_audio_device(s: &Shared, kind: &str, device: String) -> Result<(
     }
 }
 /// The calibration plays and records for a while, so it runs on a thread of
-/// its own; the phone is in maintenance until it reports back.
+/// its own; the phone is in maintenance until it reports back. It uses the
+/// endpoints the choices stand for now, as a call would (the default in
+/// place of a device that is not there).
 async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful: bool) -> Result<Calibration, String> {
     // A calibration given up on may still hold the devices.
     if s.borrow().engine_busy() {
         return Err(message("WORKER_OUTSTANDING"));
     }
+    let microphone = crate::audio::resolve("microphone", &microphone)?.id;
+    let speaker = crate::audio::resolve("speaker", &speaker)?.id;
     let owner = enter_maintenance(s).await?;
     s.borrow_mut().work_exclusive(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
     let result = match await_work(s, CALIBRATION_TIMEOUT).await {
@@ -2362,22 +2392,28 @@ mod tests {
         let mut p = a.shared.borrow_mut();
         // The module's state as audio_state.h writes it: the microphone's input
         // and failures, the speaker's failures.
+        // The endpoint each stream is on is in the report whatever the input
+        // says; the window takes it only while the stream is up.
         let audio = |input: &str, microphone: u64, speaker: u64| {
             json!({"ready": true, "processing": true,
-                   "microphone": {"input": input, "failures": microphone, "last_result": -5},
-                   "speaker": {"playing": true, "failures": speaker, "last_result": -3}})
+                   "microphone": {"input": input, "endpoint": "{mic}", "stand_in": microphone > 0, "failures": microphone, "last_result": -5},
+                   "speaker": {"playing": true, "endpoint": "{spk}", "stand_in": false, "failures": speaker, "last_result": -3}})
         };
         p.apply_report(1, report_with(audio("device", 0, 0), None));
         assert!(p.view.aec_active && !p.view.microphone_fallback && p.view.error.is_empty());
+        assert_eq!(p.view.microphone_call, Some(CallEndpoint { id: "{mic}".into(), stand_in: false }), "the call's microphone, as the engine opened it");
+        assert_eq!(p.view.speaker_call, Some(CallEndpoint { id: "{spk}".into(), stand_in: false }));
         // The microphone would not start: silence stands in, and says so by the
-        // notice, not by a banner.
+        // notice, not by a banner; no endpoint has the call's microphone then.
         p.apply_report(2, report_with(audio("silence", 1, 0), None));
         assert!(p.view.microphone_fallback && p.view.aec_active && p.view.error.is_empty());
+        assert_eq!(p.view.microphone_call, None, "silence is on no endpoint");
         // Silence replaced by silence is still silence; the device back is the device.
         p.apply_report(3, report_with(audio("silence", 2, 0), None));
         assert!(p.view.microphone_fallback);
         p.apply_report(4, report_with(audio("device", 2, 0), None));
         assert!(!p.view.microphone_fallback, "the microphone that came back is shown as back");
+        assert_eq!(p.view.microphone_call, Some(CallEndpoint { id: "{mic}".into(), stand_in: true }), "on an endpoint standing in for the one chosen");
         // A speaker that would not start is said once, and the processing stays
         // on: the stream was handed back.
         p.apply_report(5, report_with(audio("device", 2, 1), None));
@@ -2392,6 +2428,20 @@ mod tests {
         // Calls gone and the source with them: the module says none.
         p.apply_report(7, report_with(audio("none", 2, 1), None));
         assert!(!p.view.microphone_fallback);
+        assert_eq!(p.view.microphone_call, None, "no call, no endpoint of its own");
+        assert!(p.view.speaker_call.is_some(), "the speaker plays on (a tone, say)");
+        // The engine gone, so is what it said.
+        p.view.running = true;
+        p.close_calls_on_exit(None);
+        assert!(p.view.microphone_call.is_none() && p.view.speaker_call.is_none());
+    }
+    #[test]
+    fn the_engines_answer_to_a_switch_is_a_line_for_the_log() {
+        assert_eq!(switch_note(r#"{"microphone":"moved","speaker":"kept"}"#), Some("ksip: the call's devices: microphone moved, speaker kept".into()));
+        assert_eq!(switch_note(r#"{"microphone":"not_up","speaker":"not_up"}"#), None, "no call was up: nothing to say");
+        assert_eq!(switch_note("{}"), None, "the audio module not up: nothing to say");
+        assert_eq!(switch_note(""), None, "no answer: nothing to say");
+        assert_eq!(switch_note(r#"{"speaker":"unchanged"}"#), Some("ksip: the call's devices: microphone not_up, speaker unchanged".into()));
     }
     #[test]
     fn a_speaker_failure_is_said_though_the_microphone_failed_after_it_before_the_report() {

@@ -45,6 +45,14 @@ pub struct Peak {
     pub id: String,
     pub peak: f32,
 }
+/// The endpoint a saved choice stands for now (`resolve`): the device
+/// itself, or the Windows default communications endpoint in its place
+/// while the device is not there, which `stand_in` says.
+#[derive(Clone, Serialize, Debug, PartialEq)]
+pub struct Resolved {
+    pub id: String,
+    pub stand_in: bool,
+}
 #[derive(Clone, Serialize)]
 pub struct Calibration {
     pub measured_ms: u16,
@@ -55,7 +63,12 @@ pub struct Calibration {
     pub stable: bool,
 }
 struct MicSession {
-    requested_id: String,
+    /// The endpoint the session was asked for: what the choice stands for
+    /// now, as the caller resolved it (an id; "default" only from the
+    /// diagnostic tool), so that the session follows what that is, a default
+    /// Windows moved elsewhere or a device that is back included.
+    wanted_id: String,
+    /// The id of the endpoint opened, which the meter is read off.
     resolved_id: String,
     meter: IAudioMeterInformation,
     client: IAudioClient,
@@ -138,13 +151,15 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
     CoTaskMemFree(Some(value.0.cast()));
     Ok(result?)
 }
+/// Not there, either way: an endpoint Windows knows but cannot use, or one
+/// it does not know at all (GetDevice's ERROR_NOT_FOUND: a choice from
+/// another machine, a device removed for good). The engine opens the
+/// default in place of both (device_selection.cc), and so does `resolve`.
+fn not_there(e: &windows::core::Error) -> bool {
+    e.code() == unplugged().code() || e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult()
+}
 fn error(e: windows::core::Error) -> String {
-    // Not there, either way: an endpoint Windows knows but cannot use, or one
-    // it does not know at all (GetDevice's ERROR_NOT_FOUND: a choice from
-    // another machine, a device removed for good). The engine opens the
-    // default in place of both (device_selection.cc), and the window shows
-    // the default then.
-    if e.code() == unplugged().code() || e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult() {
+    if not_there(&e) {
         return message("AUDIO_DEVICE_UNPLUGGED");
     }
     message_with("AUDIO_DEVICE_FAILED", [e])
@@ -233,6 +248,51 @@ unsafe fn endpoint(enumerator: &IMMDeviceEnumerator, flow: EDataFlow, device_id:
     }
     Ok(device)
 }
+/// The endpoint a choice ("default" or an endpoint id) stands for now, by
+/// the rule the engine opens by (device_selection.cc for the calls,
+/// alert_player.h for the alert sounds): the device while Windows can use
+/// it, the default communications endpoint in its place while the device is
+/// not there (unplugged, its hub without power, disabled, from another
+/// machine). The one place the app resolves a choice: the window's volume
+/// and meter go to this while no call says which endpoint it is on
+/// (commands.rs, target), the calibration uses it, and the log says it when
+/// the engine is given the choice. A choice of the wrong kind is an error,
+/// and so is a default that cannot be used either, whose own error then
+/// stands (the privacy settings refusing the microphone, say).
+pub fn resolve(kind: &str, choice: &str) -> Result<Resolved, String> {
+    if !matches!(kind, "microphone" | "speaker") || choice.is_empty() || choice.len() > 500 || choice.contains(['\r', '\n', '\0']) {
+        return Err(message("AUDIO_DEVICE_ARGUMENT_INVALID"));
+    }
+    fn run(kind: &str, choice: &str) -> windows::core::Result<Resolved> {
+        let _com = Com::new()?;
+        // SAFETY: COM is initialised by `_com` for the whole block, and every
+        // interface made here is dropped at its end, before `_com`; the
+        // strings from GetId are freed once by take_string.
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+            match endpoint(&enumerator, flow_of(kind), choice) {
+                Ok(device) => Ok(Resolved { id: take_string(device.GetId()?)?, stand_in: false }),
+                Err(e) if choice != "default" && not_there(&e) => {
+                    let default = endpoint(&enumerator, flow_of(kind), "default")?;
+                    Ok(Resolved { id: take_string(default.GetId()?)?, stand_in: true })
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+    run(kind, choice).map_err(error)
+}
+/// Whether the meter's microphone session is to be opened (again) for the
+/// endpoint wanted now: there is none, or it is another endpoint's (the
+/// choice stands for another one now: a default Windows moved, a device
+/// back in place of the default), or a refusal on record is another
+/// endpoint's; except that an endpoint that refused within the last second
+/// is not asked again yet (the privacy switches are read only then).
+fn reopen_due(session: Option<&str>, refused: Option<(&str, Instant)>, wanted: &str, now: Instant) -> bool {
+    let elsewhere = session.is_some_and(|id| id != wanted) || refused.is_some_and(|(id, _)| id != wanted);
+    let due = refused.is_none_or(|(_, at)| now.duration_since(at) >= Duration::from_secs(1));
+    elsewhere || (session.is_none() && due)
+}
 /// The capture client and meter for one microphone, started.
 ///
 /// # Safety
@@ -257,12 +317,18 @@ unsafe fn open_microphone_session(device_id: &str) -> windows::core::Result<MicS
     client.Start()?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     Ok(MicSession {
-        requested_id: device_id.into(),
+        wanted_id: device_id.into(),
         resolved_id: take_string(device.GetId()?)?,
         meter,
         client,
     })
 }
+/// The microphone's level, off a capture session held open between the
+/// readings (ten a second while the window is shown) and let go when they
+/// stop. The endpoint is the caller's to name: what the choice stands for now
+/// (resolve), or the one the call is on; the session is opened again only
+/// when that is another endpoint than it has (reopen_due), so a choice that
+/// stands for the same endpoint reading after reading keeps one session.
 fn microphone_peak(device_id: &str) -> Result<Peak, String> {
     static REQUESTS: OnceLock<mpsc::Sender<PeakRequest>> = OnceLock::new();
     let sender = REQUESTS.get_or_init(|| {
@@ -305,10 +371,12 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
                 if session.as_ref().is_some_and(|value| unsafe { value.client.GetCurrentPadding() }.is_err()) {
                     session = None;
                 }
-                let elsewhere = session.as_ref().is_some_and(|value| value.requested_id != request.device_id)
-                    || refused.as_ref().is_some_and(|(_, id, _)| *id != request.device_id);
-                let due = refused.as_ref().is_none_or(|(_, _, at)| at.elapsed() >= Duration::from_secs(1));
-                if elsewhere || (session.is_none() && due) {
+                if reopen_due(
+                    session.as_ref().map(|value| value.wanted_id.as_str()),
+                    refused.as_ref().map(|(_, id, at)| (id.as_str(), *at)),
+                    &request.device_id,
+                    Instant::now(),
+                ) {
                     // SAFETY: COM is initialised on this thread by `_com`, declared
                     // before `session` and so dropped after it.
                     match unsafe { open_microphone_session(&request.device_id) } {
@@ -891,6 +959,23 @@ pub fn calibrate_aec(
     aggregate_careful(runs, patterns.len(), &last_error)
 }
 
+#[cfg(test)]
+mod meter_session_tests {
+    use super::reopen_due;
+    use std::time::{Duration, Instant};
+    #[test]
+    fn the_meters_session_is_opened_again_only_for_another_endpoint() {
+        let now = Instant::now();
+        assert!(reopen_due(None, None, "{a}", now), "no session: opened");
+        assert!(!reopen_due(Some("{a}"), None, "{a}", now), "a session for the endpoint wanted: kept, reading after reading");
+        assert!(reopen_due(Some("{a}"), None, "{b}", now), "the choice stands for another endpoint now: opened again");
+        // A refusal is for one endpoint, and holds for a second.
+        let refused = Some(("{a}", now - Duration::from_millis(300)));
+        assert!(!reopen_due(None, refused, "{a}", now), "refused just now: not asked again yet");
+        assert!(reopen_due(None, Some(("{a}", now - Duration::from_secs(1))), "{a}", now), "a second later: asked again");
+        assert!(reopen_due(None, refused, "{b}", now), "another endpoint than the one that refused: asked at once");
+    }
+}
 #[cfg(test)]
 mod privacy_tests {
     use super::privacy_switch_off;

@@ -86,6 +86,11 @@ pub struct MicrophoneState {
     /// Where the current call's microphone comes from: "device", "silence"
     /// (a device that would not start, replaced by timed silence) or "none".
     pub input: String,
+    /// The endpoint the call's stream is on, as the engine opened it, while
+    /// the input is the device; and whether that is another than the device
+    /// chosen (the default in its place).
+    pub endpoint: Option<String>,
+    pub stand_in: bool,
     pub failures: u64,
     /// The bridge's result for the last failed start, once there is one.
     pub last_result: Option<i64>,
@@ -93,8 +98,13 @@ pub struct MicrophoneState {
 #[derive(Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct SpeakerState {
-    /// A player has the stream. False while nothing plays, which is not a failure.
+    /// A player has the stream and it is up. False while nothing plays,
+    /// which is not a failure.
     pub playing: bool,
+    /// The endpoint the call's stream is on while it plays, and whether that
+    /// stands in for the speaker chosen; as for the microphone.
+    pub endpoint: Option<String>,
+    pub stand_in: bool,
     /// Every start that failed: a new player, the old one put back after it,
     /// or the stream handed back to the player left.
     pub failures: u64,

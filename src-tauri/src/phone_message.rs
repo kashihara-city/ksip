@@ -3,7 +3,6 @@
 //! outside the actor brings back. Every change to the phone's state starts
 //! as one of these, and they are handled one at a time, in order.
 use crate::audio::{Calibration, Device, Volume};
-use crate::engine_config::AudioEndpoints;
 use crate::engine_link::{EngineLink, StopReport};
 use crate::settings::{CustomButton, Settings};
 use crate::storage::Account;
@@ -105,7 +104,6 @@ pub enum LinkBody {
 /// A started engine, with what its start decided.
 pub struct Ready {
     pub link: EngineLink,
-    pub endpoints: AudioEndpoints,
     pub address: String,
     pub notes: Vec<String>,
 }

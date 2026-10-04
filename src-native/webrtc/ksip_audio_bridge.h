@@ -119,7 +119,8 @@ int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
    WebRTC lists for the side (1), or not (0, also for a bad argument). The one
    test of "is the chosen device there" in the engine: the calls open the
    default in place of one that is not (device_selection.cc), and the alert
-   sounds do the same through it (alert_player.h). "default" is always there. */
+   sounds do the same through it (alert_player.h). "default" is there while
+   the side has any endpoint at all. */
 int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout);
 /* The endpoint open on each side, by name and id: the one WebRTC last opened,
    whichever way it was chosen (the default in place of a device that is not
@@ -127,6 +128,14 @@ int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout);
    away, whose name is then empty); before any stream, the one selected. */
 int ksip_audio_get_device_info(ksip_audio *audio,
                                ksip_audio_device_info *info);
+/* The endpoint the side's stream opened, as WebRTC says once it has: the one
+   selected, the default in place of one that is not there, or the default
+   WebRTC moved to when the device in use went away. Written to `out` (at
+   most `size` bytes, null-terminated) and 1; 0 with `out` empty while no
+   stream is open on the side (none opened yet, the last stopped, or its
+   opening failed). */
+int ksip_audio_opened_endpoint(ksip_audio *audio, int playout, char *out,
+                               size_t size);
 /* Whether the microphone and the speaker streams opened from now on ask for
    RAW mode, so that no effects of the device (APOs) change their audio; both
    do unless told otherwise. */

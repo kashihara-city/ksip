@@ -99,11 +99,22 @@ bool ksip_audio::Listed(const char *id, bool playout) {
 // would: on the endpoint asked for, or on the default because that one is
 // not there, whether the stream opened there in its place (SetDevice) or
 // WebRTC moved it there when the device in use went away (the endpoint
-// WebRTC says it opened tells which, OpenedEndpoint). "default" is WebRTC's
-// to follow. A stream on the default does not serve a device that is back.
+// WebRTC says it opened tells which, OpenedEndpoint). A stream on an
+// endpoint that is gone serves nothing: WebRTC counts it as running still
+// when it could not move it (no other device to move to), and nothing comes
+// through it. "default" is otherwise WebRTC's to follow. A stream on the
+// default does not serve a device that is back.
 bool ksip_audio::Serves(const std::string &request, bool playout) {
+  const std::string opened = ksip_audio_bridge::OpenedEndpoint(playout);
+  // A running stream whose endpoint is not known (its opening never
+  // completed) is not trusted either.
+  if (opened.empty() || !Listed(opened.c_str(), playout)) {
+    RTC_LOG(LS_WARNING) << "ksip_audio: the " << (playout ? "playout" : "recording") << " endpoint in use, "
+                        << (opened.empty() ? std::string("unknown") : opened) << ", is gone; the stream is opened again";
+    return false;
+  }
   if (request == "default") return true;
-  if (ksip_audio_bridge::OpenedEndpoint(playout) == request) return true;
+  if (opened == request) return true;
   if (!Listed(request.c_str(), playout)) return true;
   RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording") << " device " << request
                       << " is back, the stream is opened on it again";
@@ -134,7 +145,11 @@ void ksip_audio::StoreDevice(bool playout, const char *name, const char *id) {
 
 extern "C" int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout) {
   if (!audio || !id || !id[0]) return 0;
-  if (std::strcmp(id, "default") == 0) return 1;
+  if (std::strcmp(id, "default") == 0) {
+    // There while the side has any endpoint at all for it to stand for.
+    const int count = playout ? audio->adm->PlayoutDevices() : audio->adm->RecordingDevices();
+    return count > 0 ? 1 : 0;
+  }
   return audio->Listed(id, playout != 0) ? 1 : 0;
 }
 

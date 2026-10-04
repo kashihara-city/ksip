@@ -240,8 +240,8 @@ impl Services {
             microphone_fallback: false,
             microphone_raw: None,
             speaker_raw: None,
-            microphone_id: String::new(),
-            speaker_id: String::new(),
+            microphone_call: None,
+            speaker_call: None,
             account,
             calls: vec![],
             transfer: Transfer::default(),
@@ -385,6 +385,23 @@ impl AppState {
     }
     pub fn is_closing(&self) -> bool {
         self.closing.load(Ordering::SeqCst)
+    }
+    /// What the window's volume, mute and meter for a kind of device go by:
+    /// the saved choice, and the endpoint a call's stream is on, when one is.
+    /// Read off the published snapshot without copying the rest of it: the
+    /// meter asks ten times a second.
+    pub fn audio_choice(&self, kind: &str) -> (String, Option<crate::phone_state::CallEndpoint>) {
+        self.published.with(|view| {
+            if kind == "microphone" {
+                (view.settings.microphone.clone(), view.microphone_call.clone())
+            } else {
+                (view.settings.speaker.clone(), view.speaker_call.clone())
+            }
+        })
+    }
+    /// The saved software gain for a kind of device, in percent.
+    pub fn audio_gain(&self, kind: &str) -> u16 {
+        self.published.with(|view| if kind == "microphone" { view.settings.microphone_gain } else { view.settings.speaker_gain })
     }
     /// The app is leaving: the phone is stopped through the actor, then a
     /// conversion still running gets a moment to finish. One that does not

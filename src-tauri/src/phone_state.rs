@@ -13,6 +13,14 @@ use crate::storage::AccountView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// The endpoint a call's stream is on, as the engine opened it: its id, and
+/// whether it is another than the device chosen (the default in its place
+/// while that device is not there or would not start).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct CallEndpoint {
+    pub id: String,
+    pub stand_in: bool,
+}
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
     pub running: bool,
@@ -43,8 +51,16 @@ pub struct Snapshot {
     /// The same for the speaker, while a call plays on it.
     #[serde(default)]
     pub speaker_raw: Option<bool>,
-    pub microphone_id: String,
-    pub speaker_id: String,
+    /// The endpoint the call's microphone stream is on, as the engine
+    /// reports it, while a call has the device; none otherwise (no call, the
+    /// silence standing in, the engine gone). The window's volume, mute and
+    /// meter go there while it is set, and to what the saved choice stands
+    /// for otherwise (commands.rs, target).
+    #[serde(default)]
+    pub microphone_call: Option<CallEndpoint>,
+    /// The same for the speaker, while a call plays on it.
+    #[serde(default)]
+    pub speaker_call: Option<CallEndpoint>,
     pub account: AccountView,
     pub calls: Vec<CallInfo>,
     pub transfer: Transfer,

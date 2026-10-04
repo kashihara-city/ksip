@@ -24,6 +24,7 @@
 #include <atomic>
 #include <thread>
 #include "ksip_audio_bridge.h"
+#include "session_core.h"
 
 // baresip's own names for a player and a source; declared by it, defined here.
 struct auplay_st {
@@ -57,7 +58,8 @@ int allocate_playout(auplay_st **out, const char *device, auplay_write_h *handle
 int allocate_source(ausrc_st **out, const char *device, ausrc_read_h *handler, void *arg);
 // The devices chosen again while a call is up, taken by the streams that
 // are up now (session_core.h's switch_devices); null leaves a side alone.
-void switch_devices(const char *microphone, const char *speaker);
+// What came of each side is returned.
+Switch switch_devices(const char *microphone, const char *speaker);
 // The session's part of the module's state (audio_state.h): "microphone"
 // and "speaker", added to `audio`.
 void add_state(odict *audio);

@@ -44,6 +44,9 @@ def main():
             assert log.count("the call's speaker switched") == before + 1 and "the call's microphone switched" in log, log[-2000:]
             assert any(c['id'] == call and c['state'] == 'ESTABLISHED' for c in state['calls']), state['calls']
             assert state['audio']['microphone']['input'] == 'device' and state['audio']['speaker']['playing'], state['audio']
+            # The state names the endpoints the call is on now: the devices chosen, standing in for nothing.
+            assert state['audio']['microphone']['endpoint'] == microphone and not state['audio']['microphone']['stand_in'], state['audio']
+            assert state['audio']['speaker']['endpoint'] == speaker and not state['audio']['speaker']['stand_in'], state['audio']
             assert heard > 0.01, f'the playback did not reach {speaker} (peak {heard})'
             print(f'PASS: 通話中に切り替えると、通話は切れずに新しいデバイスへ移り、再生番号の音が {speaker} に届く（最大 {heard:.3f}）', flush=True)
         phone.action('hangup', call)

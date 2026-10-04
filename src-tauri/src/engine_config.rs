@@ -40,11 +40,11 @@ pub struct AudioEndpoints {
     pub speaker_now: Option<String>,
 }
 /// What a start needs, worked out from the settings before the process
-/// exists: the plan the link spawns from, the endpoints the engine was
-/// given, the address it binds, and the log lines that explain the choices.
+/// exists: the plan the link spawns from, the address it binds, and the log
+/// lines that explain the choices (the endpoints the engine was given among
+/// them).
 pub struct Prepared {
     pub plan: StartPlan,
-    pub endpoints: AudioEndpoints,
     pub address: String,
     pub notes: Vec<String>,
 }
@@ -133,18 +133,21 @@ impl Services {
     /// or a new Windows default, is used from the next call on, nothing is
     /// written back, and a device that is not there keeps nobody from
     /// registering (with no capture endpoint at all the native source sends
-    /// timed silence). How they stand now is looked at for the log only.
+    /// timed silence). How they stand now is looked at for the log only,
+    /// by the app's own resolution of a choice (audio.rs, resolve), which
+    /// follows the engine's rule.
     pub fn resolve_audio_endpoints(&self, s: &Settings) -> AudioEndpoints {
-        let now = |kind: &str, chosen: &str| crate::audio::volume(kind, chosen, None, None).ok().map(|v| v.id);
+        let now = |kind: &str, chosen: &str| crate::audio::resolve(kind, chosen).ok();
         let microphone_now = now("microphone", &s.microphone);
         let speaker_now = now("speaker", &s.speaker);
+        let missing = |chosen: &str, now: &Option<crate::audio::Resolved>| chosen != "default" && now.as_ref().is_none_or(|r| r.stand_in);
         AudioEndpoints {
             microphone: s.microphone.clone(),
             speaker: s.speaker.clone(),
-            microphone_missing: s.microphone != "default" && microphone_now.is_none(),
-            speaker_missing: s.speaker != "default" && speaker_now.is_none(),
-            microphone_now,
-            speaker_now,
+            microphone_missing: missing(&s.microphone, &microphone_now),
+            speaker_missing: missing(&s.speaker, &speaker_now),
+            microphone_now: microphone_now.map(|r| r.id),
+            speaker_now: speaker_now.map(|r| r.id),
         }
     }
     /// Works out everything a start needs and writes the engine's config:
@@ -310,7 +313,6 @@ impl Services {
                 credential_target: self.store.target.clone(),
                 control_secret: control_secret()?,
             },
-            endpoints,
             address,
             notes,
         })
@@ -353,11 +355,10 @@ mod tests {
             };
             let prepared = services.prepare_start(&settings, &account, &devices).unwrap();
             let config = std::fs::read_to_string(services.profile_dir().join("config")).unwrap();
-            assert!(config.contains(&format!(
-                "audio_source ksip_audio,{}",
-                prepared.endpoints.microphone
-            )));
-            assert!(config.contains(&format!("audio_player ksip_audio,{}", prepared.endpoints.speaker)));
+            // The choices as saved, "default" here: which endpoint serves
+            // them is each stream's to decide as it opens.
+            assert!(config.contains(&format!("audio_source ksip_audio,{}", settings.microphone)));
+            assert!(config.contains(&format!("audio_player ksip_audio,{}", settings.speaker)));
             assert!(config.contains("webrtc_aec_delay_ms 20"));
             assert!(config.contains("callwaiting_aufile none"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
@@ -429,8 +430,8 @@ mod tests {
                 AudioState {
                     ready: true,
                     processing: true,
-                    microphone: MicrophoneState { input: "none".into(), failures: 0, last_result: None },
-                    speaker: SpeakerState { playing: false, failures: 0, last_result: None },
+                    microphone: MicrophoneState { input: "none".into(), endpoint: None, stand_in: false, failures: 0, last_result: None },
+                    speaker: SpeakerState { playing: false, endpoint: None, stand_in: false, failures: 0, last_result: None },
                     // No call has opened the microphone yet.
                     capture_raw: None,
                     playout_raw: None,

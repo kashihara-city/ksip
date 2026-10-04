@@ -25,7 +25,10 @@ int StateCommand(re_printf *pf, void *) {
 }
 // The devices the configuration names now (ksip_audio_devices has just set
 // them) taken by the streams that are up: a change made during a call
-// reaches that call. A side this module does not have is left alone.
+// reaches that call. A side this module does not have is left alone. What
+// came of each side is the answer, as JSON: {"microphone": word, "speaker":
+// word}, the words of session_core.h's Outcome ("not_up", "unchanged",
+// "moved", "kept", "down").
 int SwitchCommand(re_printf *pf, void *) {
     const struct config *cfg = conf_config();
     if (!cfg || !g_ready) return ENODEV;
@@ -33,8 +36,16 @@ int SwitchCommand(re_printf *pf, void *) {
         if (str_cmp(module, "ksip_audio")) return nullptr;
         return device[0] ? device : "default";
     };
-    playback_session::switch_devices(chosen(cfg->audio.src_mod, cfg->audio.src_dev), chosen(cfg->audio.play_mod, cfg->audio.play_dev));
-    return re_hprintf(pf, "Audio streams on the configured devices\n");
+    const playback_session::Switch outcome =
+        playback_session::switch_devices(chosen(cfg->audio.src_mod, cfg->audio.src_dev), chosen(cfg->audio.play_mod, cfg->audio.play_dev));
+    odict *od = nullptr;
+    int err = odict_alloc(&od, 4);
+    if (err) return err;
+    odict_entry_add(od, "microphone", ODICT_STRING, playback_session::outcome_name(outcome.microphone));
+    odict_entry_add(od, "speaker", ODICT_STRING, playback_session::outcome_name(outcome.speaker));
+    err = json_encode_odict(pf, od);
+    mem_deref(od);
+    return err;
 }
 const cmd commands[] = {
     {"ksip_audio_state", 0, 0, "The audio module's state as JSON (audio_state.h)", StateCommand},
