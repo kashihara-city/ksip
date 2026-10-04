@@ -11,6 +11,10 @@
 #                                 and RTCP on ports the system picks (no
 #                                 listener the Windows Firewall asks about).
 #                                 A port range takes the code it always did.
+#   baresip/src/stream.c          the SDP says where RTCP is (a=rtcp, RFC
+#                                 3605) when it is not on the port next to
+#                                 RTP, which only the system-picked ports
+#                                 leave possible.
 #
 # Building and embedding (no change to what goes on the wire):
 #   re/cmake/re-config.cmake      empty the OpenSSL cache variables when neither
@@ -95,8 +99,9 @@ subscribe.write_text(text)
 # there whatever a=rtcp says (Asterisk does). The system hands ports out
 # nearly in turn, so a second socket lands next to the first; when it does
 # not, it becomes the RTP candidate and another is asked for. Should no pair
-# come of it, the last two are kept: the audio goes, the peer's RTCP may not
-# arrive (the ksip module warns of it).
+# come of it, the last two are kept: the audio goes, and the SDP tells the
+# peer where RTCP is (the stream.c change below; the ksip module warns of
+# it, since a peer that ignores a=rtcp sends its RTCP next to RTP).
 rtp = re_base / "src/rtp/rtp.c"
 text = rtp.read_text()
 range_listen = "static int udp_range_listen(struct rtp_sock *rs, const struct sa *ip,\n"
@@ -162,7 +167,7 @@ text = text.replace(listen, '''\t\tif (!min_port && !max_port)
 rtp.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
-restore("baresip", baresip, ["src/main.c", "CMakeLists.txt"])
+restore("baresip", baresip, ["src/main.c", "src/stream.c", "CMakeLists.txt"])
 
 # Build: baresip's main() parses its options with getopt, which MSVC lacks.
 # The engine is only ever started by the app as "baresip -f <profile>", so
@@ -183,6 +188,31 @@ text = text.replace("err = conf_configure();", '''#ifndef HAVE_GETOPT
 #endif
     err = conf_configure();''')
 main.write_text(text)
+
+# On the wire: RTCP on another port than the next after RTP (the last pair
+# of udp_system_listen's search) is said in the SDP, so that a peer that
+# reads a=rtcp sends its RTCP where it is listened for. The usual pair says
+# nothing, as before.
+stream = baresip / "src/stream.c"
+text = stream.read_text()
+anchor = """	/* RFC 5761 */
+	if (s->cfg.rtcp_mux &&
+	    (offerer || sdp_media_rattr(s->sdp, "rtcp-mux"))) {
+"""
+if text.count(anchor) != 1:
+    raise SystemExit("patch-baresip: stream_alloc in stream.c has changed")
+text = text.replace(anchor, """	/* KSIP: RFC 3605, when RTCP is not on the port next to RTP (the
+	 * system-picked ports, with no such pair to be had) */
+	if (s->rtp && rtcp_sock(s->rtp)) {
+		struct sa rtcp_local;
+		if (!udp_local_get(rtcp_sock(s->rtp), &rtcp_local) &&
+		    sa_port(&rtcp_local) != sa_port(rtp_local(s->rtp)) + 1)
+			err |= sdp_media_set_lattr(s->sdp, true, "rtcp", "%u",
+						   sa_port(&rtcp_local));
+	}
+
+""" + anchor)
+stream.write_text(text)
 
 # Embedding: the KSIP modules live in this repository and are copied beside
 # baresip's own modules, and embedded.cmake adds them to the build.

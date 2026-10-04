@@ -119,8 +119,8 @@ void on_event(bevent_ev ev, call *c) {
         sa rtcp_local;
         if (rtcp_sock(rtp) && !udp_local_get(static_cast<udp_sock *>(rtcp_sock(rtp)), &rtcp_local) &&
             sa_port(&rtcp_local) != sa_port(rtp_local(rtp)) + 1)
-            warning("ksip: RTCP is on port %u, not next to RTP on %u; the peer's RTCP may not arrive\n", sa_port(&rtcp_local),
-                    sa_port(rtp_local(rtp)));
+            warning("ksip: RTCP is on port %u, not next to RTP on %u; the SDP says so (a=rtcp), a peer that ignores it sends its RTCP next to RTP\n",
+                    sa_port(&rtcp_local), sa_port(rtp_local(rtp)));
         const char *proto = sdp_media_proto(m);
         if (proto && strstr(proto, "TLS")) {
             send_empty(rtp_sock(rtp), sdp_media_raddr(m));

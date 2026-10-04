@@ -12,7 +12,7 @@ def old(date):return datetime.datetime.fromisoformat(date.replace('Z','+00:00'))
 # asked for. The WebRTC checkout is a git tree, and there the same rule reads:
 # only what scripts/build/patch-webrtc.py touches may show up in git status.
 PATCHED={'re':{'cmake/re-config.cmake','src/sipevent/subscribe.c','src/rtp/rtp.c'},
-         'baresip':{'src/main.c','CMakeLists.txt'}}
+         'baresip':{'src/main.c','src/stream.c','CMakeLists.txt'}}
 ADDED={'baresip':('modules/ksip_audio/','modules/ksip_audio_filter/','modules/ksip/','modules/ksip_ctrl/')}
 WEBRTC_TOUCHED={'BUILD.gn','modules/audio_device/win/core_audio_utility_win.cc',
                 'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc',
