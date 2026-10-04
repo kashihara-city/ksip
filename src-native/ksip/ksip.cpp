@@ -156,6 +156,7 @@ int init() {
     if (detail) log_enable_debug(true);
     transfer::init();
     subscriptions::init();
+    system_ports::init();
     sip_set_trace_handler(uag_sip(), sip_trace);
     int err = bevent_register(event, nullptr);
     if (!err) err = cmd_register(baresip_commands(), commands, RE_ARRAY_SIZE(commands));
@@ -163,6 +164,7 @@ int init() {
 }
 int close() {
     sip_set_trace_handler(uag_sip(), nullptr);
+    system_ports::close();
     calls::close();
     transfer::close();
     subscriptions::close();

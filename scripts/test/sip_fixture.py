@@ -161,7 +161,11 @@ class Phone:
         app writes into its own engine configuration.
         """
         import wave
-        if sip_port is None or rtp_port is None:sip_port,rtp_port=free_ports()
+        # rtp_port 0 asks the system for the RTP ports, as the app does by default.
+        if sip_port is None or rtp_port is None:
+            picked=free_ports()
+            if sip_port is None:sip_port=picked[0]
+            if rtp_port is None:rtp_port=picked[1]
         self.dir=ROOT/'temp/build/ksip-integration'/name;self.dir.mkdir(parents=True,exist_ok=True)
         self.account=account
         self.target='KSIP/Test/test-native-'+name
@@ -206,7 +210,7 @@ opus_inbandfec yes
 opus_packet_loss 10
 opus_dtx no
 opus_application voip
-rtp_ports {rtp_port}-{rtp_port+20}
+rtp_ports {rtp_port}-{rtp_port+20 if rtp_port else 0}
 ksip_ctrl_connect 127.0.0.1:{ctrl}
 {codec_modules}
 module aufile.dll

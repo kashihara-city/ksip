@@ -111,7 +111,7 @@ KSIPは、既定ではPBXからの戻り通信で通話するため、この画�
 - セキュリティが強化された Windows Defender ファイアウォール（wf.msc）  
   同じ規則を全部の項目つきで見せる画面です。確認画面で「許可」して作られた規則も、ここの「受信の規則」に、プログラムのパス付きで並びます。
 
-設定画面の「アカウントと接続」→「ネットワーク詳細」にある「Windows ファイアウォールの確認画面を出さない」が既定のONのとき、SIPとRTPのポートをWindowsに任せ（`sip_port`・`rtp_port` を `0`）、待ち受けを作らずに、こちらから送った通信の戻りだけで通話します。このとき、登録先のPBX以外からの着信は受け付けず（`pbx_only`）、キープアライブを60秒以内の間隔で送ります（着信は、登録の通信で開いた戻り道を通って届き、別のポートや別のアドレスからの通信は止められます）。
+設定画面の「アカウントと接続」→「ネットワーク詳細」にある「Windows ファイアウォールの確認画面を出さない」が既定のONのとき、SIPとRTPのポートをWindowsに任せ（`sip_port`・`rtp_port` を `0`）、待ち受けを作らずに、こちらから送った通信の戻りだけで通話します。このとき、登録先のPBX以外からの着信は受け付けず（`pbx_only`）、キープアライブを60秒以内の間隔で送ります（着信は、登録の通信で開いた戻り道を通って届き、別のポートや別のアドレスからの通信は止められます）。音声の戻り道はこちらの RTP の送信が開けますが、相手が送るだけのとき（保留音や案内放送で `a=sendonly` を提示したとき）はこちらが送らないので、相手の RTP と RTCP のアドレスへ空の UDP を送って開け、20 秒間 RTP を送っていなければ送り直します。
 
 | 戻ってくる通信                                      | 同じアドレスとポートから来るか | 根拠                                                                                                      |
 | --------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
@@ -524,6 +524,7 @@ python -X utf8 scripts/test/pbx-blf-54.py
 python -X utf8 scripts/test/pbx-dtmf.py
 python -X utf8 scripts/test/pbx-record-switch.py
 python -X utf8 scripts/test/pbx-early-media.py
+python -X utf8 scripts/test/pbx-hold-media.py
 python -X utf8 scripts/test/pbx-playback.py
 python -X utf8 scripts/test/pbx-live-aec.py
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough.ps1
@@ -568,6 +569,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 
 サーバー側には、自動応答して音を流す番号（`playback`）、`park_prefix` を付けた番号へ転送すると駐車され同じ番号へ発信すると取得できる駐車枠（`park_slots`。dialogイベントの購読に応えること）、1件目と3件目の内線を同時に鳴らすグループ（`group`。他方が取ったときのCANCELに `Reason` ヘッダーを付けること）、留守番電話（`voicemail` で自分の箱、`voicemail_direct_prefix` + 内線番号でその箱へ直接録音、1件目と2件目の内線は応答しないと留守番電話に落ちること）、各内線の dialog イベント（BLF）が要ります。3件目以降の内線は留守番電話に落とさず、話中や応答なしがSIPの応答のまま返ること。SRTP必須の内線（`sdes`）とDTLS-SRTPの内線（`dtls`）が1つずつあること。任意で、応答前に183で音を流してから応答する番号（`early_media`。開発用Asteriskでは `Progress()` と `Playback(...,noanswer)` の後に `Answer()`）があれば、`pbx-early-media.py` がアーリーメディア中の録音の振る舞いを確かめます。無ければそのテストは飛ばします。留守番電話のテストは、声の入った短いWAV（48 kHz・モノラル・16 bit）を `test-pbx/irodori-rusuden.wav` に置いておくと、それを話者として流します。無音だけの録音を捨てるPBX（3CX）があるためです。
 
+`pbx-hold-media.py` は、相手が通話を保留にしたあいだに PBX が送る保留音が、ポートを Windows に任せファイアウォールの規則も無いこちら側に届くことを確かめます。PBX が保留音をそのまま流す場合（Asterisk・FreeSWITCH）と、先に `a=sendonly` を提示してこちらの送信を止めさせる場合（3CX）の両方で、保留中と再開後に受信があることを見ます。
+
 `pbx-keepalive.py` は、キープアライブを10秒ごとにした電話機を UDP・TCP・TLS でそれぞれ登録し、エンジンのログに設定どおりの間隔と運び方で登録先へ空行を送った記録が出ること、送れなかった記録が無いこと、その間も登録が保たれることを確かめます。「送らない」にした電話機が送らないことも見ます。空行が実際に届いているかと、受信の許可規則の無い PC に着信が届くかは見ていません（開発用 Asterisk は `qualify_frequency` で30秒ごとに OPTIONS を送ってくるので、その返事で戻り道が開いたままになり、キープアライブが無くても着信が届きます）。1分半ほどかかります。
 
 `app-settings-file.ps1` は、設定画面の「書き出し」と「読み込み」を Windows のファイルダイアログごと試します。書き出したファイルが保存済みの設定と同じこと、読み込みは画面に入れるだけで保存せずに閉じれば元のままのこと、保存すると読み込んだ値が残り、端末固有の値・元の端末で読めなかった値・型の違う値は入らないことを確かめます。
@@ -597,12 +600,13 @@ python -X utf8 scripts/test/loopback-control.py
 python -X utf8 scripts/test/loopback-call.py
 python -X utf8 scripts/test/loopback-gain.py
 python -X utf8 scripts/test/loopback-silent-mic.py
+python -X utf8 scripts/test/loopback-sendonly.py
 python -X utf8 scripts/test/loopback-trust.py
 python -X utf8 scripts/test/loopback-keepalive.py
 python -X utf8 scripts/test/loopback-transfer-notify.py
 ```
 
-`loopback-silent-mic.py` は、開けないマイクの代わりに無音が時間どおり送られることと、音声モジュールの状態（`ksip_audio_state`）が通話中は無音の代替と失敗した開始を、通話後は入力なしを示すことを確かめます。`loopback-trust.py` は、TLS のときに音声エンジンの状態が信頼リストの証明書の数を示すこと（証明書でないファイルや無いファイルなら 0、実際の信頼リストなら 1 以上、TLS でなければ出さない）を確かめます。画面はこの数が 0 のときに「TLSの信頼リストを読み込めませんでした」と出します。
+`loopback-silent-mic.py` は、開けないマイクの代わりに無音が時間どおり送られることと、音声モジュールの状態（`ksip_audio_state`）が通話中は無音の代替と失敗した開始を、通話後は入力なしを示すことを確かめます。`loopback-sendonly.py` は 127.0.0.1 の模擬 PBX で、相手が `a=sendonly` で応答すると RTP を送らず、相手の RTP と RTCP のポートへ空の UDP をすぐに送り、20 秒送信が無ければもう一度送ること、`a=sendrecv` なら RTP を送ることを確かめます。`loopback-trust.py` は、TLS のときに音声エンジンの状態が信頼リストの証明書の数を示すこと（証明書でないファイルや無いファイルなら 0、実際の信頼リストなら 1 以上、TLS でなければ出さない）を確かめます。画面はこの数が 0 のときに「TLSの信頼リストを読み込めませんでした」と出します。
 `loopback-keepalive.py` は、127.0.0.1 に置いた模擬の登録先に登録し、キープアライブの空行が登録先へ届くこと（Via や CSeq を折り返した 200 OK でも）と、別の送り主が送った 200 OK の宛先には送らないことを確かめます。`loopback-transfer-notify.py` は、模擬の PBX との2本の通話で転送し、古い Event id の NOTIFY（481 で断られる）では転送の期限が残って TRANSFER_UNKNOWN になり、正しい NOTIFY（200 で受け付けられる）では期限が外れて最後の NOTIFY で TRANSFER_DONE になることを確かめます。転送の期限を待つので、1分半ほどかかります。
 
 ### グループポリシー（ADMX）のテスト
