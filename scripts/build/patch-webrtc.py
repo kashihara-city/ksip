@@ -18,7 +18,24 @@
 #       stream got is told to the bridge (KsipNoteRaw), which shows it. The
 #       endpoint a stream opens is told too (KsipNoteDevice), the default
 #       WebRTC moves to by itself when a device goes away included, so that
-#       the microphone's mute is read off the one in use.
+#       the microphone's mute is read off the one in use, and that it opened
+#       (KsipNoteOpened), so that what is told is what is open.
+#   modules/audio_device/win/core_audio_base_win.cc
+#       the default WebRTC moves a stream to by itself when the device in use
+#       goes away (SwitchDeviceIfNeeded) is the default communications
+#       device, not the default (console) one: the one KSIP's own rule, the
+#       alert sounds and the app's window use in place of a device that is
+#       not there, so that a call whose device is unplugged goes on where the
+#       rest of KSIP would put it. On a machine with one default for both
+#       roles there is no difference.
+#   modules/audio_device/win/core_audio_base_win.cc
+#       a restart WebRTC attempts by itself that fails (the device in use
+#       went away and there is no other to move to: the only microphone
+#       unplugged) left the audio thread ending on a client the restart had
+#       already released, which crashed the engine, and left that ended
+#       thread unjoined, so that the next start spawned no live thread and
+#       delivered nothing. The thread's exit stops no client it no longer
+#       has, and a start joins a thread left over before spawning one.
 #   modules/audio_device/win/core_audio_{input,output}_win.cc
 #       StartRecording and StartPlayout mark the stream active before Start()
 #       spawns the audio thread, not after it returns. The thread's first
@@ -77,6 +94,20 @@ OPENED_CALL = """  audio_client_ = audio_client;
   core_audio_utility::KsipNoteOpened(GetDataFlow() == eCapture);
   return true;
 }"""
+SWITCH_ORIGINAL = "    if (SetDevice(kDefault) == -1) {"
+SWITCH_PATCHED = ("    // KSIP: the default communications device, as KSIP opens in place of a"
+                  " device that is not there.\n"
+                  "    if (SetDevice(kDefaultCommunications) == -1) {")
+THREAD_EXIT_ORIGINAL = "    result = audio_client_->Stop();\n"
+THREAD_EXIT_PATCHED = ("    // KSIP: no client to stop when a restart that failed has released it.\n"
+                       "    if (audio_client_) result = audio_client_->Stop();\n")
+THREAD_SPAWN_ORIGINAL = """  if (audio_thread_.empty()) {
+    const absl::string_view name =
+        IsInput() ? "wasapi_capture_thread" : "wasapi_render_thread";"""
+THREAD_SPAWN_PATCHED = """  // KSIP: a thread left by a restart that failed (its loop ended, nothing
+  // joined it) is joined first, so that a live one is spawned.
+  if (!IsRestarting() && !audio_thread_.empty()) StopThread();
+""" + THREAD_SPAWN_ORIGINAL
 ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
@@ -248,6 +279,23 @@ def patch_raw_capture(source: Path):
             raise RuntimeError(
                 "Unsupported WebRTC CoreAudio base: opened anchor missing")
         base_text = base_text.replace(OPENED_ANCHOR, OPENED_CALL, 1)
+    # The device WebRTC moves a stream to by itself when the one in use goes
+    # away: the default communications device, KSIP's own stand-in.
+    if base_text.count(SWITCH_ORIGINAL) + base_text.count(SWITCH_PATCHED) != 1:
+        raise RuntimeError(
+            "Unsupported WebRTC CoreAudio base: device switch anchor missing")
+    base_text = replace_one_of(base_text, [SWITCH_ORIGINAL], SWITCH_PATCHED, "device switch")
+    # A restart that failed: the audio thread's exit stops no client the
+    # restart released, and the next start joins the thread it left.
+    for original, patched, what in ((THREAD_EXIT_ORIGINAL, THREAD_EXIT_PATCHED, "thread exit"),
+                                    (THREAD_SPAWN_ORIGINAL, THREAD_SPAWN_PATCHED, "thread spawn")):
+        # The patched form keeps the original inside it, so it is looked for first.
+        if patched in base_text:
+            continue
+        if base_text.count(original) != 1:
+            raise RuntimeError(
+                f"Unsupported WebRTC CoreAudio base: {what} anchor missing")
+        base_text = base_text.replace(original, patched, 1)
     base.write_text(base_text, encoding="utf-8")
 
 
