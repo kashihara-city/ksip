@@ -42,7 +42,6 @@ audec_format s16
 rtp_ports {rtp}-{rtp + 20}
 ksip_ctrl_connect 127.0.0.1:{ctrl}
 module g711.dll
-module wasapi.dll
 module ksip_audio.dll
 module aufile.dll
 module ksip_audio_filter.dll
@@ -152,10 +151,11 @@ def main():
         sender.command("dial", "sip:receiver@127.0.0.1:17060")
         receiver.event("CALL_INCOMING")
         # The ringtone, in the module's state: up, on the default in place of
-        # the speaker that is not there, no failed start.
+        # the speaker that is not there, by that endpoint's own id (a render
+        # endpoint's, not the word "default"), no failed start.
         ringing_state = receiver.audio(lambda audio: audio.get("alert", {}).get("playing"))
         assert ringing_state["alert"]["playing"] and ringing_state["alert"]["stand_in"], ringing_state
-        assert ringing_state["alert"]["endpoint"] == "default" and ringing_state["alert"]["failures"] == 0, ringing_state
+        assert ringing_state["alert"]["endpoint"].startswith("{0.0.0.00000000}.{") and ringing_state["alert"]["failures"] == 0, ringing_state
         receiver.command("accept")
         receiver.event("CALL_ESTABLISHED")
         sender.event("CALL_ESTABLISHED")

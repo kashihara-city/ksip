@@ -220,8 +220,8 @@ impl Services {
         }
         put(format!("audio_player ksip_audio,{speaker}"));
         put(format!("audio_source ksip_audio,{microphone}"));
-        // The alert sounds go through ksip_alert, which hands them to wasapi on
-        // the speaker, or on the default while the speaker is not there.
+        // The alert sounds go through ksip_alert, which plays them on the
+        // speaker, or on the default while the speaker is not there.
         put(format!("audio_alert ksip_alert,{speaker}"));
         // A second call during a call is shown, not sounded. baresip would send
         // that tone through the call's player, and ksip_audio cannot play a
@@ -276,7 +276,7 @@ impl Services {
         put("rtp_timeout 60".into());
         put(format!("ksip_ctrl_connect 127.0.0.1:{ctrl}"));
         for module in [
-            "g711", "libg722", "opus", "wasapi", "ksip_audio", "ksip_audio_filter", "auconv", "auresamp",
+            "g711", "libg722", "opus", "ksip_audio", "ksip_audio_filter", "auconv", "auresamp",
             "ksip_ctrl", "menu", "srtp", "dtls_srtp", "ksip",
         ] {
             put(format!("module {module}.dll"));

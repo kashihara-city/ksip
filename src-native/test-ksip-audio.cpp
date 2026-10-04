@@ -1,10 +1,12 @@
 // Unit tests of the audio module's parts that need no device, no baresip
 // and no WebRTC: who gets the playout stream and when it is handed back
 // (also after a start that fails), what a source does without a microphone,
-// the callback slot that is cleared while a call runs, and the WAV recorder.
+// the alert sounds' bridge to their core, the callback slot that is cleared
+// while a call runs, and the WAV recorder.
 // Built and run by scripts/test/audio-module.ps1.
 #include "ksip_audio/recorder.h"
 #include "ksip_audio/session_core.h"
+#include "ksip_audio/alert_adm.h"
 #include "ksip_audio/inband_dtmf_tone.h"
 #include "ksip/ksip_text.h"
 #include "webrtc/callback_gate.h"
@@ -674,6 +676,145 @@ void the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once()
     outcome = f.core.switch_devices(nullptr, "speaker-x");
     check(outcome.speaker == Outcome::Moved && f.adm.playout_opened == "speaker-x" && !f.core.stand_in(true), "once it is there, the stream is opened on it");
 }
+// ---- the alert sounds' bridge (alert_adm.h), against a render that only keeps a diary
+// The render as alert_render.h's is to the core's bridge: opened on an
+// endpoint by its own id (the default asked for included), with the result
+// known at once; ended on its own when the stream fails under it.
+struct FakeRender {
+    // The speakers there, which of them the default is, and those whose
+    // open fails: the test's to set.
+    static inline std::vector<std::string> listed;
+    static inline std::string default_id;
+    static inline std::vector<std::string> failing;
+    static inline int opens = 0;
+    std::string id;
+    bool ended_ = false;
+    static bool usable(const char *device) {
+        const std::string asked = device;
+        return asked == "default" ? !listed.empty() : FakeAdm::has(listed, asked);
+    }
+    int open(const std::string &endpoint, void *) {
+        ++opens;
+        const std::string on = endpoint == "default" ? default_id : endpoint;
+        if (on.empty() || FakeAdm::has(failing, on)) return ENODEV;
+        id = on;
+        ended_ = false;
+        return 0;
+    }
+    void close() {
+        ended_ = false;
+        id.clear();
+    }
+    bool ended() const { return ended_; }
+};
+struct AlertFixture {
+    alert_player::RenderAdm<FakeRender> adm;
+    FakeClock clock;
+    std::vector<std::string> log;
+    playback_session::Core<Player, Source> core;
+    AlertFixture()
+        : adm({FakeRender::usable, [this](const std::string &asked) { log.push_back("not there " + asked); }}),
+          core(adm, clock,
+               {[this](const char *line) { log.emplace_back(line); },
+                [this](bool, const char *device, int result) { log.push_back(std::string("failed ") + device + " " + std::to_string(result)); },
+                [](Source *) {}, [](Source *) {}}) {
+        FakeRender::listed = {"speaker-a", "speaker-b"};
+        FakeRender::default_id = "speaker-a";
+        FakeRender::failing.clear();
+        FakeRender::opens = 0;
+    }
+    bool logged(const char *part) const {
+        for (auto &l : log) if (l.find(part) != std::string::npos) return true;
+        return false;
+    }
+    // A speaker goes, as Windows and the stream see it: no longer listed,
+    // the default elsewhere, and the stream on it ended.
+    void gone(const char *speaker, const char *default_now) {
+        auto &listed = FakeRender::listed;
+        listed.erase(std::remove(listed.begin(), listed.end(), speaker), listed.end());
+        FakeRender::default_id = default_now;
+        if (adm.render.id == speaker) adm.render.ended_ = true;
+    }
+};
+// The alert on the default asked for is on that speaker's own id, so that
+// the speaker going (another left, which the default moves to) is seen:
+// the stream that ended with it is opened again, on the default now.
+void the_alert_on_the_default_follows_the_default_speaker_going() {
+    AlertFixture f;
+    Player ring{"default"};
+    check(f.core.take_playout(&ring) == 0 && f.core.endpoint(true) == "speaker-a", "the alert on the default is on that speaker's own id");
+    f.gone("speaker-a", "speaker-b");
+    check(f.core.endpoint(true).empty(), "the stream ended: the alert is on no endpoint");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(FakeRender::opens == 2 && f.core.endpoint(true) == "speaker-b" && f.core.playing(), "the second look opens the alert on the default now");
+    check(f.core.speaker_failures().count == 0 && !f.core.stand_in(true), "no failed start, and the default stands in for nothing");
+}
+// The speaker chosen not there: the default in its place, by its own id;
+// that going too has the alert on the next default, and the speaker chosen
+// back has it again.
+void the_alert_standing_in_on_the_default_follows_it_going_too() {
+    AlertFixture f;
+    Player ring{"speaker-x"};
+    check(f.core.take_playout(&ring) == 0 && f.core.endpoint(true) == "speaker-a" && f.core.stand_in(true), "the default stands in, by its own id");
+    check(f.logged("not there speaker-x"), "which is said");
+    f.gone("speaker-a", "speaker-b");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.endpoint(true) == "speaker-b" && f.core.stand_in(true), "the next default stands in once the first is gone");
+    FakeRender::listed.push_back("speaker-x");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.endpoint(true) == "speaker-x" && !f.core.stand_in(true), "the speaker chosen, back, has the alert");
+}
+// A stream that ended under the alert while its speaker stays listed (the
+// audio service restarted, say) is opened again on the same speaker.
+void an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again() {
+    AlertFixture f;
+    Player ring{"speaker-b"};
+    f.core.take_playout(&ring);
+    f.adm.render.ended_ = true;
+    f.core.watch_tick();
+    check(FakeRender::opens == 1, "the first look leaves it alone");
+    f.core.watch_tick();
+    check(FakeRender::opens == 2 && f.core.endpoint(true) == "speaker-b" && f.logged("the speaker in use is gone"), "the second opens it again");
+}
+// A start that fails is known as it fails, counted with its result, and the
+// default tried in the speaker's place; failing there too leaves the alert
+// down, both failures counted.
+void an_alert_start_that_fails_is_counted_and_the_default_tried() {
+    AlertFixture f;
+    FakeRender::failing = {"speaker-b"};
+    Player ring{"speaker-b"};
+    check(f.core.take_playout(&ring) == 0 && f.core.endpoint(true) == "speaker-a" && f.core.stand_in(true), "the default plays in place of the speaker that would not start");
+    check(f.core.speaker_failures().count == 1 && f.core.speaker_failures().last_result == ENODEV && f.logged("failed speaker-b"), "the failed start is counted, with its result");
+    f.core.playout_gone(&ring);
+    f.core.hand_back();
+    FakeRender::failing = {"speaker-a", "speaker-b"};
+    Player again{"speaker-b"};
+    check(f.core.take_playout(&again) == ENODEV && !f.core.playing() && f.core.endpoint(true).empty(), "neither starting, nothing plays");
+    check(f.core.speaker_failures().count == 3, "both counted");
+}
+// The last speaker gone under the alert: nothing plays, no start is tried
+// again while nothing is there, and the first speaker back plays it.
+void the_alert_with_the_last_speaker_gone_plays_on_the_first_one_back() {
+    AlertFixture f;
+    FakeRender::listed = {"speaker-a"};
+    Player ring{"default"};
+    f.core.take_playout(&ring);
+    f.gone("speaker-a", "");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(!f.core.playing() && f.core.speaker_failures().count == 1 && FakeRender::opens == 2, "no speaker at all: the one try fails, nothing plays");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(FakeRender::opens == 2, "and nothing is tried while nothing is there");
+    FakeRender::listed = {"speaker-b"};
+    FakeRender::default_id = "speaker-b";
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.playing() && f.core.endpoint(true) == "speaker-b", "the speaker back plays the alert");
+}
 // ---- the callback gate
 using Callback = int (*)(void *, int);
 std::atomic<int> callback_visits{0};
@@ -1178,6 +1319,11 @@ int main() {
     the_default_asked_for_follows_the_only_device_going_and_coming();
     a_stream_webrtc_moved_by_itself_goes_back_to_its_device_too();
     the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once();
+    the_alert_on_the_default_follows_the_default_speaker_going();
+    the_alert_standing_in_on_the_default_follows_it_going_too();
+    an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again();
+    an_alert_start_that_fails_is_counted_and_the_default_tried();
+    the_alert_with_the_last_speaker_gone_plays_on_the_first_one_back();
     clearing_a_callback_waits_for_the_call_in_flight();
     clearing_from_inside_the_callback_does_not_wait_on_itself();
     a_late_set_after_the_clear_is_seen_by_the_next_call();
