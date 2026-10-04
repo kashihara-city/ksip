@@ -1412,25 +1412,39 @@ async fn poll(s: &Shared) -> Result<(), String> {
 }
 /// A fresh look at the engine for an operation that goes by the call's
 /// endpoints: taken in, with what it asked for carried out; or not to be
-/// had, which the operation decides on.
+/// had, which the operation decides on. Without an engine to ask, fresh
+/// only while no call is left over from one (the control connection lost
+/// before the engine's end was seen keeps the calls and their endpoints,
+/// which say nothing about now). Calls the report had answered
+/// automatically open their media, so the report taken in is the one after
+/// those answers; answers that keep coming leave nothing to go by.
 async fn refresh_for(s: &Shared, what: &str) -> bool {
-    match refresh_state(s).await {
-        Ok(answer) => {
-            let _ = auto_answer(s, answer).await;
-            true
-        }
-        Err(e) => {
-            s.borrow().services.log(LOG_APP, format!("ksip: the call's devices could not be read {what} ({e})"));
-            false
+    if s.borrow().link.is_none() {
+        return s.borrow().view.calls.is_empty();
+    }
+    for _ in 0..2 {
+        match refresh_state(s).await {
+            Ok(answer) if answer.is_empty() => return true,
+            Ok(answer) => {
+                let _ = auto_answer(s, answer).await;
+            }
+            Err(e) => {
+                s.borrow().services.log(LOG_APP, format!("ksip: the call's devices could not be read {what} ({e})"));
+                return false;
+            }
         }
     }
+    s.borrow().services.log(LOG_APP, format!("ksip: the call's devices kept changing {what}"));
+    false
 }
-/// Whether a volume or mute change may be made: always without a call (the
-/// device chosen, Windows' own); with a call, only when the engine could be
-/// asked which endpoint the call is on now, since the last report's may be
-/// one the call has left.
-fn volume_change_allowed(fresh: bool, call: Option<&CallEndpoint>) -> Result<(), String> {
-    if call.is_some() && !fresh {
+/// Whether a volume or mute change may be made: always while no call is up
+/// (the device chosen, Windows' own); with one up (any call in the last
+/// report, or a stream on an endpoint: a call whose microphone is on
+/// silence has no endpoint and is a call still), only when the engine could
+/// just be asked which endpoint the call is on, since the last report's may
+/// be one the call has left, or none where it has one now.
+fn volume_change_allowed(fresh: bool, call_up: bool) -> Result<(), String> {
+    if call_up && !fresh {
         return Err(message("AUDIO_VOLUME_STATE_UNKNOWN"));
     }
     Ok(())
@@ -1842,8 +1856,13 @@ async fn set_volume(s: &Shared, kind: &str, level: Option<u16>, mute: Option<boo
     // default or back), and the periodic look may not have caught up. A
     // call whose endpoint cannot be confirmed now has no change made.
     let fresh = refresh_for(s, "before the volume change").await;
-    let (choice, call) = s.borrow().view.audio_choice(kind);
-    volume_change_allowed(fresh, call.as_ref())?;
+    let (choice, call, call_up) = {
+        let p = s.borrow();
+        let (choice, call) = p.view.audio_choice(kind);
+        let call_up = !p.view.calls.is_empty() || call.is_some();
+        (choice, call, call_up)
+    };
+    volume_change_allowed(fresh, call_up)?;
     let target = crate::audio::target(kind, &choice, call.as_ref(), true)?;
     let (level, mute) = crate::audio::volume_change_for(&target, expected, level, mute);
     let mut result = crate::audio::volume(kind, &target.id, level.map(|value| value.min(100) as u8), mute)?;
@@ -2382,13 +2401,21 @@ mod tests {
     // device chosen is Windows' own, engine or no engine.
     #[test]
     fn a_volume_change_during_a_call_needs_a_fresh_look_at_the_engine() {
-        let on_mic = CallEndpoint { id: "{mic}".into(), stand_in: false };
-        assert_eq!(volume_change_allowed(false, Some(&on_mic)), Err(message("AUDIO_VOLUME_STATE_UNKNOWN")), "the state could not be read: not changed");
-        assert!(volume_change_allowed(true, Some(&on_mic)).is_ok(), "read: changed on the endpoint it says");
-        assert!(volume_change_allowed(false, None).is_ok(), "no call: the device chosen, whatever the engine");
-        // Without an engine there is nothing to ask and nothing stale.
+        assert_eq!(volume_change_allowed(false, true), Err(message("AUDIO_VOLUME_STATE_UNKNOWN")), "the state could not be read: not changed");
+        assert!(volume_change_allowed(true, true).is_ok(), "read: changed on the endpoint it says");
+        assert!(volume_change_allowed(false, false).is_ok(), "no call: the device chosen, whatever the engine");
+        // Without an engine there is nothing to ask and nothing stale, as
+        // long as no call is left over from one: the control connection
+        // lost before the engine's end was seen keeps the calls, and those
+        // say nothing about now.
         let a = actor();
         assert_eq!(run_now(refresh_state(&a.shared)), Ok(Vec::new()));
+        assert!(run_now(refresh_for(&a.shared, "in the test")), "no engine, no call: fresh");
+        let call: crate::phone_state::CallInfo = serde_json::from_value(json!({"id": "1", "peer": "sip:1002@pbx.example", "state": "ESTABLISHED", "held": false, "duration": 3})).unwrap();
+        a.shared.borrow_mut().view.calls.push(call);
+        assert!(!run_now(refresh_for(&a.shared, "in the test")), "no engine, a call left over: not fresh");
+        let p = a.shared.borrow();
+        assert!(!p.view.calls.is_empty() && p.view.microphone_call.is_none(), "a call with no endpoint of its own is a call still");
     }
     /// A state report as the engine writes it, with the audio module's state.
     fn report_with(audio: Value, trust: Option<u64>) -> EngineReport {
