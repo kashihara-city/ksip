@@ -1,4 +1,4 @@
-﻿# The WebRTC CoreAudio Start() of the tree as patched, run on the audio thread that holds its own handle as an internal restart does, with IAudioClient::Start failing: it must return, not wait for its own end (the start-failure change in scripts/build/patch-webrtc.py); needs MSVC and the WebRTC source native.ps1 fetches and patches.
+﻿# The WebRTC CoreAudio Start() of the tree as patched, run on the audio thread that holds its own handle as an internal restart does, with IAudioClient::Start failing: it must return, not wait for its own end (the start-failure change in scripts/build/patch-webrtc.py); and after a start that failed, the bridge's next start must release the initialization the failure left behind and open the device (ksip_audio_bridge.cc); needs MSVC and the WebRTC source native.ps1 fetches and patches.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../dev-env.ps1"
 Set-Location (Split-Path (Split-Path $PSScriptRoot))
@@ -114,3 +114,103 @@ foreach ($case in @('self-handle', 'no-handle')) {
     if (!(Select-String -Path $out -Pattern 'returned=0' -Quiet)) { throw "Start() did not report its failure ($case): $(Get-Content $out)" }
 }
 Write-Host 'PASS: a Start() that fails during an internal restart returns to the audio thread, with and without its own handle held'
+
+# After a start that failed, the stream is initialized but not recording,
+# and SetDevice refuses an initialized stream: the bridge's start and stop
+# of the tree as it is, with the pinned CoreAudio transitions, must release
+# that before the next device is set. The bridge's functions are extracted
+# as they are; what they need of WebRTC and of the bridge's state is faked.
+$input = 'temp/w/src/modules/audio_device/win/core_audio_input_win.cc'
+$bridge = 'src-native/webrtc/ksip_audio_bridge.cc'
+$inputSource = (Get-Content -Raw $input) -replace "`r`n", "`n"
+$bridgeSource = (Get-Content -Raw $bridge) -replace "`r`n", "`n"
+$setDevice = Extract $source 'int CoreAudioBase::SetDevice(int index)'
+$startRecording = Extract $inputSource 'int CoreAudioInput::StartRecording()'
+$stopRecording = Extract $inputSource 'int CoreAudioInput::StopRecording()'
+$bridgeStart = Extract $bridgeSource 'extern "C" int ksip_audio_start_recording('
+$bridgeStop = Extract $bridgeSource 'extern "C" void ksip_audio_stop_recording('
+$recoverPrefix = @'
+#include <cstdio>
+#include <string>
+#include <mutex>
+struct Log { template <class T> Log &operator<<(const T &) { return *this; } };
+#define RTC_DLOG(x) Log{}
+#define RTC_LOG(x) Log{}
+#define RTC_DCHECK(x) ((void)0)
+#define RTC_DCHECK_RUN_ON(x) ((void)0)
+#define LS_INFO 0
+#define LS_WARNING 0
+#define LS_ERROR 0
+struct Buffer { void ResetRecord() {} void StartRecording() {} void StopRecording() {} void reset() {} };
+struct CoreAudioBase {
+    bool initialized_ = true;
+    int device_index_ = 0;
+    std::string device_id_ = "microphone-a";
+    int direction() { return 0; }
+    const char *DirectionToString(int) { return "input"; }
+    int IndexToString(int i) { return i; }
+    std::string GetDeviceID(int) { return "microphone-b"; }
+    int SetDevice(int index);
+};
+struct CoreAudioInput : CoreAudioBase {
+    bool is_active_ = false, failed = true, restarting = true;
+    Buffer buffer, qpc_to_100ns_;
+    Buffer *fine_audio_buffer_ = &buffer, *audio_device_buffer_ = &buffer;
+    bool IsRestarting() { return restarting; }
+    bool Recording() { return is_active_; }
+    bool RecordingIsInitialized() const { return initialized_; }
+    bool Start() { return !failed; }
+    bool Stop() { return true; }
+    void ReleaseCOMObjects() {}
+    int StartRecording();
+    int StopRecording();
+};
+struct Adm {
+    CoreAudioInput core;
+    bool Recording() { return core.Recording(); }
+    bool RecordingIsInitialized() { return core.RecordingIsInitialized(); }
+    bool Playing() { return true; }
+    int InitRecording() { core.initialized_ = true; return 0; }
+    int StartRecording() { return core.StartRecording(); }
+    int StopRecording() { return core.StopRecording(); }
+};
+using ksip_audio_capture_cb = void (*)(void *, const short *, size_t, long long);
+struct Gate { void Set(ksip_audio_capture_cb, void *) {} void ClearAndDrain() {} };
+struct ksip_audio {
+    Adm instance;
+    Adm *adm = &instance;
+    std::mutex device_mutex;
+    std::string recording_request = "default";
+    Gate capture_gate;
+    bool Serves(const std::string &, bool) { return true; }
+    int ResetDiagnostics() { return 0; }
+    int SetDevice(const char *, bool) { return adm->core.SetDevice(1); }
+};
+void ClearOpened(bool) {}
+void cb(void *, const short *, size_t, long long) {}
+extern "C" void ksip_audio_stop_recording(ksip_audio *);
+'@
+$recoverMain = @'
+int main() {
+    ksip_audio a;
+    // The start that fails (the driver refuses), as an internal restart's does: initialized, not recording.
+    const int first = a.adm->core.StartRecording();
+    a.adm->core.failed = false;
+    a.adm->core.restarting = false;
+    // The driver healthy again: the bridge's next start must open the device.
+    const int retry = ksip_audio_start_recording(&a, "microphone-b", cb, nullptr);
+    const bool recording = a.adm->Recording();
+    ksip_audio_stop_recording(&a);
+    const int again = ksip_audio_start_recording(&a, "microphone-b", cb, nullptr);
+    std::printf("start failed=%d initialized=%d; the bridge's next start=%d recording=%d; after a stop, again=%d\n",
+                first, a.adm->core.initialized_, retry, recording, again);
+    return (first == -1 && retry == 0 && recording && again == 0) ? 0 : 1;
+}
+'@
+$code = $recoverPrefix + "`n" + $setDevice + "`n" + $startRecording + "`n" + $stopRecording + "`n" + $bridgeStart + "`n" + $bridgeStop + "`n" + $recoverMain
+[System.IO.File]::WriteAllText("$PWD/temp/build/test-webrtc-recover.cpp", $code, (New-Object System.Text.UTF8Encoding $false))
+cl /nologo /std:c++20 /EHsc /O2 /MT /DNOMINMAX /utf-8 temp/build/test-webrtc-recover.cpp /Fetemp/build/test-webrtc-recover.exe /Fotemp/build/ /link /SUBSYSTEM:CONSOLE
+if ($LASTEXITCODE -ne 0) { throw 'test-webrtc-recover did not build' }
+& temp/build/test-webrtc-recover.exe | Tee-Object -FilePath temp/reports/webrtc-recover.txt
+if ($LASTEXITCODE -ne 0) { throw 'after a start that failed, the bridge did not open the device again' }
+Write-Host 'PASS: after a start that failed, the bridge releases the initialization left behind and opens the device'

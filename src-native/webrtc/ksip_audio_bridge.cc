@@ -167,6 +167,9 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
       return 0;
     }
     ksip_audio_stop_playout(audio);
+  } else if (audio->adm->PlayoutIsInitialized()) {
+    // Left by a start that failed: released, or the device cannot be set.
+    ksip_audio_stop_playout(audio);
   }
   if (!audio->adm->Recording() && audio->ResetDiagnostics()) return -4;
   if (audio->SetDevice(id, true)) return -5;
@@ -184,9 +187,11 @@ extern "C" int ksip_audio_start_playout(ksip_audio *audio, const char *id,
 }
 extern "C" void ksip_audio_stop_playout(ksip_audio *audio) {
   if (!audio) return;
-  // The endpoint noted as open goes with the stream stopped here; one not
-  // playing (WebRTC's own restart in between, say) keeps its note.
-  if (audio->adm->Playing()) {
+  // The endpoint noted as open goes with the stream stopped here. A stream
+  // initialized but not playing (its start failed, or WebRTC's own restart
+  // of it did, which leaves the initialization behind and refuses the next
+  // device until it is released) is stopped the same.
+  if (audio->adm->Playing() || audio->adm->PlayoutIsInitialized()) {
     audio->adm->StopPlayout();
     ClearOpened(false);
   }
@@ -218,6 +223,9 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
       return 0;
     }
     ksip_audio_stop_recording(audio);
+  } else if (audio->adm->RecordingIsInitialized()) {
+    // As with the playout.
+    ksip_audio_stop_recording(audio);
   }
   if (!audio->adm->Playing() && audio->ResetDiagnostics()) return -4;
   if (audio->SetDevice(id, false)) return -5;
@@ -235,7 +243,7 @@ extern "C" int ksip_audio_start_recording(ksip_audio *audio, const char *id,
 }
 extern "C" void ksip_audio_stop_recording(ksip_audio *audio) {
   if (!audio) return;
-  if (audio->adm->Recording()) {
+  if (audio->adm->Recording() || audio->adm->RecordingIsInitialized()) {
     audio->adm->StopRecording();
     ClearOpened(true);
   }

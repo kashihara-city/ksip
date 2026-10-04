@@ -337,11 +337,15 @@ private:
     using Tried = std::vector<std::string>;
     // Whether the device a side goes to when `wanted` would not start is
     // worth trying: `back` is the one the stream had (when it had one and it
-    // is another device) and then the default (when `wanted` is not it).
-    static std::vector<std::string> fallbacks(const std::string &wanted, const std::string &previous) {
+    // is another device) and then the default (when `wanted` is not it). For
+    // the default asked for, also the endpoint the stream was on (`before`,
+    // by its own id): the default moved to an endpoint that would not start
+    // keeps the call where it was, the default staying asked for.
+    static std::vector<std::string> fallbacks(const std::string &wanted, const std::string &previous, const std::string &before = "") {
         std::vector<std::string> list;
         if (!previous.empty() && previous != wanted) list.push_back(previous);
         if (wanted != "default" && previous != "default") list.push_back("default");
+        if (wanted == "default" && !before.empty() && !among(list, before)) list.push_back(before);
         return list;
     }
     static bool among(const Tried &tried, const std::string &device) { return std::find(tried.begin(), tried.end(), device) != tried.end(); }
@@ -413,12 +417,15 @@ private:
             note_opened(true, wanted, false);
             return moved ? Outcome::Moved : Outcome::Unchanged;
         }
-        for (const std::string &back : fallbacks(wanted, was_up ? previous : "")) {
+        for (const std::string &back : fallbacks(wanted, was_up ? previous : "", before)) {
             if (!start_playout_on(p, back, tried)) continue;
             if (back == previous) {
                 for (Play *q : players) q->set_device(previous.c_str());
                 hooks.log("ksip_audio: the call stays on the speaker it had\n");
                 note_opened(true, previous, false);
+            } else if (wanted == "default") {
+                hooks.log("ksip_audio: the default speaker now would not start, the call stays on the speaker it had\n");
+                note_opened(true, wanted, true);
             } else {
                 hooks.log("ksip_audio: the call's speaker is the default, in place of the one that would not start\n");
                 note_opened(true, wanted, true);
@@ -442,12 +449,15 @@ private:
             note_opened(false, wanted, false);
             return moved ? Outcome::Moved : Outcome::Unchanged;
         }
-        for (const std::string &back : fallbacks(wanted, was_up ? previous : "")) {
+        for (const std::string &back : fallbacks(wanted, was_up ? previous : "", before)) {
             if (!start_source_on(s, back, tried)) continue;
             if (back == previous) {
                 source_device = previous;
                 hooks.log("ksip_audio: the call stays on the microphone it had\n");
                 note_opened(false, previous, false);
+            } else if (wanted == "default") {
+                hooks.log("ksip_audio: the default microphone now would not start, the call stays on the microphone it had\n");
+                note_opened(false, wanted, true);
             } else {
                 hooks.log("ksip_audio: the call's microphone is the default, in place of the one that would not start\n");
                 note_opened(false, wanted, true);
@@ -461,10 +471,15 @@ private:
     // The device a side asks for: the owner's.
     std::string asked(bool playout) const { return playout ? std::string(active_playout ? active_playout->device() : "") : source_device; }
     bool up(bool playout) const { return playout ? playing() : input() == Input::Device; }
-    // The side's stream is up on an endpoint that is gone: the bridge still
-    // counts it as running, and nothing comes through it.
+    // The side's stream the owner started is not running: WebRTC's own
+    // restart of it (the device in use went) failed, and nothing comes
+    // through it, though the endpoint it opened for that is still noted.
+    bool stream_stopped(bool playout) { return up(playout) && !(playout ? adm.playout_running() : adm.recording_running()); }
+    // The side's stream is up on an endpoint that is gone (the bridge still
+    // counts it as running, and nothing comes through it), or stopped.
     bool on_gone_endpoint(bool playout) {
         if (!up(playout)) return false;
+        if (stream_stopped(playout)) return true;
         const std::string on = adm.opened(playout);
         return on.empty() || !adm.listed(on.c_str(), playout);
     }
@@ -489,6 +504,11 @@ private:
         uint64_t listed_ms = 0;     // how long it has been there since, over the looks after the first
         bool gone_seen = false;     // the stream was up on an endpoint that is gone at the last look
         uint64_t gone_ms = 0;       // how long that has been so since, over the looks after the first
+        // The default asked for: the endpoint it stood for when its start
+        // failed, the stream staying on what it had. Tried again once the
+        // default stands for another endpoint, or this one has gone and
+        // come back (as a device that would not start is); not every look.
+        std::string failed_default;
     };
     static Watch watching(bool armed) {
         Watch watch;
@@ -509,13 +529,15 @@ private:
             return;
         }
         watch = watching(!fell_back || !adm.listed(wanted.c_str(), playout));
+        if (wanted == "default" && fell_back) watch.failed_default = adm.default_endpoint(playout);
     }
     // A side whose stream is down: watched the same, armed when the device
     // is not there (it coming back is what to act on; for the default, any
-    // device at all).
+    // device at all, or the default standing for another endpoint).
     void note_down(bool playout, const std::string &wanted) {
         Watch &watch = playout ? playout_watch : source_watch;
         watch = watching(!adm.listed(wanted.c_str(), playout));
+        if (wanted == "default") watch.failed_default = adm.default_endpoint(playout);
     }
     // One look at one side, `elapsed` ms after the last; whether the side
     // waits for a device (is not on the one asked for), which has the looks
@@ -539,8 +561,12 @@ private:
             if (watch.gone_ms < kGoneSettleMs) return false;
             watch.gone_seen = false;
             watch.gone_ms = 0;
-            hooks.log(playout ? "ksip_audio: the speaker in use is gone, the call's stream is opened again\n"
-                              : "ksip_audio: the microphone in use is gone, the call's stream is opened again\n");
+            if (stream_stopped(playout))
+                hooks.log(playout ? "ksip_audio: the call's speaker stream stopped (WebRTC could not restart it), the stream is opened again\n"
+                                  : "ksip_audio: the call's microphone stream stopped (WebRTC could not restart it), the stream is opened again\n");
+            else
+                hooks.log(playout ? "ksip_audio: the speaker in use is gone, the call's stream is opened again\n"
+                                  : "ksip_audio: the microphone in use is gone, the call's stream is opened again\n");
             // On the device asked for if it is there (the bridge opens the
             // default in place of one that is not), else the default, else
             // nothing or silence; what came of it is noted for the looks to come.
@@ -550,7 +576,12 @@ private:
         }
         watch.gone_seen = false;
         watch.gone_ms = 0;
-        const bool listed = adm.listed(wanted.c_str(), playout);
+        // The device waited for: the one asked for; for the default asked
+        // for whose endpoint would not start, that endpoint (its going and
+        // coming back is what to act on); for the default otherwise, any
+        // device at all.
+        const bool default_failed = wanted == "default" && !watch.failed_default.empty();
+        const bool listed = adm.listed(default_failed ? watch.failed_default.c_str() : wanted.c_str(), playout);
         // Not on its device and not noted so: WebRTC moved the stream by
         // itself when the device went away, and it coming back is to be
         // acted on, even if it is back already.
@@ -560,6 +591,12 @@ private:
             watch.seen = false;
             watch.listed_ms = 0;
             return true;
+        }
+        // The default standing for another endpoint than the one that would
+        // not start: that one is tried, as a device back is.
+        if (default_failed && !watch.armed) {
+            const std::string now = adm.default_endpoint(playout);
+            if (!now.empty() && now != watch.failed_default) watch.armed = true;
         }
         if (!watch.armed) return true;
         if (!watch.seen) {
