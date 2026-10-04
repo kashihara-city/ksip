@@ -276,7 +276,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_PROGRAM_INTEGRATION:'接受其他程式的操作',
       SETTINGS_PROGRAM_HINT:'開啟後，其他程式可以撥號、接聽與掛斷，例如 `ksip.exe ksip:<號碼>`。瀏覽器連動只有在此項開啟時才能使用',
       SETTINGS_PBX_ONLY:'只接受註冊的 PBX 的來電',
-      SETTINGS_NO_FW_PROMPT_HINT:'開啟後，SIP 與 RTP 的連接埠交由 Windows 選擇（0），不建立監聽，只以本機送出之通訊的回應進行通話。因此只接受已註冊 PBX 的來電，並以 60 秒以內的間隔傳送保持連線封包（間隔可在 60 秒以下調整）。適用於 PBX 從接收時相同的位址與連接埠回傳的環境（SIP 回應依 RFC 3581，音訊依 RFC 4961，PBX 送出的要求依慣例）。關閉後，連接埠回到 5060 與 10000。',
+      SETTINGS_NO_FW_PROMPT_HINT:'開啟後，SIP 與 RTP 的連接埠交給 Windows 選擇（0），只接受註冊 PBX 的請求，並每 30 秒以內（設定間隔與 30 秒取較短者）送出保活。期間不使用下面四項設定，只為關閉時保留。不建立監聽，通話只靠本機送出通訊的回應。適用於 PBX 從接收的位址與連接埠回送的組態（SIP 回應為 RFC 3581、語音為 RFC 4961、PBX 的請求為慣例）。',
       SETTINGS_NO_FW_PROMPT:'不顯示 Windows 防火牆確認畫面',
       SETTINGS_PBX_ONLY_HINT:'開啟後，會拒絕來自註冊的 PBX 以外的來電與要求，註冊前不接受任何要求。若 PBX 會從多個位址傳送，請關閉此項',
       PROGRAM_INTEGRATION_OFF:'程式連動已關閉，因此未接受外部操作（{0}）',

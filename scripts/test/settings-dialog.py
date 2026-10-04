@@ -322,27 +322,31 @@ async function checks(){
   s=await save();
   check(rawDefault.join()==='true,true'&&rawLoaded.join()==='true,false'&&rawLabel==='保存して再接続'&&s&&s.settings.raw_microphone===false&&s.settings.raw_speaker===true,'the microphone and the speaker are RAW to start with, each its own switch, and a change reconnects',[rawDefault,rawLoaded,rawLabel,s&&s.settings.raw_microphone,s&&s.settings.raw_speaker]);
 
-  // No firewall prompt: on when the values say so (ports 0, the registrar
-  // only, a keepalive each minute or sooner), holding them while on; off
-  // brings back what was there before in this dialog, or ports of KSIP's own.
+  // No firewall prompt: a setting of its own. While on, the port,
+  // registrar-only and keepalive fields are held as they are and greyed;
+  // off, they are open again, nothing having been written back and forth.
   const fw=()=>({on:$('no_fw_prompt').checked,sip:$('sip_port').value,rtp:$('rtp_port').value,pbx:$('pbx_only').checked,keepalive:$('keepalive').value,
-    interval:$('keepalive_interval').value,active:$('fw-scope').classList.contains('active'),held:['sip_port','rtp_port','pbx_only','keepalive'].every(id=>$(id).disabled)});
+    interval:$('keepalive_interval').value,active:$('fw-scope').classList.contains('active'),held:['sip_port','rtp_port','pbx_only','keepalive','keepalive_interval'].every(id=>$(id).disabled)});
   const click=()=>{$('no_fw_prompt').checked=!$('no_fw_prompt').checked;$('no_fw_prompt').dispatchEvent(new Event('change',{bubbles:true}));};
-  await open({sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
-  const fwOn=fw();click();const fwOffFresh=fw();
-  s=await save();const fwSavedOff=s&&[s.settings.sip_port,s.settings.rtp_port];
-  check(fwOn.on&&fwOn.held&&fwOn.active&&!fwOffFresh.active&&!fwOffFresh.on&&!fwOffFresh.held&&fwOffFresh.sip==='5060'&&fwOffFresh.rtp==='10000'&&fwSavedOff&&fwSavedOff.join()==='5060,10000',
-    'on when the ports are 0 and the rest fits, its fields held and its box marked; turned off with nothing before, the ports are 5060 and 10000',[fwOn,fwOffFresh,fwSavedOff]);
-  await open({sip_port:5070,rtp_port:12000,pbx_only:false,keepalive:'off',keepalive_interval:120});
-  const fwOff=fw();click();const fwTurnedOn=fw();
-  s=await save();const fwSavedOn=s&&[s.settings.sip_port,s.settings.rtp_port,s.settings.pbx_only,s.settings.keepalive,s.settings.keepalive_interval];
+  await open({no_fw_prompt:true,sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
+  const fwOn=fw();click();const fwOff=fw();
+  s=await save();const fwSavedOff=s&&[s.settings.no_fw_prompt,s.settings.sip_port,s.settings.rtp_port];
+  check(fwOn.on&&fwOn.held&&fwOn.active&&!fwOff.on&&!fwOff.held&&!fwOff.active&&fwOff.sip==='0'&&fwOff.rtp==='0'&&fwSavedOff&&fwSavedOff.join()==='false,0,0',
+    'on by default with its fields held and its box marked; off, the fields open with their values as they were, and the save keeps them',[fwOn,fwOff,fwSavedOff]);
+  await open({no_fw_prompt:false,sip_port:5070,rtp_port:12000,pbx_only:false,keepalive:'off',keepalive_interval:120});
+  const fwOwn=fw();click();const fwTurnedOn=fw();
+  s=await save();const fwSavedOn=s&&[s.settings.no_fw_prompt,s.settings.sip_port,s.settings.rtp_port,s.settings.pbx_only,s.settings.keepalive,s.settings.keepalive_interval];
   click();const fwBack=fw();
-  check(!fwOff.on&&fwTurnedOn.on&&fwTurnedOn.held&&fwTurnedOn.sip==='0'&&fwTurnedOn.rtp==='0'&&fwTurnedOn.pbx&&fwTurnedOn.keepalive==='crlf'&&fwTurnedOn.interval==='60'
-    &&fwSavedOn&&fwSavedOn.join()==='0,0,true,crlf,60'&&fwBack.sip==='5070'&&fwBack.rtp==='12000'&&!fwBack.pbx&&fwBack.keepalive==='off'&&fwBack.interval==='120'&&!fwBack.on,
-    'turning it on sets ports 0, the registrar only and a keepalive within a minute, and saves them; off again in the same dialog brings the values back',[fwOff,fwTurnedOn,fwSavedOn,fwBack]);
-  await open({sip_port:0,rtp_port:0,pbx_only:true,keepalive:'off',keepalive_interval:60});
-  const fwPartial=fw();
-  check(!fwPartial.on&&!fwPartial.held&&fwPartial.sip==='0','ports of 0 without the keepalive are not the switch, and stay as they are',fwPartial);
+  check(!fwOwn.on&&!fwOwn.held&&fwTurnedOn.on&&fwTurnedOn.held&&fwTurnedOn.sip==='5070'&&fwTurnedOn.rtp==='12000'&&!fwTurnedOn.pbx&&fwTurnedOn.keepalive==='off'&&fwTurnedOn.interval==='120'
+    &&fwSavedOn&&fwSavedOn.join()==='true,5070,12000,false,off,120'&&fwBack.sip==='5070'&&fwBack.rtp==='12000'&&!fwBack.on&&!fwBack.held,
+    'turning it on holds the fields with their own values, which the save keeps beside the switch; off again, they are open with the same values',[fwOwn,fwTurnedOn,fwSavedOn,fwBack]);
+  // A file read in: one that says nothing of it leaves it; one that says so switches it; one that sets a port shows the port, held.
+  await open({no_fw_prompt:true,sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
+  await importFile({settings:{language:'en'}});const fwAfterUnrelated=fw();
+  await importFile({settings:{no_fw_prompt:false}});const fwAfterOff=fw();
+  await importFile({settings:{no_fw_prompt:true,sip_port:5080}});const fwAfterPort=fw();
+  check(fwAfterUnrelated.on&&fwAfterUnrelated.held&&!fwAfterOff.on&&!fwAfterOff.held&&fwAfterPort.on&&fwAfterPort.held&&fwAfterPort.sip==='5080',
+    'a file that says nothing of the switch leaves it; one that says so switches it; a port in a file shows, held, while the switch is on',[fwAfterUnrelated,fwAfterOff,fwAfterPort]);
   $('configuration').close();
   $('configuration').close();
 
@@ -512,10 +516,15 @@ async function checks(){
   $('configuration').close();
   managed.add('auto_record');render();
   check($('record').disabled&&$('record').title==='管理者が設定','a fixed automatic recording is not switched on the phone, and says why',$('record').title);
-  // A policy fixing any of its values fixes the switch as it shows.
+  // A policy fixing the switch fixes it as it shows; one fixing a value
+  // the switch overrides (the keepalive interval) does not.
   managed.add('keepalive_interval');
-  await open({sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
-  check($('no_fw_prompt').checked&&$('no_fw_prompt').disabled&&$('no_fw_prompt').closest('label').dataset.managed==='管理者が設定','a fixed keepalive interval fixes the switch, and says why',[$('no_fw_prompt').checked,$('no_fw_prompt').disabled]);
+  await open({no_fw_prompt:true,sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
+  const fwFreeSwitch=[$('no_fw_prompt').checked,$('no_fw_prompt').disabled];
+  $('configuration').close();
+  managed.clear();managed.add('no_fw_prompt');
+  await open({no_fw_prompt:true,sip_port:0,rtp_port:0,pbx_only:true,keepalive:'crlf',keepalive_interval:60});
+  check(fwFreeSwitch.join()==='true,false'&&$('no_fw_prompt').checked&&$('no_fw_prompt').disabled&&$('no_fw_prompt').closest('label').dataset.managed==='管理者が設定','a fixed keepalive interval leaves the switch free; a fixed switch is fixed, and says why',[fwFreeSwitch,$('no_fw_prompt').checked,$('no_fw_prompt').disabled]);
   $('configuration').close();
   managed.clear();render();
   // Windows' privacy settings refusing the microphone: the meter's reading

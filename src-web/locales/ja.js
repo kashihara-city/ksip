@@ -276,7 +276,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_PROGRAM_INTEGRATION:'他のプログラムからの操作を受け付ける',
       SETTINGS_PROGRAM_HINT:'ONにすると、`ksip.exe ksip:<番号>` のように他のプログラムから発信・応答・切断ができます。ブラウザ連携はこれがONのときだけ使えます',
       SETTINGS_PBX_ONLY:'登録先のPBX以外からの着信を受け付けない',
-      SETTINGS_NO_FW_PROMPT_HINT:'ON にすると、SIP と RTP のポートを Windows に任せ（0）、待ち受けを作らずに、こちらから送った通信の戻りだけで通話します。そのため、登録先の PBX 以外からの着信は受け付けず、キープアライブを 60 秒以内の間隔で送ります（間隔は 60 秒以下で変えられます）。PBX が、受け取るのと同じアドレスとポートから送り返す構成で使えます（SIP の応答は RFC 3581、音声は RFC 4961、PBX からの要求は慣習）。OFF にすると、ポートは 5060 と 10000 に戻ります。',
+      SETTINGS_NO_FW_PROMPT_HINT:'ON のあいだは、SIP と RTP のポートを Windows に任せ（0）、登録先の PBX からの要求だけを受け、キープアライブを 30 秒以内（設定の間隔と 30 秒の短いほう）で送ります。下の 4 つの設定はその間使われず、OFF にしたときのために保存だけされます。待ち受けを作らず、こちらから送った通信の戻りだけで通話します。PBX が、受け取るのと同じアドレスとポートから送り返す構成で使えます（SIP の応答は RFC 3581、音声は RFC 4961、PBX からの要求は慣習）。',
       SETTINGS_NO_FW_PROMPT:'Windows ファイアウォールの確認画面を出さない',
       SETTINGS_PBX_ONLY_HINT:'ONにすると、登録先のPBX以外から届いた着信や要求を断り、登録前は何も受け付けません。PBXが複数のアドレスから送ってくる構成ではOFFにしてください',
       PROGRAM_INTEGRATION_OFF:'プログラム連携がOFFのため、外からの操作を受け付けませんでした（{0}）',

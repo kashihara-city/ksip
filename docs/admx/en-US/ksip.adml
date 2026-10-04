@@ -87,6 +87,8 @@ A setting a policy decides cannot be changed in the KSIP settings dialog or the 
 The value is written to the value of the same name under HKCU\Software\Policies\KashiharaCity\ksip. KSIP reads it when it starts, so a change takes effect when KSIP starts again.</string>
       <string id="pbx_only">Take calls from the registrar PBX only</string>
       <string id="pbx_only_Help">Whether calls and requests from anywhere but the PBX this phone registers with are refused. When enabled, nothing is taken before registering, and over TCP and TLS nothing is listened for (calls come over the registration's connection). Disable it where the PBX sends from more than one address. (default: refused)
+      <string id="no_fw_prompt">No Windows Firewall prompt</string>
+      <string id="no_fw_prompt_Help">Whether the phone runs so that the Windows Firewall has nothing to ask about: SIP and RTP ports the system picks (0), requests from the registrar PBX only, and a keepalive every 30 seconds or sooner. While enabled, the SIP port, RTP port, registrar-only and keepalive policies and settings are not used (they apply when this is disabled). Nothing listens; calls come as replies to what the phone sent, so the PBX must send back from the address and port it receives on. (default: enabled)</string>
 
 A setting a policy decides cannot be changed in the KSIP settings dialog or the button editing, and is shown as set by the administrator. Not configured returns to what the user saved.
 

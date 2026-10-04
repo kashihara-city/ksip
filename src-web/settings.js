@@ -107,9 +107,6 @@ function lockManaged(){
     else if(label)label.dataset.managed=said;
   }
   if(managed.has('codecs'))$('codec-list').dataset.managed=said;
-  if(['sip_port','rtp_port','pbx_only','keepalive','keepalive_interval'].some(name=>managed.has(name))){
-    const box=$('no_fw_prompt');box.dataset.managed='1';box.disabled=true;box.title=said;box.closest('label').dataset.managed=said;
-  }
   $('settings-managed-note').hidden=!managed.size;
 }
 // Turns a field on or off for what the dialog holds; one a policy fixes stays off.
@@ -153,7 +150,7 @@ export function openSettings(){
   setChoice($('incoming_action'),state.settings.incoming_action||'show');setChoice($('dtmf_mode'),state.settings.dtmf_mode||'rtp');setChoice($('keepalive'),state.settings.keepalive||'crlf');$('keepalive_interval').value=state.settings.keepalive_interval??60;$('tray_after_call').value=state.settings.tray_after_call??-1;
   setChoice($('language'),state.settings.language||'');$('program_integration').checked=!!state.settings.program_integration;$('browser_integration').checked=!!state.settings.browser_integration;$('browser_dial_confirm').checked=state.settings.browser_dial_confirm!==false;
   // The app reads these two whatever their case and spaces; the list has them in lower case.
-  $('pbx_only').checked=state.settings.pbx_only!==false;syncIntegration();syncKeepalive();showNoPrompt();
+  $('pbx_only').checked=state.settings.pbx_only!==false;$('no_fw_prompt').checked=state.settings.no_fw_prompt!==false;syncIntegration();syncKeepalive();syncNoPrompt();
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
   $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;$('raw_microphone').checked=state.settings.raw_microphone!==false;$('raw_speaker').checked=state.settings.raw_speaker!==false;
@@ -185,38 +182,18 @@ function syncIntegration(){
 }
 // The interval is only for a keepalive that is sent; it keeps its value.
 function syncKeepalive(){able($('keepalive_interval'),$('keepalive').value!=='off');}
-// "No Windows Firewall prompt" is no setting of its own but the values it
-// stands for: ports the system picks (0), which the firewall does not ask
-// about; requests from the registrar only, which also opens no TCP or TLS
-// listener; and a keepalive every minute or sooner, which keeps the way in
-// for incoming calls open (a UDP reply got in after 90 s, not after 120 s).
-// It is on when the values say so, and turning it on sets them and holds
-// them. Turned off, the values before it was turned on come back, or, with
-// none in this dialog, ports of KSIP's own (5060, 10000).
-const FW_INTERVAL=60;
-let beforeNoPrompt=null;
-const noPrompt=()=>Number($('sip_port').value)===0&&Number($('rtp_port').value)===0&&$('pbx_only').checked&&$('keepalive').value==='crlf'&&Number($('keepalive_interval').value)<=FW_INTERVAL;
+// "No Windows Firewall prompt" is a setting of its own (no_fw_prompt). While
+// it is on the engine runs on ports the system picks (0), which the
+// firewall does not ask about, takes requests from the registrar only, which
+// also opens no TCP or TLS listener, and sends a keepalive every thirty
+// seconds or sooner, which keeps the way in for incoming calls open; the
+// port, registrar-only and keepalive settings keep their values, unused and
+// shown greyed, for when it is off. Nothing is written back and forth.
 function syncNoPrompt(){
   const on=$('no_fw_prompt').checked;
   $('fw-scope').classList.toggle('active',on);
-  for(const id of ['sip_port','rtp_port','pbx_only','keepalive'])able($(id),!on);
-  $('keepalive_interval').max=on?FW_INTERVAL:600;
-  syncKeepalive();
-}
-function showNoPrompt(){$('no_fw_prompt').checked=noPrompt();beforeNoPrompt=null;syncNoPrompt();}
-function setNoPrompt(on){
-  if(on){
-    beforeNoPrompt={sip_port:$('sip_port').value,rtp_port:$('rtp_port').value,pbx_only:$('pbx_only').checked,keepalive:$('keepalive').value,keepalive_interval:$('keepalive_interval').value};
-    $('sip_port').value=0;$('rtp_port').value=0;$('pbx_only').checked=true;setChoice($('keepalive'),'crlf');
-    $('keepalive_interval').value=Math.min(Number($('keepalive_interval').value)||FW_INTERVAL,FW_INTERVAL);
-  }else{
-    const before=beforeNoPrompt;
-    $('sip_port').value=before&&Number(before.sip_port)?before.sip_port:5060;
-    $('rtp_port').value=before&&Number(before.rtp_port)?before.rtp_port:10000;
-    if(before){$('pbx_only').checked=before.pbx_only;setChoice($('keepalive'),before.keepalive);$('keepalive_interval').value=before.keepalive_interval;}
-    beforeNoPrompt=null;
-  }
-  syncNoPrompt();updateSaveLabel();
+  for(const id of ['sip_port','rtp_port','pbx_only','keepalive','keepalive_interval'])able($(id),!on);
+  if(!on)syncKeepalive();
 }
 // The transfer target only means something for a park button.
 // Only the fields a kind uses are open; the rest are greyed out, so that
@@ -237,7 +214,7 @@ async function calibrateAec(careful){
 // A settings file's values (as import_settings_file hands them over) go
 // into the dialog as they are; what the file leaves out stays as the dialog
 // has it. Nothing is saved until the dialog is.
-const SWITCHES=['auto_answer','aec','high_pass','agc','raw_microphone','raw_speaker','detail_log','pbx_only','program_integration','browser_integration','browser_dial_confirm'];
+const SWITCHES=['auto_answer','aec','high_pass','agc','raw_microphone','raw_speaker','detail_log','pbx_only','no_fw_prompt','program_integration','browser_integration','browser_dial_confirm'];
 const CARRIED=['microphone_gain','speaker_gain','auto_record'];
 const CHOICES=['transport','media_encryption','noise_suppression','incoming_action','language','dtmf_mode','keepalive'];
 const BUTTON_FIELDS=['title','kind','number','transfer','pickup'];
@@ -267,7 +244,7 @@ function restore(before){
   $('codec-list').replaceChildren(...before.codecs);
   for(const {el,value,checked} of before.fields){el.value=value;el.checked=checked;}
   carried=before.carried;
-  syncEncryptionChoices();syncIntegration();syncKeepalive();showNoPrompt();for(const n of BUTTON_INDEXES)syncButtonRow(n);
+  syncEncryptionChoices();syncIntegration();syncKeepalive();syncNoPrompt();for(const n of BUTTON_INDEXES)syncButtonRow(n);
 }
 // Every value the file gives is shown as it is, or none is taken: a file
 // that would change the dialog in a way it does not say (a choice the list
@@ -287,7 +264,7 @@ function applyImport(file){
   ];
   const before=snapshot();
   for(const [key,value] of given)showSetting(key,value);
-  syncEncryptionChoices();syncIntegration();syncKeepalive();showNoPrompt();for(const b of buttons)syncButtonRow(b.n);
+  syncEncryptionChoices();syncIntegration();syncKeepalive();syncNoPrompt();for(const b of buttons)syncButtonRow(b.n);
   const notShown=given.filter(([key,value])=>!shows(key,value)).map(([key])=>key);
   if(notShown.length){restore(before);throw fill('SETTINGS_IMPORT_NOT_SHOWN',notShown.join(', '));}
   const passedOver=[...(file.unreadable||[]),...(file.invalid||[])],fixed=file.managed||[];
@@ -322,7 +299,7 @@ function heldSettings(){
     register_interval:Number($('register_interval').value),keepalive:$('keepalive').value,keepalive_interval:Number($('keepalive_interval').value),detail_log:$('detail_log').checked,
     shortcut_window:$('shortcut_window').value.trim(),shortcut_call:$('shortcut_call').value.trim(),
     incoming_action:$('incoming_action').value,tray_after_call:Number($('tray_after_call').value),language:$('language').value,
-    pbx_only:$('pbx_only').checked,program_integration:$('program_integration').checked,
+    pbx_only:$('pbx_only').checked,no_fw_prompt:$('no_fw_prompt').checked,program_integration:$('program_integration').checked,
     browser_integration:$('browser_integration').checked,browser_dial_confirm:$('browser_dial_confirm').checked,
     transport:$('transport').value,media_encryption:$('media_encryption').value,dtmf_mode:$('dtmf_mode').value,
     // Every codec in the usual order is what an empty setting means: the
@@ -367,7 +344,7 @@ export function init(){
   $('media_encryption').addEventListener('change',syncEncryptionChoices);
   $('program_integration').addEventListener('change',syncIntegration);
   $('keepalive').addEventListener('change',syncKeepalive);
-  $('no_fw_prompt').addEventListener('change',()=>setNoPrompt($('no_fw_prompt').checked));
+  $('no_fw_prompt').addEventListener('change',()=>{syncNoPrompt();updateSaveLabel();});
   for(const n of BUTTON_INDEXES)$('button_'+n+'_kind').addEventListener('change',()=>syncButtonRow(n));
   $('choose-ca').addEventListener('click',async()=>{
     try{const chosen=await invoke('choose_sound_file',{kind:'certificate'});if(chosen){$('ca_file').value=chosen;updateSaveLabel();}}

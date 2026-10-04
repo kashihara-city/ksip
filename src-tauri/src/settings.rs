@@ -53,6 +53,14 @@ pub struct Settings {
     /// phone registers with, and none before it has registered; baresip's
     /// own `filter_registrar`. Requests within a dialog are not affected.
     pub pbx_only: bool,
+    /// No Windows Firewall prompt. While on, the engine runs on ports the
+    /// system picks (0), takes requests from the registrar only and sends a
+    /// keepalive every FW_KEEPALIVE_MAX seconds or sooner, whatever
+    /// `sip_port`, `rtp_port`, `pbx_only`, `keepalive` and
+    /// `keepalive_interval` say (`connection`); those keep their values for
+    /// when it is off. On by default; a policy can fix it. A store from
+    /// before it was a setting of its own gets it from what its values said.
+    pub no_fw_prompt: bool,
     pub detail_log: bool,
     /// Let other programs operate the phone (`ksip.exe ksip:<number>`,
     /// ANSWER, HANGUP). The browser is one of them: see `browser_links`.
@@ -171,6 +179,16 @@ impl CustomButton {
         }
     }
 }
+/// What the engine listens on, whom it takes requests from and how it keeps
+/// the way in open; see Settings::connection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Connection {
+    pub sip_port: u16,
+    pub rtp_port: u16,
+    pub pbx_only: bool,
+    pub keepalive: String,
+    pub keepalive_interval: u16,
+}
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -202,6 +220,7 @@ impl Default for Settings {
             keepalive: "crlf".into(),
             keepalive_interval: 60,
             pbx_only: true,
+            no_fw_prompt: true,
             detail_log: false,
             program_integration: false,
             browser_integration: false,
@@ -354,6 +373,7 @@ impl Settings {
             ("keepalive", text(&self.keepalive)),
             ("keepalive_interval", Number(self.keepalive_interval.into())),
             ("pbx_only", flag(self.pbx_only)),
+            ("no_fw_prompt", flag(self.no_fw_prompt)),
             ("detail_log", flag(self.detail_log)),
             ("program_integration", flag(self.program_integration)),
             ("browser_integration", flag(self.browser_integration)),
@@ -430,6 +450,15 @@ impl Settings {
         s.keepalive = s.keepalive.to_ascii_lowercase();
         r.number("keepalive_interval", &mut s.keepalive_interval);
         r.flag("pbx_only", &mut s.pbx_only);
+        // A store from before the switch was a setting of its own (no value,
+        // as against one that cannot be read): on when its values were what
+        // the switch stood for then (ports 0, the registrar only, a
+        // keepalive within a minute), off otherwise.
+        if r.value("no_fw_prompt").is_some() {
+            r.flag("no_fw_prompt", &mut s.no_fw_prompt);
+        } else if !r.unreadable.iter().any(|name| name == "no_fw_prompt") {
+            s.no_fw_prompt = s.sip_port == 0 && s.rtp_port == 0 && s.pbx_only && s.keepalive == "crlf" && s.keepalive_interval <= 60;
+        }
         r.flag("detail_log", &mut s.detail_log);
         r.flag("program_integration", &mut s.program_integration);
         r.flag("browser_integration", &mut s.browser_integration);
@@ -473,10 +502,11 @@ impl Settings {
     /// take effect at once: the window's own, and the engine's it is told of
     /// while running (the watched numbers, the gains, the sounds, the detail
     /// log). The window gets the list, to say which save reconnects.
-    pub const RESTART: [&'static str; 20] = [
+    pub const RESTART: [&'static str; 21] = [
         "network_adapter",
         "sip_port",
         "rtp_port",
+        "no_fw_prompt",
         "microphone",
         "speaker",
         "transport",
@@ -538,6 +568,31 @@ impl Settings {
     pub const DTMF_MODES: [&'static str; 3] = ["rtp", "info", "inband"];
     /// What can be sent as a keepalive.
     pub const KEEPALIVES: [&'static str; 2] = ["off", "crlf"];
+    /// The longest a keepalive waits while the firewall switch is on: well
+    /// within the minute after which the Windows Firewall forgets a UDP way in.
+    pub const FW_KEEPALIVE_MAX: u16 = 30;
+    /// The connection values the engine is given: the stored ones, or, with
+    /// the firewall switch on, ports the system picks, the registrar only and
+    /// a keepalive within FW_KEEPALIVE_MAX seconds.
+    pub fn connection(&self) -> Connection {
+        if self.no_fw_prompt {
+            Connection {
+                sip_port: 0,
+                rtp_port: 0,
+                pbx_only: true,
+                keepalive: "crlf".into(),
+                keepalive_interval: self.keepalive_interval.min(Self::FW_KEEPALIVE_MAX),
+            }
+        } else {
+            Connection {
+                sip_port: self.sip_port,
+                rtp_port: self.rtp_port,
+                pbx_only: self.pbx_only,
+                keepalive: self.keepalive.clone(),
+                keepalive_interval: self.keepalive_interval,
+            }
+        }
+    }
     /// The codecs to offer, in order: the setting's names, each once, or all
     /// of them when it names none. A PBX that answers one codec and sends
     /// another garbles what the far end hears; the order is how a site steers
@@ -1452,6 +1507,36 @@ mod tests {
         }
     }
     #[test]
+    fn the_firewall_switch_stands_for_the_connection_values_and_is_read_off_an_old_store() {
+        use crate::storage::StoredValue;
+        let mut s = Settings { sip_port: 5070, rtp_port: 12000, pbx_only: false, keepalive: "off".into(), keepalive_interval: 120, ..Settings::default() };
+        s.no_fw_prompt = true;
+        let on = s.connection();
+        assert_eq!(
+            (on.sip_port, on.rtp_port, on.pbx_only, on.keepalive.as_str(), on.keepalive_interval),
+            (0, 0, true, "crlf", 30),
+            "on: the system's ports, the registrar only, a keepalive within thirty seconds, whatever is stored"
+        );
+        s.keepalive_interval = 20;
+        assert_eq!(s.connection().keepalive_interval, 20, "a shorter interval stays shorter");
+        s.no_fw_prompt = false;
+        s.keepalive_interval = 120;
+        let off = s.connection();
+        assert_eq!((off.sip_port, off.rtp_port, off.pbx_only, off.keepalive.as_str(), off.keepalive_interval), (5070, 12000, false, "off", 120), "off: as stored");
+        // A store from before the switch was a setting: what its values said.
+        let read = |values: &[(&str, StoredValue)]| {
+            let values: Vec<(String, StoredValue)> = values.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+            Settings::read_stored(move |key| Ok(values.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))).0
+        };
+        assert!(read(&[]).no_fw_prompt, "nothing stored: on, as the defaults are");
+        assert!(!read(&[("sip_port", StoredValue::Number(5060))]).no_fw_prompt, "ports of its own stored before the switch existed: off");
+        assert!(!read(&[("keepalive", StoredValue::Text("off".into()))]).no_fw_prompt, "no keepalive stored before the switch existed: off");
+        assert!(read(&[("keepalive_interval", StoredValue::Number(60))]).no_fw_prompt, "a keepalive within a minute: on");
+        assert!(!read(&[("keepalive_interval", StoredValue::Number(90))]).no_fw_prompt, "a longer one: off");
+        assert!(read(&[("sip_port", StoredValue::Number(5060)), ("no_fw_prompt", StoredValue::Number(1))]).no_fw_prompt, "the switch stored is what counts");
+        assert!(!read(&[("no_fw_prompt", StoredValue::Number(0))]).no_fw_prompt);
+    }
+    #[test]
     fn only_what_the_engine_reads_at_a_start_needs_it_started_again() {
         let base = Settings::default();
         let with = |change: &dyn Fn(&mut Settings)| {
@@ -1465,6 +1550,7 @@ mod tests {
             ("sip_port", with(&|s| s.sip_port = 5070)),
             ("aec", with(&|s| s.aec = false)),
             ("pbx_only", with(&|s| s.pbx_only = false)),
+            ("no_fw_prompt", with(&|s| s.no_fw_prompt = false)),
             ("keepalive", with(&|s| s.keepalive = "off".into())),
             ("keepalive_interval", with(&|s| s.keepalive_interval = 30)),
         ] {
@@ -1712,6 +1798,7 @@ mod tests {
             network_adapter: "{00000000-0000-0000-0000-000000000001}".into(),
             sip_port: 5070,
             rtp_port: 12000,
+            no_fw_prompt: false,
             microphone: "{mic}".into(),
             speaker: "{spk}".into(),
             microphone_gain: 150,

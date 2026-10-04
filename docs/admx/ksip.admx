@@ -161,6 +161,16 @@
         <decimal value="0" />
       </disabledValue>
     </policy>
+    <policy name="no_fw_prompt" class="User" displayName="$(string.no_fw_prompt)" explainText="$(string.no_fw_prompt_Help)" key="Software\Policies\KashiharaCity\ksip" valueName="no_fw_prompt">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="SUPPORTED_KSIP" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
     <policy name="register_interval" class="User" displayName="$(string.register_interval)" explainText="$(string.register_interval_Help)" presentation="$(presentation.register_interval)" key="Software\Policies\KashiharaCity\ksip">
       <parentCategory ref="Connection" />
       <supportedOn ref="SUPPORTED_KSIP" />

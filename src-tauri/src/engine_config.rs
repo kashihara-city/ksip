@@ -166,11 +166,20 @@ impl Services {
         // here until the engine has connected, so the port is never free.
         let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
         let ctrl = listener.local_addr().map_err(err)?.port();
-        if (s.sip_port != 0 && ctrl == s.sip_port) || (s.rtp_port != 0 && (s.rtp_port..=s.rtp_port + 20).contains(&ctrl)) {
+        // The ports, the registrar-only filter and the keepalive as the engine
+        // is to run them: the stored values, or what the firewall switch stands for.
+        let conn = s.connection();
+        if (conn.sip_port != 0 && ctrl == conn.sip_port) || (conn.rtp_port != 0 && (conn.rtp_port..=conn.rtp_port + 20).contains(&ctrl)) {
             return Err(message("ENGINE_CONTROL_PORT_TAKEN"));
         }
         let (address, adapter) = Self::binding(s)?;
         let mut notes = Vec::new();
+        if s.no_fw_prompt {
+            notes.push(format!(
+                "ksip: no firewall prompt: ports the system picks, requests from the registrar only, a keepalive every {} s",
+                conn.keepalive_interval
+            ));
+        }
         if !adapter.is_empty() {
             let label = crate::native::adapters()
                 .into_iter()
@@ -189,12 +198,12 @@ impl Services {
         put(format!("ksip_sip_server {}", account.server));
         put(format!("ksip_sip_port {}", account.port));
         put(format!("ksip_extension {}", account.extension));
-        put(format!("sip_listen {address}:{}", s.sip_port));
+        put(format!("sip_listen {address}:{}", conn.sip_port));
         put(format!("sip_transports {}", s.sip_transport()));
         // Requests from anywhere but the registrar are refused (403), and none
         // are taken before registering; over TCP and TLS nothing is listened
         // for, the registration's own connection carrying the calls.
-        if s.pbx_only {
+        if conn.pbx_only {
             put("filter_registrar UDP,TCP,TLS".into());
         }
         for line in [
@@ -241,8 +250,8 @@ impl Services {
         put(format!("ksip_raw_microphone {}", yes_no(s.raw_microphone)));
         put(format!("ksip_raw_speaker {}", yes_no(s.raw_speaker)));
         put(format!("ksip_register_interval {}", s.register_interval));
-        put(format!("ksip_keepalive {}", s.keepalive));
-        put(format!("ksip_keepalive_interval {}", s.keepalive_interval));
+        put(format!("ksip_keepalive {}", conn.keepalive));
+        put(format!("ksip_keepalive_interval {}", conn.keepalive_interval));
         put(format!("ksip_audio_codecs {}", s.codec_list().join(",")));
         put(format!("ksip_detail_log {}", yes_no(s.detail_log)));
         put(format!("ksip_sip_transport {}", s.sip_transport()));
@@ -263,7 +272,7 @@ impl Services {
         put(format!("ksip_speaker_gain {}", s.speaker_gain));
         // 0: RTP and RTCP on ports the system picks (the libre change in
         // scripts/build/patch-baresip.py); otherwise a range of twenty.
-        put(if s.rtp_port == 0 { "rtp_ports 0".to_string() } else { format!("rtp_ports {}-{}", s.rtp_port, s.rtp_port + 20) });
+        put(if conn.rtp_port == 0 { "rtp_ports 0".to_string() } else { format!("rtp_ports {}-{}", conn.rtp_port, conn.rtp_port + 20) });
         put("rtp_timeout 60".into());
         put(format!("ksip_ctrl_connect 127.0.0.1:{ctrl}"));
         for module in [
@@ -337,13 +346,35 @@ mod tests {
         let mut services = Services::open().0;
         services.data = root.join("data");
         services.store = Store::at(r"Software\KashiharaCity\ksip\Test\test-engine".into(), "KSIP/Test/test-engine".into());
+        // Ports of the test's own: the firewall switch, on by default,
+        // would have the system pick them.
         let settings = Settings {
             sip_port: 17060,
             rtp_port: 17100,
+            no_fw_prompt: false,
             ..Settings::default()
         };
         let devices = crate::audio::devices().unwrap();
         assert!(!devices.is_empty());
+        // The firewall switch, on by default: the engine is given ports the
+        // system picks, the registrar-only filter and a keepalive within
+        // thirty seconds, whatever the stored values say.
+        {
+            let fw = Settings { sip_port: 17060, rtp_port: 17100, pbx_only: false, keepalive: "off".into(), keepalive_interval: 120, ..Settings::default() };
+            let account = Account {
+                server: "127.0.0.1".into(),
+                port: 5060,
+                extension: "1001".into(),
+                auth_user: "1001".into(),
+                password: "secret".into(),
+            };
+            let prepared = services.prepare_start(&fw, &account, &devices).unwrap();
+            let config = std::fs::read_to_string(services.profile_dir().join("config")).unwrap();
+            for line in ["sip_listen 0.0.0.0:0\n", "rtp_ports 0\n", "filter_registrar UDP,TCP,TLS\n", "ksip_keepalive crlf\n", "ksip_keepalive_interval 30\n"] {
+                assert!(config.contains(line), "{line:?} in {config}");
+            }
+            assert!(prepared.notes.iter().any(|n| n.contains("no firewall prompt")), "{:?}", prepared.notes);
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         for generation in 1..=2 {
             let account = Account {
