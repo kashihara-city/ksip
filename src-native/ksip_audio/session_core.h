@@ -576,27 +576,34 @@ private:
         }
         watch.gone_seen = false;
         watch.gone_ms = 0;
+        // Not on its device and not noted so: WebRTC moved the stream by
+        // itself when the device went away, and it coming back is to be
+        // acted on, even if it is back already.
+        if (!watch.active) watch = watching(true);
+        // The default asked for whose endpoint would not start: the default
+        // standing for another endpoint now has that one tried, as a device
+        // back is, whether or not the one that would not start is still
+        // there (it may have gone, and the default moved on because of it).
+        if (wanted == "default" && !watch.failed_default.empty()) {
+            const std::string now = adm.default_endpoint(playout);
+            if (!now.empty() && now != watch.failed_default) {
+                watch.failed_default.clear();
+                watch.armed = true;
+                watch.seen = false;
+                watch.listed_ms = 0;
+            }
+        }
         // The device waited for: the one asked for; for the default asked
         // for whose endpoint would not start, that endpoint (its going and
         // coming back is what to act on); for the default otherwise, any
         // device at all.
         const bool default_failed = wanted == "default" && !watch.failed_default.empty();
         const bool listed = adm.listed(default_failed ? watch.failed_default.c_str() : wanted.c_str(), playout);
-        // Not on its device and not noted so: WebRTC moved the stream by
-        // itself when the device went away, and it coming back is to be
-        // acted on, even if it is back already.
-        if (!watch.active) watch = watching(true);
         if (!listed) {
             watch.armed = true;
             watch.seen = false;
             watch.listed_ms = 0;
             return true;
-        }
-        // The default standing for another endpoint than the one that would
-        // not start: that one is tried, as a device back is.
-        if (default_failed && !watch.armed) {
-            const std::string now = adm.default_endpoint(playout);
-            if (!now.empty() && now != watch.failed_default) watch.armed = true;
         }
         if (!watch.armed) return true;
         if (!watch.seen) {

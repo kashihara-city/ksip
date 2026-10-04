@@ -741,6 +741,35 @@ void the_default_endpoint_that_would_not_start_is_tried_again_once_it_has_gone_a
     f.core.watch_tick();
     check(f.adm.starts("start_playout default") == 3 && f.adm.playout_opened == "speaker-b" && !f.core.stand_in(true), "gone and back, the default's endpoint is tried again, and the call is on it");
 }
+// The endpoint the default stands for would not start, and then goes away
+// while the default moves on to a third endpoint: that one is followed at
+// once, not once the one that would not start is back. The same for a
+// microphone on silence because the default's endpoint would not start
+// from the first.
+void the_default_moving_on_from_an_endpoint_that_would_not_start_and_went_is_followed() {
+    Fixture f;
+    Player call{"default"};
+    Source mic;
+    f.adm.broken = {"mic-b"};
+    f.adm.default_microphone = "mic-b";
+    f.core.take_playout(&call);
+    f.core.take_source(&mic, "default");
+    check(f.core.input() == playback_session::Input::Silence && f.adm.playout_opened == "default-speaker", "the microphone's default would not start from the first: silence; the speaker on its default");
+    f.adm.broken.push_back("speaker-b");
+    f.adm.default_speaker = "speaker-b";
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.playout_opened == "default-speaker" && call.started, "the speaker's default moved to one that would not start: the call stays on the speaker it had");
+    f.adm.absent = {"speaker-b", "mic-b"};
+    f.adm.default_speaker = "speaker-c";
+    f.adm.default_microphone = "mic-c";
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.adm.playout_opened == "speaker-c" && call.started, "the endpoint that would not start gone, the default on a third: the speaker follows without waiting for it");
+    check(f.adm.recording_opened == "mic-c" && f.core.input() == playback_session::Input::Device && mic.started, "and the microphone comes off silence onto the default now");
+    StopAll(f, mic);
+}
 // A stream the owner started, which the bridge says is not running (WebRTC
 // restarted it when its device went, and the restart failed; the endpoint
 // it opened for that is still noted): opened again after two looks, as a
@@ -875,6 +904,23 @@ void the_alert_on_a_default_that_would_not_open_stays_on_the_speaker_it_had() {
     f.core.watch_tick();
     f.core.watch_tick();
     check(FakeRender::opens == 4 && f.core.endpoint(true) == "speaker-c", "the default on another speaker: the alert follows");
+}
+// The speaker the default stands for would not open and then goes away,
+// the default moving on to a third: followed at once.
+void the_alert_follows_the_default_moving_on_from_a_speaker_that_would_not_open_and_went() {
+    AlertFixture f;
+    Player ring{"default"};
+    f.core.take_playout(&ring);
+    FakeRender::default_id = "speaker-b";
+    FakeRender::failing = {"speaker-b"};
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.endpoint(true) == "speaker-a", "on the speaker it had after the default's failed open");
+    f.gone("speaker-b", "speaker-c");
+    FakeRender::listed.push_back("speaker-c");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(FakeRender::opens == 4 && f.core.endpoint(true) == "speaker-c", "the speaker that would not open gone and the default on a third: the alert follows");
 }
 // The speaker chosen not there: the default in its place, by its own id;
 // that going too has the alert on the next default, and the speaker chosen
@@ -1440,6 +1486,7 @@ int main() {
     the_default_asked_for_follows_the_default_moving();
     the_default_moved_to_an_endpoint_that_would_not_start_keeps_the_call_where_it_was();
     the_default_endpoint_that_would_not_start_is_tried_again_once_it_has_gone_and_come_back();
+    the_default_moving_on_from_an_endpoint_that_would_not_start_and_went_is_followed();
     a_stream_webrtc_could_not_restart_is_opened_again();
     the_only_microphone_gone_under_the_call_is_silence_until_it_is_back();
     a_speaker_gone_under_the_call_has_the_default_at_the_next_look();
@@ -1451,6 +1498,7 @@ int main() {
     the_alert_on_the_default_follows_the_default_speaker_going();
     the_alert_on_the_default_follows_the_default_moving();
     the_alert_on_a_default_that_would_not_open_stays_on_the_speaker_it_had();
+    the_alert_follows_the_default_moving_on_from_a_speaker_that_would_not_open_and_went();
     the_alert_standing_in_on_the_default_follows_it_going_too();
     an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again();
     an_alert_start_that_fails_is_counted_and_the_default_tried();
