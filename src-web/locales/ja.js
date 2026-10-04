@@ -76,6 +76,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_VOLUME:'スピーカー音量',
       AUDIO_UNMUTE:'ミュート解除',
       AUDIO_VOLUME_ARGUMENT_INVALID:'音量またはデバイスの指定が正しくありません',
+      AUDIO_VOLUME_STATE_UNKNOWN:'通話中のデバイスを音声エンジンから確認できなかったので、音量・ミュートは変更しませんでした',
       AUTO_RECORD_ARGUMENT_INVALID:'自動録音の指定が不正です',
       AUTO_RECORD_OFF:'自動録音をOFFにしました',
       AUTO_RECORD_ON:'自動録音をONにしました',

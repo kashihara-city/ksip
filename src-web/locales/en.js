@@ -76,6 +76,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_VOLUME:'Speaker volume',
       AUDIO_UNMUTE:'Unmute',
       AUDIO_VOLUME_ARGUMENT_INVALID:'The volume or the device was given something it cannot use',
+      AUDIO_VOLUME_STATE_UNKNOWN:'The volume or mute was not changed: the audio engine could not confirm which device the call is on',
       AUTO_RECORD_ARGUMENT_INVALID:'Automatic recording was given something it cannot use',
       AUTO_RECORD_OFF:'Automatic recording is off',
       AUTO_RECORD_ON:'Automatic recording is on',

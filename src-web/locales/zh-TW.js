@@ -76,6 +76,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUDIO_SPEAKER_VOLUME:'喇叭音量',
       AUDIO_UNMUTE:'取消靜音',
       AUDIO_VOLUME_ARGUMENT_INVALID:'音量或裝置的指定不正確',
+      AUDIO_VOLUME_STATE_UNKNOWN:'無法向音訊引擎確認通話中的裝置，因此未變更音量或靜音',
       AUTO_RECORD_ARGUMENT_INVALID:'自動錄音的指定不正確',
       AUTO_RECORD_OFF:'已關閉自動錄音',
       AUTO_RECORD_ON:'已開啟自動錄音',

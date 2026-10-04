@@ -1380,21 +1380,60 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICES_TIMEOUT: Duration = Duration::from_secs(15);
 const CALIBRATION_TIMEOUT: Duration = Duration::from_secs(120);
 /// Asks the engine for its state and applies the report.
-async fn poll(s: &Shared) -> Result<(), String> {
+/// The engine's state, asked for and taken in (apply_report): the calls,
+/// the endpoints the call streams are on, the rest of the report. What the
+/// report asks of the phone (calls to answer automatically) is returned for
+/// the caller to carry out. Nothing to ask without an engine. Its failure
+/// (no answer in time, none that reads) is the caller's to weigh: the view
+/// keeps the last report.
+async fn refresh_state(s: &Shared) -> Result<Vec<String>, String> {
     if s.borrow().link.is_none() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let (seq, data) = request(s, "ksip_state", "").await?;
     let report: EngineReport = serde_json::from_str(&data).map_err(err)?;
-    let answer = s.borrow_mut().apply_report(seq, report);
-    for id in answer {
+    Ok(s.borrow_mut().apply_report(seq, report))
+}
+/// The calls the report asked to have answered automatically.
+async fn auto_answer(s: &Shared, calls: Vec<String>) -> Result<(), String> {
+    for id in calls {
         let payload = serde_json::to_string(&json!({"op":"answer","id":id,"value":""})).map_err(err)?;
         // A failed automatic answer is reported once; the call can still be answered manually.
         if let Err(e) = request(s, "ksip_action", &payload).await {
             s.borrow().services.log(LOG_APP, format!("auto answer failed {}", e));
         }
     }
+    Ok(())
+}
+async fn poll(s: &Shared) -> Result<(), String> {
+    let answer = refresh_state(s).await?;
+    auto_answer(s, answer).await?;
     sync_auto_record(s).await
+}
+/// A fresh look at the engine for an operation that goes by the call's
+/// endpoints: taken in, with what it asked for carried out; or not to be
+/// had, which the operation decides on.
+async fn refresh_for(s: &Shared, what: &str) -> bool {
+    match refresh_state(s).await {
+        Ok(answer) => {
+            let _ = auto_answer(s, answer).await;
+            true
+        }
+        Err(e) => {
+            s.borrow().services.log(LOG_APP, format!("ksip: the call's devices could not be read {what} ({e})"));
+            false
+        }
+    }
+}
+/// Whether a volume or mute change may be made: always without a call (the
+/// device chosen, Windows' own); with a call, only when the engine could be
+/// asked which endpoint the call is on now, since the last report's may be
+/// one the call has left.
+fn volume_change_allowed(fresh: bool, call: Option<&CallEndpoint>) -> Result<(), String> {
+    if call.is_some() && !fresh {
+        return Err(message("AUDIO_VOLUME_STATE_UNKNOWN"));
+    }
+    Ok(())
 }
 /// Something that needs the phone quiet begins: only while no call is up,
 /// after a fresh look at the engine (a call that has just come in is not in
@@ -1698,8 +1737,8 @@ async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), St
     // The endpoints the call is on now, from the engine's state, before the
     // next command is taken: a volume or mute change queued right behind
     // the choice must see the endpoint the call moved to, not the one of
-    // the last periodic look.
-    let _ = poll(s).await;
+    // the last periodic look (and makes no change while it cannot).
+    refresh_for(s, "after the choice of devices").await;
     Ok(())
 }
 /// The engine's answer to the devices handed to it, as a line for the log:
@@ -1800,10 +1839,11 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
 async fn set_volume(s: &Shared, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<(Volume, Target), String> {
     // A fresh look at the engine first: the call's endpoint can have moved
     // since the last report (a device chosen, the engine's own move to the
-    // default or back), and the periodic look may not have caught up. An
-    // engine that cannot be asked leaves the last report to go by.
-    let _ = poll(s).await;
+    // default or back), and the periodic look may not have caught up. A
+    // call whose endpoint cannot be confirmed now has no change made.
+    let fresh = refresh_for(s, "before the volume change").await;
     let (choice, call) = s.borrow().view.audio_choice(kind);
+    volume_change_allowed(fresh, call.as_ref())?;
     let target = crate::audio::target(kind, &choice, call.as_ref(), true)?;
     let (level, mute) = crate::audio::volume_change_for(&target, expected, level, mute);
     let mut result = crate::audio::volume(kind, &target.id, level.map(|value| value.min(100) as u8), mute)?;
@@ -2336,6 +2376,19 @@ mod tests {
         p.view.error = message("AUDIO_DEVICE_INIT_FAILED");
         p.clear_polling_error();
         assert_eq!(p.view.error, "AUDIO_DEVICE_INIT_FAILED");
+    }
+    // A volume or mute change during a call is made only when the engine
+    // could just be asked which endpoint the call is on; without a call the
+    // device chosen is Windows' own, engine or no engine.
+    #[test]
+    fn a_volume_change_during_a_call_needs_a_fresh_look_at_the_engine() {
+        let on_mic = CallEndpoint { id: "{mic}".into(), stand_in: false };
+        assert_eq!(volume_change_allowed(false, Some(&on_mic)), Err(message("AUDIO_VOLUME_STATE_UNKNOWN")), "the state could not be read: not changed");
+        assert!(volume_change_allowed(true, Some(&on_mic)).is_ok(), "read: changed on the endpoint it says");
+        assert!(volume_change_allowed(false, None).is_ok(), "no call: the device chosen, whatever the engine");
+        // Without an engine there is nothing to ask and nothing stale.
+        let a = actor();
+        assert_eq!(run_now(refresh_state(&a.shared)), Ok(Vec::new()));
     }
     /// A state report as the engine writes it, with the audio module's state.
     fn report_with(audio: Value, trust: Option<u64>) -> EngineReport {
