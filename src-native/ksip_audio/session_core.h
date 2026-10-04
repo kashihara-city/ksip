@@ -47,6 +47,10 @@ struct Adm {
     // Whether the side could open the device now: it is among the endpoints
     // listed for the side; "default" is while the side has any endpoint at all.
     virtual bool listed(const char *device, bool playout) = 0;
+    // The endpoint the default stands for now (Windows' default
+    // communications endpoint of the side), by its id; empty while there is
+    // none, or while it cannot be read.
+    virtual std::string default_endpoint(bool playout) = 0;
 };
 enum class Timer { Linger, HandBack, Watch };
 // Where the current call's microphone comes from: no source, the device, or
@@ -282,7 +286,10 @@ public:
     // stream where it was until the device has gone and come back again, so a
     // device that is there but cannot be opened is not tried every look. For
     // the default asked for, "back" is any device at all being there again
-    // (Adm::listed); which device the default is, is left to WebRTC.
+    // (Adm::listed), and the stream not on what the default stands for now
+    // (Adm::default_endpoint; the person changed it, or the device set as it
+    // is back) is opened on that the same way: WebRTC follows a device that
+    // goes, not a default that moves.
     void watch_tick() {
         const uint64_t elapsed = watch_interval;
         bool waiting = false;
@@ -462,11 +469,16 @@ private:
         return on.empty() || !adm.listed(on.c_str(), playout);
     }
     // The side's stream is up on the device asked for, and that is there;
-    // for the default asked for, up on an endpoint that is there.
+    // for the default asked for, up on the endpoint the default stands for
+    // now (a default Windows moved elsewhere, or that is back on a device
+    // that is back, is followed), or on any endpoint while that cannot be
+    // read.
     bool on_wanted(bool playout) {
         if (!up(playout) || on_gone_endpoint(playout)) return false;
         const std::string wanted = asked(playout);
-        return wanted == "default" || adm.opened(playout) == wanted;
+        if (wanted != "default") return adm.opened(playout) == wanted;
+        const std::string now = adm.default_endpoint(playout);
+        return now.empty() || adm.opened(playout) == now;
     }
     // The watch on one side: whether its stream is on the device it asks
     // for, and, while it is not, whether that device has gone and come back.
@@ -560,10 +572,20 @@ private:
         watch.armed = false;
         watch.seen = false;
         watch.listed_ms = 0;
-        hooks.log(playout ? "ksip_audio: the speaker chosen is back, the call's stream is opened on it again\n"
-                          : "ksip_audio: the microphone chosen is back, the call's stream is opened on it again\n");
+        // The default asked for and the stream not on what it stands for
+        // now: the default moved (the person changed it, or the device set
+        // as it is back), and the stream follows it.
+        const bool moved_default = wanted == "default";
+        if (moved_default)
+            hooks.log(playout ? "ksip_audio: the default speaker is another now, the call's stream is opened on it\n"
+                              : "ksip_audio: the default microphone is another now, the call's stream is opened on it\n");
+        else
+            hooks.log(playout ? "ksip_audio: the speaker chosen is back, the call's stream is opened on it again\n"
+                              : "ksip_audio: the microphone chosen is back, the call's stream is opened on it again\n");
         const Outcome outcome = playout ? reopen_playout(wanted) : reopen_source(wanted);
-        if (outcome != Outcome::Moved) hooks.log("ksip_audio: the device that is back would not start, the call stays where it was\n");
+        if (outcome != Outcome::Moved)
+            hooks.log(moved_default ? "ksip_audio: the default now would not start, the call stays where it was\n"
+                                    : "ksip_audio: the device that is back would not start, the call stays where it was\n");
         return !on_wanted(playout);
     }
     // The watch runs while a side has an owner: fast while a side waits for

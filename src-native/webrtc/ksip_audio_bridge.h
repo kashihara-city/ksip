@@ -122,6 +122,13 @@ int ksip_audio_get_stats(ksip_audio *audio, ksip_audio_stats *stats);
    sounds do the same through it (alert_player.h). "default" is there while
    the side has any endpoint at all. */
 int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int playout);
+/* The endpoint "default" stands for now on the side: Windows' default
+   communications endpoint, by its id, as WebRTC lists it (the same id the
+   streams opened on it report). Written to `out` (at most `size` bytes,
+   null-terminated) and 1; 0 with `out` empty while the side has none. The
+   calls and the alert sounds follow it when it moves (session_core.h). */
+int ksip_audio_default_endpoint(ksip_audio *audio, int playout, char *out,
+                                size_t size);
 /* The endpoint open on each side, by name and id: the one WebRTC last opened,
    whichever way it was chosen (the default in place of a device that is not
    there, or the default WebRTC moves to by itself when the device in use goes

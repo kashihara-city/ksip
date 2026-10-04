@@ -68,12 +68,15 @@ struct FakeAdm : playback_session::Adm {
     bool no_device_for(const std::string &request) const { return has(absent, "default") && (request == "default" || has(absent, request)); }
     // ksip_audio::Serves: a stream on an endpoint that is gone serves
     // nothing; otherwise a running stream for the same request is taken as
-    // it is unless the device asked for is back.
+    // it is unless the device asked for is back, or the default asked for
+    // stands for another endpoint now.
     bool serves(const std::string &request, bool playout) {
         const std::string on = opened(playout);
         if (!on.empty() && !listed(on.c_str(), playout)) return false;
-        return request == "default" || on == request || !listed(request.c_str(), playout);
+        if (request == "default") return on == endpoint_for("default", playout);
+        return on == request || !listed(request.c_str(), playout);
     }
+    std::string default_endpoint(bool playout) override { return playout ? default_speaker : default_microphone; }
     int start_playout(const char *device, void *player) override {
         const std::string request = device;
         if (playout_on && playout_request == request && serves(request, true)) {
@@ -514,21 +517,32 @@ void a_device_back_that_would_not_start_is_tried_again_once_it_has_gone_and_come
     f.core.watch_tick();
     check(f.adm.starts("start_playout speaker-x") == 2 && f.adm.playout_opened == "speaker-x", "gone and back again, it is tried again, and plays");
 }
-void the_default_asked_for_is_watched_only_for_the_device_in_use_going() {
+// The default asked for: the stream follows which endpoint the default is
+// (the person changes it in Windows, or a device set as the default comes
+// back), after two looks as for a device that is back; WebRTC does not
+// follow a default that moved, only a device that went. The side whose
+// default stays is left alone.
+void the_default_asked_for_follows_the_default_moving() {
     Fixture f;
     Player call{"default"};
     Source mic;
     f.core.take_playout(&call);
     f.core.take_source(&mic, "default");
-    check(f.clock.watch, "watched, for the device in use going");
+    check(f.clock.watch, "watched, for the device in use going and the default moving");
     check(!f.core.stand_in(true) && !f.core.stand_in(false) && f.core.endpoint(true) == "default-speaker", "the state names the endpoint, which stands in for nothing");
     f.adm.diary.clear();
     f.core.watch_tick();
-    check(f.adm.diary.empty() && f.clock.watch, "a look changes nothing while the device is there");
-    // Which device the default is, is WebRTC's: another default is not followed here.
+    check(f.adm.diary.empty() && f.clock.watch, "a look changes nothing while the default stays");
     f.adm.default_speaker = "other-speaker";
     f.core.watch_tick();
-    check(f.adm.diary.empty() && f.adm.playout_opened == "default-speaker", "a default that moved is left to WebRTC");
+    check(f.adm.diary.empty(), "the first look that finds the default elsewhere opens nothing yet");
+    f.core.watch_tick();
+    check(f.adm.starts("start_playout default") == 1 && f.adm.playout_opened == "other-speaker" && call.started, "the second opens the stream on the default now");
+    check(f.logged("the default speaker is another now") && !f.core.stand_in(true), "said so; the default stands in for nothing");
+    check(f.adm.recording_opened == "default-microphone" && f.adm.starts("start_recording default") == 0, "the microphone's default did not move: left alone");
+    f.adm.diary.clear();
+    f.core.watch_tick();
+    check(f.adm.diary.empty(), "on the default now, nothing more is opened");
     StopAll(f, mic);
 }
 // The only microphone unplugged under the call: WebRTC cannot move the
@@ -693,6 +707,7 @@ struct FakeRender {
         const std::string asked = device;
         return asked == "default" ? !listed.empty() : FakeAdm::has(listed, asked);
     }
+    static std::string default_endpoint() { return default_id; }
     int open(const std::string &endpoint, void *) {
         ++opens;
         const std::string on = endpoint == "default" ? default_id : endpoint;
@@ -713,7 +728,7 @@ struct AlertFixture {
     std::vector<std::string> log;
     playback_session::Core<Player, Source> core;
     AlertFixture()
-        : adm({FakeRender::usable, [this](const std::string &asked) { log.push_back("not there " + asked); }}),
+        : adm({FakeRender::usable, [this](const std::string &asked) { log.push_back("not there " + asked); }, FakeRender::default_endpoint}),
           core(adm, clock,
                {[this](const char *line) { log.emplace_back(line); },
                 [this](bool, const char *device, int result) { log.push_back(std::string("failed ") + device + " " + std::to_string(result)); },
@@ -749,6 +764,25 @@ void the_alert_on_the_default_follows_the_default_speaker_going() {
     f.core.watch_tick();
     check(FakeRender::opens == 2 && f.core.endpoint(true) == "speaker-b" && f.core.playing(), "the second look opens the alert on the default now");
     check(f.core.speaker_failures().count == 0 && !f.core.stand_in(true), "no failed start, and the default stands in for nothing");
+}
+// The alert on the default follows the default, as the call's stream does:
+// the speaker set as the default back after it went (the alert had moved to
+// the next default) has the alert again.
+void the_alert_on_the_default_follows_the_default_moving() {
+    AlertFixture f;
+    Player ring{"default"};
+    f.core.take_playout(&ring);
+    f.gone("speaker-a", "speaker-b");
+    f.core.watch_tick();
+    f.core.watch_tick();
+    check(f.core.endpoint(true) == "speaker-b", "on the next default while the first is gone");
+    FakeRender::listed.push_back("speaker-a");
+    FakeRender::default_id = "speaker-a";
+    f.core.watch_tick();
+    check(FakeRender::opens == 2, "the first look that finds the default elsewhere opens nothing yet");
+    f.core.watch_tick();
+    check(FakeRender::opens == 3 && f.core.endpoint(true) == "speaker-a" && !f.core.stand_in(true), "the default back on the first speaker: the alert follows");
+    check(f.logged("the default speaker is another now"), "said so");
 }
 // The speaker chosen not there: the default in its place, by its own id;
 // that going too has the alert on the next default, and the speaker chosen
@@ -1311,7 +1345,7 @@ int main() {
     a_device_that_is_back_has_the_call_again_after_two_looks();
     a_device_that_comes_and_goes_does_not_take_the_call_back_and_forth();
     a_device_back_that_would_not_start_is_tried_again_once_it_has_gone_and_come_back();
-    the_default_asked_for_is_watched_only_for_the_device_in_use_going();
+    the_default_asked_for_follows_the_default_moving();
     the_only_microphone_gone_under_the_call_is_silence_until_it_is_back();
     a_speaker_gone_under_the_call_has_the_default_at_the_next_look();
     an_endpoint_gone_for_one_look_only_is_left_alone();
@@ -1320,6 +1354,7 @@ int main() {
     a_stream_webrtc_moved_by_itself_goes_back_to_its_device_too();
     the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once();
     the_alert_on_the_default_follows_the_default_speaker_going();
+    the_alert_on_the_default_follows_the_default_moving();
     the_alert_standing_in_on_the_default_follows_it_going_too();
     an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again();
     an_alert_start_that_fails_is_counted_and_the_default_tried();

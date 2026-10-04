@@ -5,6 +5,7 @@
 // for the microphone mute to read.
 #include "bridge_state.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include "rtc_base/logging.h"
@@ -95,6 +96,17 @@ bool ksip_audio::Listed(const char *id, bool playout) {
   return false;
 }
 
+// The endpoint the default stands for now: the id of the list's
+// communications role entry; empty while there is none.
+std::string ksip_audio::DefaultEndpoint(bool playout) {
+  char name[webrtc::kAdmMaxDeviceNameSize] = {};
+  char guid[webrtc::kAdmMaxGuidSize] = {};
+  const int result = playout
+      ? adm->PlayoutDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid)
+      : adm->RecordingDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid);
+  return result ? std::string() : std::string(guid);
+}
+
 // Whether a stream running for `request` serves it as one opened for it now
 // would: on the endpoint asked for, or on the default because that one is
 // not there, whether the stream opened there in its place (SetDevice) or
@@ -102,8 +114,11 @@ bool ksip_audio::Listed(const char *id, bool playout) {
 // WebRTC says it opened tells which, OpenedEndpoint). A stream on an
 // endpoint that is gone serves nothing: WebRTC counts it as running still
 // when it could not move it (no other device to move to), and nothing comes
-// through it. "default" is otherwise WebRTC's to follow. A stream on the
-// default does not serve a device that is back.
+// through it. "default" is served by the endpoint it stands for now: a
+// default Windows moved elsewhere (the person changed it, the device set as
+// it is back) is not followed by WebRTC, which restarts a stream only when
+// its device goes, so it is followed here. A stream on the default does not
+// serve a device that is back.
 bool ksip_audio::Serves(const std::string &request, bool playout) {
   const std::string opened = ksip_audio_bridge::OpenedEndpoint(playout);
   // A running stream whose endpoint is not known (its opening never
@@ -113,7 +128,13 @@ bool ksip_audio::Serves(const std::string &request, bool playout) {
                         << (opened.empty() ? std::string("unknown") : opened) << ", is gone; the stream is opened again";
     return false;
   }
-  if (request == "default") return true;
+  if (request == "default") {
+    const std::string now = DefaultEndpoint(playout);
+    if (now.empty() || opened == now) return true;
+    RTC_LOG(LS_WARNING) << "ksip_audio: the default " << (playout ? "playout" : "recording") << " device is " << now
+                        << " now, not " << opened << "; the stream is opened on it";
+    return false;
+  }
   if (opened == request) return true;
   if (!Listed(request.c_str(), playout)) return true;
   RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording") << " device " << request
@@ -151,6 +172,13 @@ extern "C" int ksip_audio_endpoint_listed(ksip_audio *audio, const char *id, int
     return count > 0 ? 1 : 0;
   }
   return audio->Listed(id, playout != 0) ? 1 : 0;
+}
+
+extern "C" int ksip_audio_default_endpoint(ksip_audio *audio, int playout, char *out, size_t size) {
+  if (!audio || !out || !size) return 0;
+  const std::string id = audio->DefaultEndpoint(playout != 0);
+  std::snprintf(out, size, "%s", id.c_str());
+  return id.empty() ? 0 : 1;
 }
 
 extern "C" int ksip_audio_get_device_info(ksip_audio *audio,

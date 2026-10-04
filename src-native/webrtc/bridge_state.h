@@ -89,6 +89,7 @@ struct ksip_audio final : public webrtc::AudioTransport {
   int SetDevice(const char *id, bool playout);
   int SelectDefault(bool playout);
   bool Listed(const char *id, bool playout);
+  std::string DefaultEndpoint(bool playout);
   bool Serves(const std::string &request, bool playout);
   int Select(bool playout, int index, const char *name, const char *guid);
   void StoreDevice(bool playout, const char *name, const char *id);

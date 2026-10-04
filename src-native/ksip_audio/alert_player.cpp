@@ -27,9 +27,18 @@ bool usable(const char *id) {
     ksip_audio *bridge = playback_session::bridge();
     return bridge && ksip_audio_endpoint_listed(bridge, id, 1);
 }
-RenderAdm<WasapiRender> g_adm({usable, [](const std::string &asked) {
+// The speaker the default stands for now, as the calls see it.
+std::string default_speaker() {
+    ksip_audio *bridge = playback_session::bridge();
+    char id[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
+    if (bridge) ksip_audio_default_endpoint(bridge, 1, id, sizeof id);
+    return id;
+}
+RenderAdm<WasapiRender> g_adm({usable,
+                               [](const std::string &asked) {
                                    warning("ksip_alert: speaker %s is not there, the alert sound plays on the default communications speaker\n", asked.c_str());
-                               }});
+                               },
+                               default_speaker});
 playback_session::LibreClock g_clock;
 Core<Alert, NoSource> g_core(g_adm, g_clock,
                              {[](const char *line) {

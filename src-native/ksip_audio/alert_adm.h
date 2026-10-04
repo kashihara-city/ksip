@@ -35,6 +35,9 @@ struct RenderAdm final : playback_session::Adm {
         std::function<bool(const char *id)> usable;
         // A device asked for that is not there, said once per open.
         std::function<void(const std::string &asked)> not_there;
+        // The speaker the default stands for now, by its id (empty: none),
+        // by the same test as the calls, so that both follow the same default.
+        std::function<std::string()> default_endpoint;
     };
     Render render;
     Hooks hooks;
@@ -44,10 +47,15 @@ struct RenderAdm final : playback_session::Adm {
     explicit RenderAdm(Hooks hooks) : hooks(std::move(hooks)) {}
     // The running render serves the device asked for (the bridge's Serves,
     // in the small): it is on an endpoint that is there, and that is the one
-    // asked for, or the default was asked for, or the one asked for is not there.
+    // asked for, or what the default stands for now when that was asked for,
+    // or the one asked for is not there.
     bool serves(const std::string &asked) const {
         if (!current || render.ended() || !hooks.usable(render.id.c_str())) return false;
-        return asked == "default" || render.id == asked || !hooks.usable(asked.c_str());
+        if (asked == "default") {
+            const std::string now = hooks.default_endpoint();
+            return now.empty() || render.id == now;
+        }
+        return render.id == asked || !hooks.usable(asked.c_str());
     }
     int start_playout(const char *device, void *player) override {
         const std::string asked = device && device[0] ? device : "default";
@@ -77,5 +85,6 @@ struct RenderAdm final : playback_session::Adm {
     // The endpoint the stream is on; none once it ended on its own.
     std::string opened(bool playout) override { return playout && current && !render.ended() ? render.id : std::string(); }
     bool listed(const char *device, bool) override { return hooks.usable(device); }
+    std::string default_endpoint(bool playout) override { return playout ? hooks.default_endpoint() : std::string(); }
 };
 } // namespace alert_player
