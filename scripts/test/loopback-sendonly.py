@@ -7,12 +7,14 @@ from sip_fixture import Phone
 
 
 class FakePbx:
-    """A registrar and one extension that answers every INVITE with the given direction: with 200 OK, or with 183 Session Progress and never more (`early`). The INVITEs are kept, for their SDP."""
+    """A registrar and one extension that answers every INVITE with the given direction: with 200 OK, or (`early`) with 183 Session Progress, 180 Ringing with an SDP, or 180 Ringing without one, and then nothing until answer() sends the 200 OK. The INVITEs are kept, for their SDP."""
 
-    def __init__(self, direction, early=False):
+    def __init__(self, direction, early=None):
+        assert early in (None, '183', '180', '180-nosdp')
         self.direction = direction
         self.early = early
         self.invites = []
+        self.last_invite = None
         self.sip = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sip.bind(('127.0.0.1', 0)); self.sip.settimeout(0.1)
         self.media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -48,20 +50,36 @@ class FakePbx:
             status = '200 OK'
             if method == 'INVITE':
                 self.invites.append(text)
-                body = (f'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=fake\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n'
-                        f'm=audio {self.media.getsockname()[1]} RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na={self.direction}\r\n'
-                        f'a=rtcp:{self.rtcp.getsockname()[1]} IN IP4 127.0.0.1\r\n')
-                if self.early:
+                self.last_invite = (headers, peer)
+                body = self.sdp(self.direction)
+                if self.early == '183':
                     status = '183 Session Progress'
-            reply = f'SIP/2.0 {status}\r\n' + ''.join(f'{name}: {headers[name.lower()]}\r\n' for name in ('Via', 'From', 'Call-ID', 'CSeq'))
-            reply += f'To: {headers["to"]};tag=fake\r\n'
-            if method == 'REGISTER':
-                reply += f'Contact: {headers["contact"]};expires=300\r\nExpires: 300\r\n'
-            else:
-                reply += f'Contact: <sip:1002@127.0.0.1:{self.port}>\r\n'
-            if body:
-                reply += 'Content-Type: application/sdp\r\n'
-            self.sip.sendto((reply + f'Content-Length: {len(body)}\r\n\r\n' + body).encode(), peer)
+                elif self.early in ('180', '180-nosdp'):
+                    status = '180 Ringing'
+                    if self.early == '180-nosdp':
+                        body = ''
+            self.reply(status, headers, peer, body)
+
+    def sdp(self, direction):
+        return (f'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=fake\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n'
+                f'm=audio {self.media.getsockname()[1]} RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na={direction}\r\n'
+                f'a=rtcp:{self.rtcp.getsockname()[1]} IN IP4 127.0.0.1\r\n')
+
+    def reply(self, status, headers, peer, body):
+        reply = f'SIP/2.0 {status}\r\n' + ''.join(f'{name}: {headers[name.lower()]}\r\n' for name in ('Via', 'From', 'Call-ID', 'CSeq'))
+        reply += f'To: {headers["to"]};tag=fake\r\n'
+        if headers['cseq'].endswith('REGISTER'):
+            reply += f'Contact: {headers["contact"]};expires=300\r\nExpires: 300\r\n'
+        else:
+            reply += f'Contact: <sip:1002@127.0.0.1:{self.port}>\r\n'
+        if body:
+            reply += 'Content-Type: application/sdp\r\n'
+        self.sip.sendto((reply + f'Content-Length: {len(body)}\r\n\r\n' + body).encode(), peer)
+
+    def answer(self, direction):
+        """The 200 OK to the last INVITE, after the early responses, with an SDP of the direction."""
+        headers, peer = self.last_invite
+        self.reply('200 OK', headers, peer, self.sdp(direction))
 
     def count(self, seconds):
         """What arrived at the media ports in the time: RTP packets, empty datagrams, RTCP packets, and the ports the RTCP came from."""
@@ -89,22 +107,31 @@ class FakePbx:
             s.close()
 
 
-def scenario(direction, early=False):
+def scenario(direction, early=None):
+    """One call: answered at once, or early media first (183, 180 with an SDP, 180 without one; baresip's state is EARLY for a 183 and RINGING for a 180), then answered with a=sendrecv."""
     pbx = FakePbx(direction, early)
     account = dict(server='127.0.0.1', port=pbx.port, extension='1001', auth_user='1001', password='fake-only')
     phone = None
     result = {'direction': direction, 'early': early}
     try:
-        phone = Phone('sendonly-' + direction + ('-early' if early else ''), account, sip_port=0, rtp_port=0, codecs=('g711',),
+        phone = Phone('sendonly-' + direction + ('-' + early if early else ''), account, sip_port=0, rtp_port=0, codecs=('g711',),
                       extra_config='net_interface 127.0.0.1\nfilter_registrar UDP,TCP,TLS')
         call = phone.action('dial', value='1002')
-        state = 'EARLY' if early else 'ESTABLISHED'
+        state = {None: 'ESTABLISHED', '183': 'EARLY', '180': 'RINGING', '180-nosdp': 'RINGING'}[early]
         phone.wait(lambda s: any(c['id'] == call and c['state'] == state for c in s['calls']))
         result['first_two_seconds'] = pbx.count(2)
-        if direction == 'sendonly':
+        if early == '180-nosdp':
+            # No media address yet: nothing to open the way in to.
+            result['next_five_seconds'] = pbx.count(5)
+        elif direction == 'sendonly':
             # The way in opened again after twenty seconds without RTP: the
             # engine looks every five, so within thirty from the first.
             result['next_thirty_seconds'] = pbx.count(30)
+        if early:
+            # Answered now, both ways: the call goes on with RTP.
+            pbx.answer('sendrecv')
+            phone.wait(lambda s: any(c['id'] == call and c['state'] == 'ESTABLISHED' for c in s['calls']))
+            result['after_answer'] = pbx.count(2)
         result['log'] = [l.strip()[:160] for l in phone.log_text().splitlines() if 'keep the way in open' in l]
         phone.action('hangup', call)
         phone.wait(lambda s: not s['calls'], timeout=10)
@@ -118,10 +145,13 @@ def scenario(direction, early=False):
 def main():
     (ROOT / 'temp/reports').mkdir(parents=True, exist_ok=True)
     only_sends = scenario('sendonly')
-    early = scenario('sendonly', early=True)
+    early183 = scenario('sendonly', early='183')
+    early180 = scenario('sendonly', early='180')
+    ringing = scenario('sendonly', early='180-nosdp')
     both = scenario('sendrecv')
-    (ROOT / 'temp/reports/loopback-sendonly.json').write_text(json.dumps({'sendonly': only_sends, 'early': early, 'sendrecv': both}, ensure_ascii=False, indent=2), encoding='utf-8')
-    for name, result in (('answered', only_sends), ('early media', early)):
+    (ROOT / 'temp/reports/loopback-sendonly.json').write_text(
+        json.dumps({'sendonly': only_sends, 'early183': early183, 'early180': early180, 'ringing': ringing, 'sendrecv': both}, ensure_ascii=False, indent=2), encoding='utf-8')
+    for name, result in (('answered', only_sends), ('183 early media', early183), ('180 early media', early180)):
         first = result['first_two_seconds']
         assert first['rtp'] == 0, f'a peer that only sends ({name}) got RTP: {first}'
         assert first['empty'] >= 1, f'no empty datagram reached the peer that only sends ({name}) within two seconds: {first}'
@@ -129,11 +159,16 @@ def main():
         later = result['next_thirty_seconds']
         assert later['empty'] >= 1, f'no empty datagram within the thirty seconds after ({name}): {later}'
         assert any('no RTP sent for 20 s' in l for l in result['log']), (name, result['log'])
+    quiet = ringing['first_two_seconds']['empty'] + ringing['next_five_seconds']['empty']
+    assert quiet == 0 and ringing['first_two_seconds']['rtp'] == 0, f'a 180 without an SDP gave no address, yet something was sent: {ringing}'
+    for name, result in (('183', early183), ('180', early180), ('180 without an SDP', ringing)):
+        assert result['after_answer']['rtp'] > 0, f'answered after the {name}, the call sent no RTP: {result["after_answer"]}'
     assert both['first_two_seconds']['rtp'] > 0, f'a peer that sends and receives got no RTP: {both}'
     first, later = only_sends['first_two_seconds'], only_sends['next_thirty_seconds']
     print(f"PASS: a=sendonly: no RTP, {first['empty']} empty datagram(s) at once and {later['empty']} more within thirty seconds, "
-          f"the same for early media ({early['first_two_seconds']['empty']} and {early['next_thirty_seconds']['empty']}); "
-          f"a=sendrecv: {both['first_two_seconds']['rtp']} RTP packets in two seconds")
+          f"the same for early media after a 183 ({early183['first_two_seconds']['empty']} and {early183['next_thirty_seconds']['empty']}) "
+          f"and after a 180 ({early180['first_two_seconds']['empty']} and {early180['next_thirty_seconds']['empty']}); a 180 without an SDP gets nothing; "
+          f"answered after each, RTP flows; a=sendrecv: {both['first_two_seconds']['rtp']} RTP packets in two seconds")
 
 
 if __name__ == '__main__':

@@ -28,10 +28,14 @@ bool system_picked() {
     const config *c = conf_config();
     return c && !c->avt.rtp_ports.min && !c->avt.rtp_ports.max;
 }
+// One empty datagram; a send that fails is said, since the way in is not
+// open then whatever the line after says.
 void send_empty(void *sock, const sa *to) {
     if (!sock || !to || !sa_isset(to, SA_ALL) || !sa_port(to)) return;
     mbuf *mb = mbuf_alloc(1);
-    if (mb) (void)udp_send(static_cast<udp_sock *>(sock), to, mb);
+    if (!mb) return;
+    const int err = udp_send(static_cast<udp_sock *>(sock), to, mb);
+    if (err) warning("ksip: the empty datagram to %J was not sent (%m)\n", to, err);
     mem_deref(mb);
 }
 // The call's audio stream, its SDP and its RTP socket; false while it has none.
@@ -70,7 +74,10 @@ void look(void *) {
     for (le *u = list_head(uag_list()); u; u = u->next) {
         for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             call *c = static_cast<call *>(l->data);
-            if (call_state(c) != CALL_STATE_ESTABLISHED && call_state(c) != CALL_STATE_EARLY) continue;
+            // Not by the call's state (baresip has a 180 as "ringing" with or
+            // without an SDP, and a 180 can carry early media): by the peer
+            // having given a media address, which open_way_in looks at.
+            if (call_state(c) == CALL_STATE_TERMINATED) continue;
             stream *s;
             sdp_media *m;
             struct rtp_sock *rtp;
