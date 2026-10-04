@@ -193,10 +193,6 @@ impl Services {
         let store = Store::new();
         let data = data_dir(&store);
         let mut logs = Logs::open(&data);
-        // Earlier versions kept most settings as one JSON document in the value
-        // `Settings`. It is not read any more, only removed: every setting now
-        // has a value of its own.
-        let _ = store.delete_value("Settings");
         let (settings, unreadable) = Settings::read_stored(|name| store.read_effective(name));
         let mut startup_error = if let Some(e) = store.policy.error() {
             message_with("POLICY_UNREADABLE", [e])
