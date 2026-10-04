@@ -1419,10 +1419,13 @@ async fn poll(s: &Shared) -> Result<(), String> {
 /// automatically open their media, so the report taken in is the one after
 /// those answers; answers that keep coming leave nothing to go by.
 async fn refresh_for(s: &Shared, what: &str) -> bool {
-    if s.borrow().link.is_none() {
-        return s.borrow().view.calls.is_empty();
-    }
     for _ in 0..2 {
+        // Looked at before each ask, not once: the connection can go while
+        // the answers are awaited, and an engine gone then leaves the calls
+        // it had, which are not a report of now.
+        if s.borrow().link.is_none() {
+            return s.borrow().view.calls.is_empty();
+        }
         match refresh_state(s).await {
             Ok(answer) if answer.is_empty() => return true,
             Ok(answer) => {
