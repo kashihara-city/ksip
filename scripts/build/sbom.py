@@ -207,6 +207,9 @@ def toolchain(record):
     tools = record['toolchain']
     rust = {'release': tools['rustc'], 'commit-hash': tools['rustc_commit']}
     msvc, ucrt, clang = tools['msvc'], tools['ucrt'], tools['clang']
+    # The libraries themselves, by hash, beside the version: a serviced SDK
+    # or toolset keeps its version folder and changes these.
+    crt = tools['crt_libs']
     return [
         {'name': 'rust-std', 'version': rust['release'], 'supplier': 'The Rust Project', 'licenses': [{'expression': 'MIT OR Apache-2.0'}],
          'purl': f"pkg:generic/rust-std@{rust['release']}?vcs_url=git%2Bhttps://github.com/rust-lang/rust%40{rust['commit-hash']}",
@@ -214,15 +217,33 @@ def toolchain(record):
         {'name': 'msvc-runtime', 'version': msvc, 'supplier': 'Microsoft Corporation',
          'licenses': [{'license': {'name': 'Microsoft Software License Terms (Visual Studio Build Tools)'}}],
          'purl': f'pkg:generic/msvc-runtime@{msvc}',
-         'description': 'The MSVC C and C++ runtime (vcruntime, libcmt, libcpmt), linked statically'},
+         'description': 'The MSVC C and C++ runtime (vcruntime, libcmt, libcpmt), linked statically',
+         'properties': {f'ksip:sha256:{name}': crt[name] for name in ('libcmt.lib', 'libvcruntime.lib', 'libcpmt.lib')}},
         {'name': 'ucrt', 'version': ucrt, 'supplier': 'Microsoft Corporation',
          'licenses': [{'license': {'name': 'Microsoft Software License Terms (Windows SDK)'}}],
-         'purl': f'pkg:generic/ucrt@{ucrt}',
-         'description': 'The Universal C Runtime of the Windows SDK (libucrt), linked statically'},
+         'purl': f'pkg:generic/ucrt@{ucrt}', 'hashes': [{'alg': 'SHA-256', 'content': crt['libucrt.lib']}],
+         'description': 'The Universal C Runtime of the Windows SDK (libucrt), linked statically',
+         'properties': {'ksip:sdk_build': tools['sdk_build'], 'ksip:sha256:libucrt.lib': crt['libucrt.lib']}},
         {'name': 'compiler-rt', 'version': clang, 'supplier': 'LLVM Project',
          'licenses': [{'expression': 'Apache-2.0 WITH LLVM-exception AND NCSA AND MIT'}],
          'purl': f'pkg:generic/compiler-rt@{clang}',
          'description': "clang's builtins (clang_rt.builtins-x86_64), from the clang WebRTC's build fetches"},
+    ]
+
+
+def environment_properties(record):
+    """Where the build ran, as the build recorded it: how the Windows SDK came
+    to the machine (the installer the release workflow fetched and checked,
+    by version and hash, or one already there), the runner image when
+    GitHub's, and the build tools."""
+    environment = record['environment']
+    installer = environment['sdk_installer']
+    image = environment['runner_image']
+    return [
+        {'name': 'ksip:sdk_installer', 'value': f"winsdksetup.exe {installer['version']} sha256:{installer['sha256']}" if isinstance(installer, dict) else installer},
+        {'name': 'ksip:runner_image', 'value': f"{image['os']} {image['version']}" if image else 'none (not a GitHub runner)'},
+        {'name': 'ksip:cmake', 'value': record['toolchain']['cmake'] or 'unknown'},
+        {'name': 'ksip:ninja', 'value': record['toolchain']['ninja'] or 'unknown'},
     ]
 
 
@@ -346,7 +367,8 @@ def build(exe, record_path=ROOT / 'temp/build/build-record.json'):
                                {'name': 'ksip:uncommitted_changes', 'value': str(record['uncommitted_changes'])},
                                {'name': 'ksip:target', 'value': TARGET},
                                {'name': 'ksip:not_included', 'value': 'Microsoft Edge WebView2 Runtime (part of Windows, not shipped)'},
-                               {'name': 'ksip:webrtc_listed_not_linked', 'value': ', '.join(unlinked) or 'none'}],
+                               {'name': 'ksip:webrtc_listed_not_linked', 'value': ', '.join(unlinked) or 'none'},
+                               *environment_properties(record)],
             },
         },
         'components': components,

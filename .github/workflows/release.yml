@@ -22,7 +22,9 @@ env:
 jobs:
   release:
     name: Build, test, attest and publish
-    runs-on: windows-latest
+    # The OS generation is chosen here, not by GitHub's moving "windows-latest";
+    # the image itself still updates weekly, and the build record says which.
+    runs-on: windows-2025
     timeout-minutes: 330
     permissions:
       contents: write
@@ -99,7 +101,23 @@ jobs:
           if (Test-Path "$kits\Include\10.0.28000.0\um\windows.h") { "SDK 10.0.28000.0 is already there"; exit 0 }
           $setup = "$env:RUNNER_TEMP\winsdksetup.exe"
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2376217" -OutFile $setup -UseBasicParsing
-          "winsdksetup.exe {0:N1} MB, version {1}, SHA256 {2}" -f ((Get-Item $setup).Length / 1MB), (Get-Item $setup).VersionInfo.ProductVersion, (Get-FileHash $setup).Hash
+          $hash = (Get-FileHash $setup).Hash.ToUpperInvariant()
+          $version = (Get-Item $setup).VersionInfo.ProductVersion
+          "winsdksetup.exe {0:N1} MB, version {1}, SHA256 {2}" -f ((Get-Item $setup).Length / 1MB), $version, $hash
+          # The installer is pinned by hash, as every other dependency is: the
+          # link is Microsoft's and moves to newer installers. When it has
+          # moved, the signature below says whether the new one is genuine;
+          # then its version is looked at and the hash here changed on purpose.
+          $pinned = "B534D37A1F3140C8BE1298ED88855B8CBDDC35D2626C4D0AFD39F186A4B578E3"  # 10.1.28000.2705
+          if ($hash -ne $pinned) { throw "winsdksetup.exe is not the pinned installer: SHA256 $hash (version $version), pinned $pinned" }
+          $signature = Get-AuthenticodeSignature -FilePath $setup
+          if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "CN=Microsoft Corporation,") {
+            throw "winsdksetup.exe signature: $($signature.Status), signer $($signature.SignerCertificate.Subject)"
+          }
+          "signature valid, signer $($signature.SignerCertificate.Subject)"
+          # For the build record (build-record.py): how the SDK came to this machine.
+          "KSIP_SDK_INSTALLER_VERSION=$version" >> $env:GITHUB_ENV
+          "KSIP_SDK_INSTALLER_SHA256=$hash" >> $env:GITHUB_ENV
           $arguments = @("/features", "OptionId.DesktopCPPx64", "OptionId.DesktopCPPx86", "OptionId.WindowsDesktopDebuggers",
                          "/quiet", "/norestart", "/ceip", "off", "/log", "$env:RUNNER_TEMP\sdk-install.log")
           $started = Get-Date

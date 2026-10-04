@@ -153,6 +153,20 @@ def main():
     for name in ('msvc-runtime', 'ucrt', 'compiler-rt'):
         c = by_name.get(name, {})
         check(c.get('scope') == 'required' and c.get('version') and c.get('supplier'), f'{name} is listed as in the exe, with its version and supplier')
+    # The libraries themselves, beside the versions, and where the build ran.
+    crt = built_from['toolchain']['crt_libs']
+    ucrt = by_name.get('ucrt', {})
+    ucrt_props = {p['name']: p['value'] for p in ucrt.get('properties', [])}
+    check(any(h.get('alg') == 'SHA-256' and h.get('content') == crt['libucrt.lib'] for h in ucrt.get('hashes', []))
+          and re.fullmatch(r'10\.\d+\.\d+\.\d+', ucrt_props.get('ksip:sdk_build', '')) and ucrt_props['ksip:sdk_build'] == built_from['toolchain']['sdk_build'],
+          "the UCRT carries the hash of the libucrt.lib linked and the SDK's own build number", ucrt_props.get('ksip:sdk_build'))
+    msvc_props = {p['name']: p['value'] for p in by_name.get('msvc-runtime', {}).get('properties', [])}
+    check(all(msvc_props.get(f'ksip:sha256:{name}') == crt[name] for name in ('libcmt.lib', 'libvcruntime.lib', 'libcpmt.lib')),
+          'the MSVC runtime carries the hashes of the three libraries linked')
+    check(props.get('ksip:sdk_installer') in ('preinstalled',) or str(props.get('ksip:sdk_installer', '')).startswith('winsdksetup.exe 10.'),
+          'how the SDK came to the build machine is on record', props.get('ksip:sdk_installer'))
+    check(props.get('ksip:runner_image') and props.get('ksip:cmake') and props.get('ksip:ninja'), 'the runner image and the build tools are on record',
+          (props.get('ksip:runner_image'), props.get('ksip:cmake'), props.get('ksip:ninja')))
 
     scopes = [c['scope'] for c in components]
     print(f"components: {len(components)} ({scopes.count('required')} in the exe, {scopes.count('excluded')} build only); crates {len(crates)}, native {len(native)}, bundled in WebRTC {len(bundled)}, not linked {not_linked}")

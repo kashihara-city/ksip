@@ -473,6 +473,8 @@ python -X utf8 scripts/test/build-paths.py
 
 タグからのリリース（`.github/workflows/release.yml`）では、配布する exe について SBOM（CycloneDX 1.6（ECMA-424）の JSON） を作って検査し、Release に `ksip-v<版>.cdx.json` として添付します。あわせて、その SBOM を exe に紐づける証明（attestation）を付けます。受け取った側は `gh attestation verify ksip-v<版>.exe --repo kashihara-city/ksip --predicate-type https://cyclonedx.org/bom` で、その exe の SBOM であることを確かめられます。
 
+SBOM の元になる build record（`temp/build/build-record.json`、`app.ps1` が書く）には、exe のハッシュ・版・コミット、リンクした lib と lock のハッシュ、ツールチェーン（rustc、MSVC、UCRT、clang）に加えて、SDK 自身のビルド番号（`rc.exe` のファイル版。フォルダー名の 10.0.28000.0 では servicing の差が見えないため）、静的リンクする CRT の lib（`libucrt.lib`、`libcmt.lib`、`libvcruntime.lib`、`libcpmt.lib`）のハッシュ、cmake と ninja の版、CI では SDK のインストーラーの版とハッシュとランナーのイメージを記録し、SBOM にも property として載せます。別の環境で作った exe が違ったとき、どこから違うかを記録で追うためのものです。
+
 ローカルでは、SBOMは `python -X utf8 scripts/build/sbom.py` で、`release/ksip.exe` について `temp/build/sbom/ksip.cdx.json` に書きます（`--exe`・`--out` で変えられます）。
 
 SBOM は作るたびに別の文書として、作った日時と新しいシリアル番号を持ちます。どの exe の部品一覧かは、`metadata.component` の SHA-256 で決まります。`test/sbom.py` は次を確かめます。
