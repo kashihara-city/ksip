@@ -1686,13 +1686,20 @@ async fn initialize(s: Shared) {
 async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), String> {
     let endpoints = s.borrow().services.resolve_audio_endpoints(settings);
     let (_, answer) = request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
-    let p = s.borrow();
-    for note in endpoint_notes(settings, &endpoints, &p.view.devices) {
-        p.services.log(LOG_APP, note);
+    {
+        let p = s.borrow();
+        for note in endpoint_notes(settings, &endpoints, &p.view.devices) {
+            p.services.log(LOG_APP, note);
+        }
+        if let Some(note) = switch_note(&answer) {
+            p.services.log(LOG_APP, note);
+        }
     }
-    if let Some(note) = switch_note(&answer) {
-        p.services.log(LOG_APP, note);
-    }
+    // The endpoints the call is on now, from the engine's state, before the
+    // next command is taken: a volume or mute change queued right behind
+    // the choice must see the endpoint the call moved to, not the one of
+    // the last periodic look.
+    let _ = poll(s).await;
     Ok(())
 }
 /// The engine's answer to the devices handed to it, as a line for the log:
@@ -1791,6 +1798,11 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
 /// than the one in use now (`expected`) is not made, and what is in use is
 /// answered along with its volume.
 async fn set_volume(s: &Shared, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<(Volume, Target), String> {
+    // A fresh look at the engine first: the call's endpoint can have moved
+    // since the last report (a device chosen, the engine's own move to the
+    // default or back), and the periodic look may not have caught up. An
+    // engine that cannot be asked leaves the last report to go by.
+    let _ = poll(s).await;
     let (choice, call) = s.borrow().view.audio_choice(kind);
     let target = crate::audio::target(kind, &choice, call.as_ref(), true)?;
     let (level, mute) = crate::audio::volume_change_for(&target, expected, level, mute);
