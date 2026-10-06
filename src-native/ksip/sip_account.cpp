@@ -117,7 +117,7 @@ int login(re_printf *pf, void *) {
         if (credential->UserName) {
             int size = WideCharToMultiByte(CP_UTF8, 0, credential->UserName, -1, nullptr, 0, nullptr, nullptr);
             if (size > 1) {
-                auth.resize(size - 1);
+                auth.resize(static_cast<size_t>(size - 1));
                 WideCharToMultiByte(CP_UTF8, 0, credential->UserName, -1, auth.data(), size, nullptr, nullptr);
             }
         }

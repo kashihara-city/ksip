@@ -29,7 +29,8 @@ bool sip_uri(const std::string &s) {
 }
 bool address_ok(const std::string &s) {
     if (s.empty() || s.size() > 200) return false;
-    for (unsigned char ch : s) if (ch < 0x21 || ch > 0x7e) return false;
+    for (const char c : s)
+        if (const auto ch = static_cast<unsigned char>(c); ch < 0x21 || ch > 0x7e) return false;
     return true;
 }
 bool token(const char *s, const char *extra) {
@@ -311,7 +312,8 @@ bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone,
     speaker = text.substr(comma + 1);
     for (const auto &device : {microphone, speaker}) {
         if (device.empty() || device.size() >= limit) return false;
-        for (unsigned char ch : device) if (ch < 0x20 || ch == 0x7f || ch == ',') return false;
+        for (const char c : device)
+            if (const auto ch = static_cast<unsigned char>(c); ch < 0x20 || ch == 0x7f || ch == ',') return false;
     }
     return true;
 }

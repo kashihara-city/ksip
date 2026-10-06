@@ -17,13 +17,13 @@ namespace {
 constexpr REFERENCE_TIME kRefPerMs = 10000;
 std::wstring wide(const std::string &utf8) {
     const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(n > 0 ? n : 0, L'\0');
+    std::wstring out(n > 0 ? static_cast<size_t>(n) : 0, L'\0');
     if (n > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), n);
     return out;
 }
 std::string narrow(const wchar_t *text) {
     const int n = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-    std::string out(n > 1 ? n - 1 : 0, '\0');
+    std::string out(n > 1 ? static_cast<size_t>(n - 1) : 0, '\0');
     if (n > 1) WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), n, nullptr, nullptr);
     return out;
 }

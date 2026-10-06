@@ -8,5 +8,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
 # The audio module's state header (audio_state.h) sits beside this module; the
 # trust store is read through LibreSSL, which the engine links anyway.
-target_include_directories(${PROJECT_NAME} PRIVATE "${KSIP_NATIVE}/include/ksip" "${CMAKE_CURRENT_SOURCE_DIR}/../ksip_audio" "${OPENSSL_INCLUDE_DIR}")
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../ksip_audio")
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE "${KSIP_NATIVE}/include/ksip" "${OPENSSL_INCLUDE_DIR}")
 target_link_libraries(${PROJECT_NAME} PRIVATE advapi32)

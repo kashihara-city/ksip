@@ -33,7 +33,25 @@ add_compile_definitions(${RE_DEFINITIONS} STATIC)
 if(NOT OPENSSL_INCLUDE_DIR)
   set(OPENSSL_INCLUDE_DIR "${KSIP_NATIVE}/include")
 endif()
-include_directories("${BARESIP_SOURCE}/include" "${KSIP_NATIVE}/include/re")
+# The headers of libre, baresip, LibreSSL and the WebRTC bridge are system
+# headers here (-imsvc): what they warn of is theirs, not this code's.
+include_directories(SYSTEM "${BARESIP_SOURCE}/include" "${KSIP_NATIVE}/include/re")
+
+# Every warning clang has for the usual mistakes, and all of them errors, so
+# that this code compiles clean and stays so. -Wall goes through /clang:,
+# since clang-cl reads a bare -Wall as MSVC's /Wall, which is every warning
+# there is (-Weverything). __uuidof is how COM is used on Windows
+# (IID_PPV_ARGS is made of it), so the extension warning is not asked for.
+# KSIP_WARNINGS_AS_ERRORS=OFF leaves the warnings as warnings, for a look at
+# what a newer compiler says before its errors stop the build.
+option(KSIP_WARNINGS_AS_ERRORS "Treat warnings in KSIP's own code as errors" ON)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  add_compile_options(/clang:-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wundef
+                      -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough -Wno-language-extension-token)
+  if(KSIP_WARNINGS_AS_ERRORS)
+    add_compile_options(-Werror)
+  endif()
+endif()
 
 add_subdirectory(ksip)
 add_subdirectory(ksip_ctrl)

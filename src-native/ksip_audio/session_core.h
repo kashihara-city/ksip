@@ -256,16 +256,16 @@ public:
     // so that the device that failed is tried again at the next call, not at
     // every hand-back), or on the default; a microphone that cannot be had at
     // all is replaced by silence. What came of each side is returned.
-    Switch switch_devices(const char *microphone, const char *speaker) {
+    Switch switch_devices(const char *microphone_device, const char *speaker_device) {
         Switch outcome;
-        if (speaker) {
+        if (speaker_device) {
             const std::string previous = active_playout ? active_playout->device() : "";
-            for (Play *p : players) p->set_device(speaker);
+            for (Play *p : players) p->set_device(speaker_device);
             if (active_playout) outcome.speaker = reopen_playout(previous);
         }
-        if (microphone && active_source) {
+        if (microphone_device && active_source) {
             const std::string previous = source_device;
-            source_device = microphone;
+            source_device = microphone_device;
             outcome.microphone = reopen_source(previous);
         }
         keep_watching();

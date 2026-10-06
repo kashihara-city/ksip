@@ -94,7 +94,7 @@ int gain(re_printf *pf, void *arg) {
     unsigned level = 0;
     char extra = 0;
     if (sscanf(a->prm, "%15s %u %c", kind, &level, &extra) != 2 || level < 100 || level > 200) return EINVAL;
-    auto value = level / 100.f;
+    auto value = static_cast<float>(level) / 100.f;
     if (strcmp(kind, "microphone") == 0) microphone_gain.store(value, std::memory_order_relaxed);
     else if (strcmp(kind, "speaker") == 0) speaker_gain.store(value, std::memory_order_relaxed);
     else return EINVAL;
@@ -111,8 +111,8 @@ int init() {
     uint32_t mic = 100, speaker = 100;
     (void)conf_get_u32(conf_cur(), "ksip_microphone_gain", &mic);
     (void)conf_get_u32(conf_cur(), "ksip_speaker_gain", &speaker);
-    microphone_gain.store(std::clamp(mic, 100u, 200u) / 100.f);
-    speaker_gain.store(std::clamp(speaker, 100u, 200u) / 100.f);
+    microphone_gain.store(static_cast<float>(std::clamp(mic, 100u, 200u)) / 100.f);
+    speaker_gain.store(static_cast<float>(std::clamp(speaker, 100u, 200u)) / 100.f);
     filter.name = "ksip_audio_filter";
     filter.encupdh = update_encode;
     filter.ench = process_encode;
