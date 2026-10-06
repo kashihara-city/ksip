@@ -592,7 +592,7 @@ impl Actor {
             Command::Action { reply, .. } => reply.send(Err(why)),
             Command::CalibrateAec { reply, .. } => reply.send(Err(why)),
             Command::SetVolume { reply, .. } => reply.send(Err(why)),
-            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) => {}
+            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) | Command::DevicesSeen(_) => {}
         }
     }
     /// What needs no flow is done here and now; the rest waits its turn.
@@ -607,6 +607,14 @@ impl Actor {
                 return;
             }
             Command::ShowError(error) => return self.shared.borrow_mut().show_error(error),
+            Command::DevicesSeen(devices) => {
+                // The window's look (commands.rs, watch_devices) found the
+                // devices changed: the lists follow, with the next snapshot.
+                let mut p = self.shared.borrow_mut();
+                p.take_devices(devices);
+                p.publish();
+                return;
+            }
             Command::ReportError(error) => return self.shared.borrow_mut().report_error(error),
             Command::Shutdown(reply) => {
                 self.shared.borrow_mut().closing = true;
@@ -787,6 +795,18 @@ impl Actor {
 impl Phone {
     fn publish(&self) {
         self.published.set(&self.view);
+    }
+    /// The audio devices as Windows lists them now, for the window's lists:
+    /// from the refresh button's look (refresh_devices) and the window's own
+    /// (Command::DevicesSeen) alike.
+    fn take_devices(&mut self, devices: Vec<crate::audio::Device>) {
+        // A change is written down with the names, so that a log tells what
+        // the machine had when (a headset gone in the night, a dock's hub).
+        if crate::audio::devices_differ(&self.view.devices, &devices) {
+            let names = |kind: &str| devices.iter().filter(|d| d.kind == kind).map(|d| d.name.as_str()).collect::<Vec<_>>().join("; ");
+            self.services.log(LOG_APP, format!("ksip: audio devices now: microphones [{}], speakers [{}]", names("microphone"), names("speaker")));
+        }
+        self.view.devices = devices;
     }
     /// Answers a command once the snapshot shows what it did, so that the
     /// window's next look, right after the answer, is not behind it.
@@ -1674,12 +1694,13 @@ async fn stop_engine(s: &Shared) {
         stop_and_wait(s, engine).await;
     }
 }
-/// Reads the devices again for the lists and, when the engine runs and no
-/// call is going on, gives it the saved ones once more (a choice changed
-/// outside the window reaches it this way). A device unplugged and put back,
-/// or a new Windows default, needs none of this: each stream picks its
-/// endpoint as it opens (resolve_audio_endpoints). The engine is only
-/// restarted when it does not take the devices.
+/// The refresh button: reads the devices again for the lists (as the
+/// window's own look does every second, commands.rs watch_devices) and, when
+/// the engine runs and no call is going on, gives it the saved ones once more
+/// (a choice changed outside the window reaches it this way). A device
+/// unplugged and put back, or a new Windows default, needs none of this:
+/// each stream picks its endpoint as it opens (resolve_audio_endpoints). The
+/// engine is only restarted when it does not take the devices.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
     s.borrow_mut().work(|| Work::Devices(crate::audio::devices()));
     let devices = match await_work(s, DEVICES_TIMEOUT).await {
@@ -1687,7 +1708,7 @@ async fn refresh_devices(s: &Shared) -> Result<(), String> {
         Ok(_) => return Err(message("APP_CLOSING")),
         Err(e) => return Err(e),
     };
-    s.borrow_mut().view.devices = devices?;
+    s.borrow_mut().take_devices(devices?);
     if s.borrow().link.is_none() {
         return Ok(());
     }

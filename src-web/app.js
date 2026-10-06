@@ -20,7 +20,7 @@ import {buildButtonSets} from './buttons.js';
 import {syncHistory} from './history.js';
 import {syncLogs, init as initLogs} from './logs.js';
 import {init as initPanel} from './panel.js';
-import {pollVolumes, pollAudioPeaks, init as initAudio} from './audio.js';
+import {pollAudio, init as initAudio} from './audio.js';
 import {init as initSettings} from './settings.js';
 import {init as initLinks} from './links.js';
 
@@ -57,4 +57,4 @@ function fitStartHeight(){
   const top=panel.getBoundingClientRect().top+main.scrollTop;
   invoke('fit_start_height',{height:top+tabs+row*2+6}).catch(e=>logUi('fit start height',e));
 }
-render();poll();pollVolumes();pollAudioPeaks();
+render();poll();pollAudio();

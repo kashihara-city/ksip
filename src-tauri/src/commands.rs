@@ -2,7 +2,7 @@
 //! the phone actor or asks a service; none of them holds or changes any
 //! phone state of its own.
 use crate::app::AppState;
-use crate::audio::{Calibration, Peak, Target};
+use crate::audio::{Calibration, Target};
 use crate::history::CallHistory;
 use crate::logs::{LogPage, LOG_APP};
 use crate::message::message;
@@ -13,6 +13,7 @@ use crate::storage::Account;
 use crate::{desktop, native, shortcuts};
 use serde::Serialize;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
@@ -269,14 +270,18 @@ enum Presence {
 }
 /// The device chosen not there, there again, and no device at all: said
 /// once each time it changes in the app's log, not once a second for as
-/// long as it lasts. `id` is what stands in.
-fn note_presence(state: &AppState, kind: &str, now: Presence, id: &str) {
+/// long as it lasts. `id` is what stands in. True when it changed just now.
+fn note_presence(state: &AppState, kind: &str, now: Presence, id: &str) -> bool {
     static NOTED: Mutex<[Presence; 2]> = Mutex::new([Presence::Chosen, Presence::Chosen]);
     let index = usize::from(kind == "speaker");
     let mut noted = NOTED.lock().unwrap();
     let before = std::mem::replace(&mut noted[index], now);
-    if let Some(line) = presence_line(kind, before, now, id) {
-        state.services.log(LOG_APP, line);
+    match presence_line(kind, before, now, id) {
+        Some(line) => {
+            state.services.log(LOG_APP, line);
+            true
+        }
+        None => false,
     }
 }
 /// The line for a change of how the device for a kind stands; none while
@@ -295,9 +300,9 @@ fn presence_line(kind: &str, before: Presence, now: Presence, id: &str) -> Optio
         Presence::None => format!("ksip: no {kind} at all, neither the one chosen nor a default to stand in; calls and the ringtone play nowhere"),
     })
 }
-fn note_stand_in(state: &AppState, kind: &str, target: &Target) {
+fn note_stand_in(state: &AppState, kind: &str, target: &Target) -> bool {
     let now = if target.stand_in == Some("absent") { Presence::StandIn } else { Presence::Chosen };
-    note_presence(state, kind, now, &target.id);
+    note_presence(state, kind, now, &target.id)
 }
 /// What the window shows for a kind of device: Windows' level and mute of
 /// the endpoint in use, the saved gain laid over, and whose endpoint it is.
@@ -310,35 +315,110 @@ pub struct VolumeView {
     pub stand_in: Option<&'static str>,
 }
 /// Reads a volume, or sets it. Reading asks Windows and lays the saved gain
-/// over; setting goes through the phone, since the engine and the settings
-/// take the change too, and the phone looks the endpoint in use up when it
-/// gets to the change, not before it is queued: a change meant for another
-/// endpoint than the one in use then (`expected`, the one the window was
-/// shown; the call moved meanwhile) is not made, and the answer says what
-/// is in use. The arguments are checked here, before anything is asked of
-/// Windows.
+/// over (read_volume); setting goes through the phone, since the engine and
+/// the settings take the change too, and the phone looks the endpoint in use
+/// up when it gets to the change, not before it is queued: a change meant
+/// for another endpoint than the one in use then (`expected`, the one the
+/// window was shown; the call moved meanwhile) is not made, and the answer
+/// says what is in use. The arguments are checked here, before anything is
+/// asked of Windows.
 pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<VolumeView, String> {
     if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
         return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
     }
-    let (result, target) = if level.is_some() || mute.is_some() {
-        let (kind, expected) = (kind.to_string(), expected.map(str::to_string));
-        state.phone.call(|reply| Command::SetVolume { kind, level, mute, expected, reply })?
-    } else {
-        let target = target(state, kind, true).inspect_err(|e| {
-            if *e == crate::audio::none_message(kind) {
-                note_presence(state, kind, Presence::None, "");
-            }
-        })?;
-        let mut result = crate::audio::volume(kind, &target.id, None, None)?;
+    if level.is_none() && mute.is_none() {
+        return read_volume(state, kind).0;
+    }
+    let (kind_owned, expected) = (kind.to_string(), expected.map(str::to_string));
+    let (result, target) = state.phone.call(|reply| Command::SetVolume { kind: kind_owned, level, mute, expected, reply })?;
+    note_stand_in(state, kind, &target);
+    Ok(VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in })
+}
+/// Windows' level and mute of the endpoint in use for the kind, the saved
+/// gain laid over, and whose endpoint it is; and whether how the chosen
+/// device stands changed just now (said in the log), which the device lists
+/// are looked at again for at once.
+fn read_volume(state: &AppState, kind: &str) -> (Result<VolumeView, String>, bool) {
+    let target = match target(state, kind, true) {
+        Ok(target) => target,
+        Err(e) => {
+            let changed = e == crate::audio::none_message(kind) && note_presence(state, kind, Presence::None, "");
+            return (Err(e), changed);
+        }
+    };
+    let changed = note_stand_in(state, kind, &target);
+    let view = crate::audio::volume(kind, &target.id, None, None).map(|mut result| {
         let gain = state.audio_gain(kind);
         if gain > 100 {
             result.level = gain;
         }
-        (result, target)
+        VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in }
+    });
+    (view, changed)
+}
+/// What the window shows for one kind of device: the volume (read_volume)
+/// and, when asked for, the meter's peak off the same endpoint. Each may
+/// fail on its own (the microphone's meter is refused by the privacy
+/// settings while its volume reads), so each carries its own error.
+#[derive(Clone, Serialize)]
+pub struct AudioSide {
+    pub volume: Option<VolumeView>,
+    pub volume_error: Option<String>,
+    pub peak: Option<f32>,
+    pub peak_error: Option<String>,
+}
+#[derive(Clone, Serialize)]
+pub struct AudioLevels {
+    pub microphone: AudioSide,
+    pub speaker: AudioSide,
+}
+fn audio_side(state: &AppState, kind: &str, meters: bool) -> (AudioSide, bool) {
+    let (volume, changed) = read_volume(state, kind);
+    let peak = match (&volume, meters) {
+        (_, false) => Ok(None),
+        (Ok(view), true) => crate::audio::peak(kind, &view.id).map(|peak| Some(peak.peak)),
+        (Err(e), true) => Err(e.clone()),
     };
-    note_stand_in(state, kind, &target);
-    Ok(VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in })
+    let side = AudioSide {
+        volume: volume.as_ref().ok().cloned(),
+        volume_error: volume.err(),
+        peak: peak.as_ref().ok().copied().flatten(),
+        peak_error: peak.err(),
+    };
+    (side, changed)
+}
+/// Both kinds in one look, which the window takes ten times a second while
+/// it is shown and once a second in the tray and behind the settings, where
+/// nobody sees the meters: they are not asked for then (`meters`), which
+/// lets the microphone's meter session close. The device lists are looked
+/// at again along the way (watch_devices).
+pub fn audio_levels_now(state: &AppState, meters: bool) -> AudioLevels {
+    let (microphone, microphone_changed) = audio_side(state, "microphone", meters);
+    let (speaker, speaker_changed) = audio_side(state, "speaker", meters);
+    watch_devices(state, microphone_changed || speaker_changed);
+    AudioLevels { microphone, speaker }
+}
+/// The audio devices, looked at again once a second along with the levels,
+/// and at once when how a chosen device stands changed: a device plugged in
+/// or pulled shows in the window's lists within a second, with nothing to
+/// press. The lists are the phone's, published with the snapshot; what
+/// differs from them goes to the phone, and the window's next look brings
+/// it back. A look that fails changes nothing.
+fn watch_devices(state: &AppState, now: bool) {
+    static LOOKED: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let mut looked = LOOKED.lock().unwrap();
+        if !now && looked.is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
+            return;
+        }
+        *looked = Some(Instant::now());
+    }
+    let Ok(devices) = crate::audio::devices() else {
+        return;
+    };
+    if crate::audio::devices_differ(&state.devices(), &devices) {
+        state.phone.send(Command::DevicesSeen(devices));
+    }
 }
 #[tauri::command]
 pub async fn audio_volume(
@@ -351,15 +431,11 @@ pub async fn audio_volume(
     let state = state.inner().clone();
     blocking(move || volume(&state, &kind, level, mute, expected.as_deref())).await
 }
-/// The level of the endpoint in use for the kind (target), ten times a second.
+/// The window's look at both kinds of device (audio_levels_now).
 #[tauri::command]
-pub async fn audio_peak(kind: String, state: State<'_, AppState>) -> Result<Peak, String> {
+pub async fn audio_levels(meters: bool, state: State<'_, AppState>) -> Result<AudioLevels, String> {
     let state = state.inner().clone();
-    blocking(move || {
-        let target = target(&state, &kind, false)?;
-        crate::audio::peak(&kind, &target.id)
-    })
-    .await
+    blocking(move || Ok(audio_levels_now(&state, meters))).await
 }
 #[tauri::command]
 pub async fn calibrate_aec(
@@ -421,6 +497,17 @@ mod tests {
         assert!(crate::audio::resolve("microphone", "bad\0id").is_err());
         assert!(crate::audio::peak("other", "default").is_err());
         assert!(crate::audio::peak("microphone", "bad\0id").is_err());
+    }
+    #[test]
+    fn device_lists_differ_by_what_they_name_not_by_order() {
+        use crate::audio::{devices_differ, Device};
+        let d = |id: &str, name: &str, kind: &str| Device { id: id.into(), name: name.into(), kind: kind.into() };
+        let a = vec![d("{m1}", "Mic", "microphone"), d("{s1}", "Speaker", "speaker")];
+        let b = vec![d("{s1}", "Speaker", "speaker"), d("{m1}", "Mic", "microphone")];
+        assert!(!devices_differ(&a, &b), "the same devices in another order are the same lists");
+        assert!(devices_differ(&a, &a[..1]), "one gone");
+        assert!(devices_differ(&a, &[a[0].clone(), d("{s1}", "Speaker (2-)", "speaker")]), "one renamed");
+        assert!(devices_differ(&a, &[a[0].clone(), a[1].clone(), d("{m2}", "Headset", "microphone")]), "one more");
     }
     #[test]
     fn each_change_of_presence_is_said_once() {

@@ -393,6 +393,11 @@ impl AppState {
     pub fn audio_gain(&self, kind: &str) -> u16 {
         self.published.with(|view| if kind == "microphone" { view.settings.microphone_gain } else { view.settings.speaker_gain })
     }
+    /// The audio devices as published, for the look that compares them with
+    /// Windows' (commands.rs, watch_devices).
+    pub fn devices(&self) -> Vec<crate::audio::Device> {
+        self.published.with(|view| view.devices.clone())
+    }
     /// The app is leaving: the phone is stopped through the actor, then a
     /// conversion still running gets a moment to finish. One that does not
     /// make it leaves its WAV and a partial MP3, and the next start converts
