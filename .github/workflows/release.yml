@@ -311,11 +311,11 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists. Published release assets are not replaced." }
           # YAML は共通のインデントを剥がすので、PowerShell には列 0 の here-string として届く。
           $template = @'
-          GitHub Actions がこのタグのソースだけから組んだ実行ファイルです。SIP サーバーと実機が要るテスト（`asterisk-*.py`・`app-*.ps1`）は、タグを打つ前に手元で通しています。
-
+          GitHub Actions がこのタグのソースから組んだ実行ファイルです。
           来歴の確認: `gh attestation verify {0} --repo {1}`
 
-          部品一覧（SBOM、CycloneDX 1.6）は `{5}` です。この実行ファイルのものであることの確認: `gh attestation verify {0} --repo {1} --predicate-type https://cyclonedx.org/bom`
+          SBOM（CycloneDX 1.6）は `{5}` です。
+          SBOM の確認: `gh attestation verify {0} --repo {1} --predicate-type https://cyclonedx.org/bom`
 
           | ファイル | SHA256 |
           | --- | --- |
