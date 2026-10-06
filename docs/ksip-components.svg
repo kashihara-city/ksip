@@ -1,0 +1,258 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="1308" viewBox="0 0 1420 1308">
+<title>KSIP の構成と接続方式</title>
+<style>text{font-family:'Noto Sans CJK JP','Noto Sans JP','Yu Gothic UI','Yu Gothic','Meiryo','Hiragino Sans',sans-serif} .th{font-size:14px;font-weight:500} .ts{font-size:12px} .tx{font-size:11px} .tb{font-size:11px;font-weight:500} .arr{stroke:#73726C;stroke-width:1;fill:none}</style>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#73726C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<rect width="1420" height="1308" fill="#FFFFFF"/>
+<rect x="60" y="40" width="180" height="64" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="150.0" y="63.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">ブラウザ・他アプリ</text>
+<text x="150.0" y="81.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">ksip: リンク</text>
+<rect x="410" y="40" width="220" height="64" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="520.0" y="54.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#712B13">中継プロセス</text>
+<text x="520.0" y="72.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">ksip.exe〈ksip:リンク引数〉</text>
+<text x="520.0" y="90.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">Rust</text>
+<rect x="40" y="130" width="678" height="220" rx="16" fill="none" stroke="#B4B2A9" stroke-width="0.8" stroke-dasharray="5 4"/>
+<text x="56" y="152" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">アプリ本体：ksip.exe／Rust・Tauri 2</text>
+<rect x="60" y="170" width="160" height="56" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+<text x="140.0" y="189.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#633806">画面（src-web）</text>
+<text x="140.0" y="207.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#854F0B">HTML・CSS・JS</text>
+<rect x="60" y="274" width="160" height="56" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="140.0" y="286" text-anchor="middle" dominant-baseline="central" class="th" fill="#712B13">engine_link.rs</text>
+<text x="140.0" y="303" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">エンジンの起動と中継</text>
+<text x="140.0" y="319" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">Rust</text>
+<rect x="340" y="170" width="358" height="160" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="519" y="196" text-anchor="middle" dominant-baseline="central" class="th" fill="#712B13">Rust本体（src-tauri）</text>
+<rect x="364" y="222" width="310" height="84" rx="6" fill="#FFFFFF" stroke="#993C1D" stroke-width="0.8"/>
+<text x="519" y="250" text-anchor="middle" dominant-baseline="central" class="th" fill="#712B13">PhoneActor</text>
+<text x="519" y="276" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">電話状態の所有・状態更新</text>
+<rect x="746" y="130" width="140" height="614" rx="16" fill="none" stroke="#B4B2A9" stroke-width="0.8" stroke-dasharray="5 4"/>
+<text x="816" y="152" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Windows</text>
+<rect x="756" y="170" width="120" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="816.0" y="183.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">レジストリ</text>
+<text x="816.0" y="201.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">HKCU</text>
+<rect x="756" y="222" width="120" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="816.0" y="235.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">資格情報</text>
+<text x="816.0" y="253.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">Credential Mgr</text>
+<rect x="756" y="274" width="120" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="816.0" y="287.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">その他 Win32</text>
+<text x="816.0" y="305.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">通知・MF など</text>
+<rect x="756" y="506" width="120" height="218" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="816" y="526" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">WASAPI（COM）</text>
+<text x="816" y="548" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">計測・校正</text>
+<text x="816" y="588" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">通話音声</text>
+<text x="816" y="692" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">着信音</text>
+<rect x="40" y="390" width="678" height="354" rx="16" fill="none" stroke="#B4B2A9" stroke-width="0.8" stroke-dasharray="5 4"/>
+<text x="240" y="412" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">音声エンジン：ksip.exe --engine／別プロセス</text>
+<rect x="60" y="440" width="140" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="130.0" y="454.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">ksip_ctrl</text>
+<text x="130.0" y="472.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">制御接続・stdio</text>
+<text x="130.0" y="490.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">C++20</text>
+<rect x="240" y="440" width="136" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="308.0" y="454.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">ksip</text>
+<text x="308.0" y="472.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">通話・転送・BLF</text>
+<text x="308.0" y="490.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">C++20</text>
+<rect x="396" y="440" width="136" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="464.0" y="454.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">ksip_audio_filter</text>
+<text x="464.0" y="472.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">録音・増幅・DTMF</text>
+<text x="464.0" y="490.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">C++20</text>
+<rect x="558" y="440" width="140" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="628.0" y="454.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">ksip_audio</text>
+<text x="628.0" y="472.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">機器入出力・着信音</text>
+<text x="628.0" y="490.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">C++20</text>
+<rect x="60" y="556" width="140" height="64" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="130.0" y="570.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#085041">LibreSSL</text>
+<text x="130.0" y="588.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">暗号・証明書検証</text>
+<text x="130.0" y="606.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">C</text>
+<rect x="240" y="556" width="292" height="64" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="386.0" y="570.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#085041">baresip / re</text>
+<text x="386.0" y="588.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">SIP・RTP・コーデック</text>
+<text x="386.0" y="606.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">C</text>
+<rect x="558" y="556" width="140" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="628.0" y="570.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">WebRTC</text>
+<text x="628.0" y="588.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">ADM・APM</text>
+<text x="628.0" y="606.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">C++</text>
+<rect x="60" y="648" width="140" height="80" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="130.0" y="662" text-anchor="middle" dominant-baseline="central" class="th" fill="#712B13">native.rs</text>
+<text x="130.0" y="680" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">main.rs からの</text>
+<text x="130.0" y="696" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">エンジンの入口</text>
+<text x="130.0" y="714" text-anchor="middle" dominant-baseline="central" class="ts" fill="#993C1D">Rust</text>
+<rect x="284" y="790" width="190" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="379.0" y="809.0" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">SIPサーバー・相手</text>
+<text x="379.0" y="827.0" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">SIP・RTP</text>
+<path d="M242 72 L408 72" class="arr" marker-end="url(#a)"/>
+<path d="M520 106 L520 168" class="arr" marker-end="url(#a)"/>
+<path d="M222 186 L338 186" class="arr" marker-end="url(#a)"/>
+<path d="M338 212 L222 212" class="arr" marker-end="url(#a)"/>
+<path d="M222 302 L338 302" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<text x="280" y="286" text-anchor="middle" dominant-baseline="central" class="tx" fill="#5F5E5A">要求／応答・イベント</text>
+<path d="M700 192 L754 192" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M700 244 L754 244" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M700 296 L754 296" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M700 320 L740 320 L740 548 L754 548" class="arr" stroke-dasharray="4 3" marker-end="url(#a)"/>
+<path d="M90 332 L90 438" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M140 438 L140 332" class="arr" marker-end="url(#a)"/>
+<path d="M60 310 L30 310 L30 700 L58 700" class="arr" stroke-dasharray="4 3" marker-end="url(#a)"/>
+<path d="M180 506 L254 554" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M308 506 L308 554" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M464 506 L464 554" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M575 506 L518 554" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M628 506 L628 554" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M202 588 L238 588" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M202 692 L270 692 L270 622" class="arr" marker-end="url(#a)"/>
+<path d="M700 588 L754 588" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M700 496 L722 496 L722 692 L754 692" class="arr" marker-end="url(#a)"/>
+<path d="M60 684 L50 684 L50 496 L58 496" class="arr" stroke-dasharray="4 3" marker-end="url(#a)"/>
+<path d="M379 622 L379 788" class="arr" marker-end="url(#a)" marker-start="url(#a)"/>
+<text x="398" y="766" text-anchor="start" dominant-baseline="central" class="tx" fill="#5F5E5A">SIP（UDP / TCP / TLS）・RTP / SRTP</text>
+<circle cx="325" cy="72" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="325" y="72" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">1</text>
+<circle cx="520" cy="118" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="520" y="118" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">2</text>
+<circle cx="280" cy="186" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="280" y="186" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">3</text>
+<circle cx="280" cy="212" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="280" y="212" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">4</text>
+<circle cx="280" cy="302" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="280" y="302" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">5</text>
+<circle cx="728" cy="192" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="728" y="192" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">6</text>
+<circle cx="728" cy="244" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="728" y="244" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">7</text>
+<circle cx="728" cy="296" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="728" y="296" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">8</text>
+<circle cx="740" cy="440" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="740" y="440" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">9</text>
+<circle cx="30" cy="460" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="30" y="460" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">10</text>
+<circle cx="90" cy="366" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="90" y="366" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">11</text>
+<circle cx="140" cy="366" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="140" y="366" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">12</text>
+<circle cx="236" cy="692" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="236" y="692" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">13</text>
+<circle cx="308" cy="530" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="308" y="530" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">14</text>
+<circle cx="628" cy="530" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="628" y="530" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">15</text>
+<circle cx="728" cy="588" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="728" y="588" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">16</text>
+<circle cx="728" cy="692" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="728" y="692" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">17</text>
+<circle cx="220" cy="588" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="220" y="588" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">18</text>
+<circle cx="379" cy="766" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="379" y="766" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">19</text>
+<circle cx="50" cy="590" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="50" y="590" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">20</text>
+<rect x="530" y="796" width="14" height="14" rx="3" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+<text x="550" y="803" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">JavaScript</text>
+<rect x="630" y="796" width="14" height="14" rx="3" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="650" y="803" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">Rust</text>
+<rect x="530" y="824" width="14" height="14" rx="3" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="550" y="831" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">C++</text>
+<rect x="630" y="824" width="14" height="14" rx="3" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="650" y="831" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">C</text>
+<text x="40" y="882" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">※ 中継プロセス・アプリ本体・音声エンジンは別々の配布バイナリではなく、同じ ksip.exe を起動引数で切り替えた起動モードです。</text>
+<text x="40" y="902" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">※ KSIP の C++（モジュール 4 つ）は WebRTC 同梱の clang-cl で組み、clang-tidy と AddressSanitizer / UndefinedBehaviorSanitizer の検査を通しています。</text>
+<text x="940" y="48" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">接続方式</text>
+<line x1="940" y1="62" x2="1400" y2="62" stroke="#D3D1C7" stroke-width="0.8"/>
+<circle cx="950" cy="86" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="86" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">1</text>
+<text x="968" y="86" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">ブラウザ → 中継プロセス</text>
+<text x="968" y="105" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">カスタムURLプロトコル（HKCU\Software\Classes\ksip）で、</text>
+<text x="968" y="122" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">ksip.exe が〈ksip:リンク〉を引数として起動される</text>
+<circle cx="950" cy="150" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="150" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">2</text>
+<text x="968" y="150" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">中継プロセス → 本体</text>
+<text x="968" y="169" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">名前付きパイプ（CreateNamedPipeW）。ユーザーSIDと</text>
+<text x="968" y="186" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">ログオンセッションで名前を分け、ACLで本人以外を拒否</text>
+<circle cx="950" cy="214" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="214" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">3</text>
+<text x="968" y="214" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">画面 → 本体</text>
+<text x="968" y="233" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">Tauri invoke によるコマンドと、snapshot の定期取得（約300ms）。</text>
+<text x="968" y="250" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">電話状態の表示は、この snapshot の定期取得による。音量・</text>
+<text x="968" y="267" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">メーター・機器一覧は audio_levels の見回り（表示中0.1秒、ほか1秒）</text>
+<circle cx="950" cy="295" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="295" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">4</text>
+<text x="968" y="295" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">本体 → 画面</text>
+<text x="968" y="314" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">要求への応答と、ksip-link 等のイベント</text>
+<circle cx="950" cy="342" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="342" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">5</text>
+<text x="968" y="342" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">Rust本体 ↔ engine_link</text>
+<text x="968" y="361" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">同一プロセス内の要求／応答・イベント。PhoneActor が電話状態を</text>
+<text x="968" y="378" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">所有し、コマンド・応答・イベントを受けて状態を更新する</text>
+<circle cx="950" cy="406" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="406" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">6</text>
+<text x="968" y="406" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">本体 ↔ レジストリ</text>
+<text x="968" y="425" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">winreg クレート（Win32 Reg API のラッパー）</text>
+<circle cx="950" cy="453" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="453" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">7</text>
+<text x="968" y="453" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">本体 ↔ 資格情報</text>
+<text x="968" y="472" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">CredReadW / CredWriteW / CredDeleteW を直接呼び出し</text>
+<circle cx="950" cy="500" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="500" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">8</text>
+<text x="968" y="500" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">本体 ↔ その他 Win32</text>
+<text x="968" y="519" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">通知、RegisterHotKey、Media Foundation（MP3変換）、</text>
+<text x="968" y="536" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">証明書ストア、GetAdaptersAddresses、ファイルダイアログ</text>
+<circle cx="950" cy="564" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="564" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">9</text>
+<text x="968" y="564" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">本体 → WASAPI（破線）</text>
+<text x="968" y="583" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">COM。レベルメーター・音量操作・機器一覧の追従・AEC校正時の</text>
+<text x="968" y="600" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">録音／再生。通常の通話音声はこの経路を通らない</text>
+<circle cx="950" cy="628" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="628" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">10</text>
+<text x="968" y="628" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">engine_link → エンジンの入口（破線）</text>
+<text x="968" y="647" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">子プロセスとして起動（同じ ksip.exe を --engine 付きで spawn）。</text>
+<text x="968" y="664" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">エンジンは親のプロセスハンドルを監視し、本体終了で自動終了</text>
+<circle cx="950" cy="692" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="692" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">11</text>
+<text x="968" y="692" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">engine_link ↔ ksip_ctrl</text>
+<text x="968" y="711" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">認証付き loopback TCP。netstring 形式の JSON を送受信し、</text>
+<text x="968" y="728" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">起動ごとの秘密値（環境変数で受け渡し）で接続を認証</text>
+<circle cx="950" cy="756" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="756" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">12</text>
+<text x="968" y="756" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">ksip_ctrl（stdio）→ engine_link</text>
+<text x="968" y="775" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">標準出力・標準エラーの匿名パイプ。エンジン全体の出力（baresip・</text>
+<text x="968" y="792" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">libre・各モジュール）が通り、ログの [engine] 行になる（20 でつなぐ）</text>
+<circle cx="950" cy="820" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="820" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">13</text>
+<text x="968" y="820" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">入口 → baresip</text>
+<text x="968" y="839" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">Rust → C の FFI。main を改名した ksip_engine_main を</text>
+<text x="968" y="856" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">1回呼び出して、エンジン全体を起動する</text>
+<circle cx="950" cy="884" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="884" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">14</text>
+<text x="968" y="884" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">各モジュール ↔ baresip</text>
+<text x="968" y="903" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">baresip のモジュール API（C）。各モジュール共通</text>
+<text x="968" y="920" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">（ksip_ctrl・ksip・ksip_audio・ksip_audio_filter）</text>
+<circle cx="950" cy="948" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="948" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">15</text>
+<text x="968" y="948" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">ksip_audio ↔ WebRTC</text>
+<text x="968" y="967" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">KSIP 独自の C ABI（ksip_audio_bridge.h）</text>
+<circle cx="950" cy="995" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="995" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">16</text>
+<text x="968" y="995" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">WebRTC → WASAPI（通話音声）</text>
+<text x="968" y="1014" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">通話音声は WebRTC ADM 経由で入出力デバイスを開く</text>
+<circle cx="950" cy="1042" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="1042" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">17</text>
+<text x="968" y="1042" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">ksip_audio → WASAPI（着信音）</text>
+<text x="968" y="1061" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">着信音は ksip_audio の alert_player が自前の WASAPI 再生で鳴らす。</text>
+<text x="968" y="1078" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">選んだスピーカーが外れれば既定へ、戻れば戻る</text>
+<circle cx="950" cy="1106" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="1106" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">18</text>
+<text x="968" y="1106" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">baresip / re ↔ LibreSSL</text>
+<text x="968" y="1125" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">暗号処理・証明書検証を提供するライブラリ。OpenSSL 互換 API で</text>
+<text x="968" y="1142" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">静的リンク。アプリ本体も、Windows の証明書を渡す前の</text>
+<text x="968" y="1159" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">読み取り検査（d2i_X509）に同じライブラリを直接呼ぶ</text>
+<circle cx="950" cy="1187" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="1187" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">19</text>
+<text x="968" y="1187" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">baresip / re ↔ SIPサーバー・相手</text>
+<text x="968" y="1206" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">SIP（UDP / TCP / TLS）・RTP / SRTP</text>
+<circle cx="950" cy="1234" r="9.5" fill="#FFFFFF" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="950" y="1234" text-anchor="middle" dominant-baseline="central" class="tb" fill="#444441">20</text>
+<text x="968" y="1234" text-anchor="start" dominant-baseline="central" class="th" fill="#2C2C2A">入口 → ksip_ctrl（stdio、破線）</text>
+<text x="968" y="1253" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">baresip の main の前に ksip_stdio_init を呼び、エンジンの</text>
+<text x="968" y="1270" text-anchor="start" dominant-baseline="central" class="ts" fill="#5F5E5A">標準出力・標準エラーをアプリのパイプにつなぐ（12 の元）</text>
+</svg>
