@@ -62,7 +62,12 @@ $webrtc = if ($env:KSIP_WEBRTC_SOURCE) { $env:KSIP_WEBRTC_SOURCE } else { "$root
 $clang = "$($webrtc.Replace('\','/'))/third_party/llvm-build/Release+Asserts/bin/clang-cl.exe"
 if (!(Test-Path -LiteralPath $clang)) { throw "The clang-cl the pinned WebRTC brings is missing: $clang" }
 $ksipFlags = "/O2 /DNDEBUG /DNOCRYPT /Brepro /clang:-ffile-prefix-map=$root/= /clang:-ffile-prefix-map=$($root.Replace('/','\'))\="
-Run cmake (@('-S','src-native','-B','temp/build/ksip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release',"-DCMAKE_C_COMPILER=$clang","-DCMAKE_CXX_COMPILER=$clang","-DCMAKE_C_FLAGS_RELEASE=$ksipFlags","-DCMAKE_CXX_FLAGS_RELEASE=$ksipFlags",'-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',"-DKSIP_NATIVE=$prefix","-DBARESIP_SOURCE=$root/temp/vendor/baresip") + $tls)
+# The archiver and the linker stay MSVC's, named outright: for a clang
+# compiler CMake takes LLVM's llvm-lib and lld-link when a machine has them
+# (the GitHub runner has LLVM installed), and llvm-lib knows no /Brepro.
+$lib = (Get-Command lib.exe).Source
+$link = (Get-Command link.exe).Source
+Run cmake (@('-S','src-native','-B','temp/build/ksip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release',"-DCMAKE_C_COMPILER=$clang","-DCMAKE_CXX_COMPILER=$clang","-DCMAKE_C_FLAGS_RELEASE=$ksipFlags","-DCMAKE_CXX_FLAGS_RELEASE=$ksipFlags",'-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_AR=$lib","-DCMAKE_LINKER=$link","-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',"-DKSIP_NATIVE=$prefix","-DBARESIP_SOURCE=$root/temp/vendor/baresip") + $tls)
 Run cmake @('--build','temp/build/ksip','--parallel','8')
 Run cmake @('--install','temp/build/ksip')
 $paths = @('-DSHARE_PATH=share/baresip','-DMOD_PATH=lib/baresip/modules')
