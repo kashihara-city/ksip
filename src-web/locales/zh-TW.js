@@ -56,6 +56,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ALERT_START_FAILED:'無法播放鈴聲（結果 {0}），請確認輸出裝置',
       AUDIO_DEVICE_SAVED_MISSING:'已儲存的裝置（找不到）',
       AUDIO_DEVICE_UNPLUGGED:'所選裝置已拔除',
+      AUDIO_MICROPHONE_NONE:'沒有可用的麥克風（所選裝置與預設裝置都不存在）；通話會傳送靜音',
+      AUDIO_SPEAKER_NONE:'沒有可用的喇叭（所選裝置與預設裝置都不存在）；通話聲音與來電鈴聲都不會播放',
       AUDIO_INPUT_LEVEL:'輸入音量',
       AUDIO_MICROPHONE:'麥克風',
       AUDIO_MICROPHONE_DEFAULT:'Windows 預設通訊麥克風',

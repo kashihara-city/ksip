@@ -213,12 +213,30 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
 /// another machine, a device removed for good). The engine opens the
 /// default in place of both (device_selection.cc), and so does `resolve`.
 fn not_there(e: &windows::core::Error) -> bool {
-    e.code() == unplugged().code() || e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult()
+    let code = e.code();
+    code == unplugged().code()
+        || code == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult()
+        || code == windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED
+        || code == windows::Win32::Foundation::ERROR_NOT_CONNECTED.to_hresult()
+}
+/// No device of the kind at all: neither the one chosen nor a default to
+/// stand in for it (`resolve`). Calls then send silence (no microphone), or
+/// play nowhere, the ringtone included (no speaker).
+pub fn none_message(kind: &str) -> String {
+    if kind == "microphone" {
+        message("AUDIO_MICROPHONE_NONE")
+    } else {
+        message("AUDIO_SPEAKER_NONE")
+    }
 }
 fn error(e: windows::core::Error) -> String {
     if not_there(&e) {
         return message("AUDIO_DEVICE_UNPLUGGED");
     }
+/// So is one that goes while it is read: a stream or meter held on it
+/// answers AUDCLNT_E_DEVICE_INVALIDATED, and one being opened as it goes
+/// ERROR_NOT_CONNECTED, for the one reading before Windows says the
+/// endpoint is no longer active.
     message_with("AUDIO_DEVICE_FAILED", [e])
 }
 /// Windows' privacy switches for the microphone, as Settings > Privacy &
@@ -337,7 +355,9 @@ pub fn resolve(kind: &str, choice: &str) -> Result<Resolved, String> {
             }
         }
     }
-    run(kind, choice).map_err(error)
+    // The only "not there" that comes out is the default's: no device of the
+    // kind at all, not even one to stand in.
+    run(kind, choice).map_err(|e| if not_there(&e) { none_message(kind) } else { error(e) })
 }
 /// Whether the meter's microphone session is to be opened (again) for the
 /// endpoint wanted now: there is none, or it is another endpoint's (the
@@ -1064,6 +1084,18 @@ mod tests {
         let found = target("microphone", "default", Some(&elsewhere), true).unwrap();
         assert_eq!(found.stand_in, None, "the default asked for stands in for nothing");
         assert!(target("other", "default", None, true).is_err());
+    // A device going while it is read answers otherwise than "not active"
+    // for that one reading; it is not there all the same.
+    #[test]
+    fn a_device_going_while_read_is_not_there() {
+        use windows::core::Error;
+        assert!(not_there(&Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)));
+        assert!(not_there(&Error::from_hresult(windows::Win32::Foundation::ERROR_NOT_CONNECTED.to_hresult())));
+        assert!(not_there(&unplugged()));
+        assert!(!not_there(&Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED)), "a refusal is not an absence");
+        assert_eq!(error(Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)), message("AUDIO_DEVICE_UNPLUGGED"));
+    }
+
     }
     // A change the window meant for the endpoint it was shown is made only
     // while that is the one in use when the phone gets to it.

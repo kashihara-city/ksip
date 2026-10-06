@@ -56,6 +56,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ALERT_START_FAILED:'The ring tone could not be started (result {0}). Check the output device',
       AUDIO_DEVICE_SAVED_MISSING:'Saved device (not found)',
       AUDIO_DEVICE_UNPLUGGED:'The chosen device is unplugged',
+      AUDIO_MICROPHONE_NONE:'No microphone at all (neither the chosen one nor a default to stand in); calls send silence',
+      AUDIO_SPEAKER_NONE:'No speaker at all (neither the chosen one nor a default to stand in); calls and the ringtone play nowhere',
       AUDIO_INPUT_LEVEL:'Input level',
       AUDIO_MICROPHONE:'Microphone',
       AUDIO_MICROPHONE_DEFAULT:'Windows default communication microphone',

@@ -258,25 +258,46 @@ pub fn target(state: &AppState, kind: &str, classify: bool) -> Result<Target, St
     let (choice, call) = state.audio_choice(kind);
     crate::audio::target(kind, &choice, call.as_ref(), classify)
 }
-/// The device chosen not there, and there again: said once each way in the
-/// app's log, not once a second for as long as it is gone.
-fn note_stand_in(state: &AppState, kind: &str, target: &Target) {
-    static ABSENT: Mutex<[bool; 2]> = Mutex::new([false, false]);
+/// How the device for a kind stands, for the app's log: the one chosen
+/// serves, another stands in while it is not there, or there is none at all
+/// (neither it nor a default to stand in).
+#[derive(Clone, Copy, PartialEq)]
+enum Presence {
+    Chosen,
+    StandIn,
+    None,
+}
+/// The device chosen not there, there again, and no device at all: said
+/// once each time it changes in the app's log, not once a second for as
+/// long as it lasts. `id` is what stands in.
+fn note_presence(state: &AppState, kind: &str, now: Presence, id: &str) {
+    static NOTED: Mutex<[Presence; 2]> = Mutex::new([Presence::Chosen, Presence::Chosen]);
     let index = usize::from(kind == "speaker");
-    let absent = target.stand_in == Some("absent");
-    let mut noted = ABSENT.lock().unwrap();
-    if noted[index] == absent {
-        return;
+    let mut noted = NOTED.lock().unwrap();
+    let before = std::mem::replace(&mut noted[index], now);
+    if let Some(line) = presence_line(kind, before, now, id) {
+        state.services.log(LOG_APP, line);
     }
-    noted[index] = absent;
-    state.services.log(
-        LOG_APP,
-        if absent {
-            format!("ksip: the {kind} chosen is not there; {} serves in its place", target.id)
-        } else {
-            format!("ksip: the {kind} chosen is there again")
-        },
-    );
+}
+/// The line for a change of how the device for a kind stands; none while
+/// it stays as it was.
+fn presence_line(kind: &str, before: Presence, now: Presence, id: &str) -> Option<String> {
+    if before == now {
+        return None;
+    }
+    Some(match now {
+        Presence::StandIn if before == Presence::None => format!("ksip: a {kind} is there again; {id} serves in place of the one chosen"),
+        Presence::StandIn => format!("ksip: the {kind} chosen is not there; {id} serves in its place"),
+        Presence::Chosen => format!("ksip: the {kind} chosen is there again"),
+        Presence::None if kind == "microphone" => {
+            "ksip: no microphone at all, neither the one chosen nor a default to stand in; calls send silence".to_string()
+        }
+        Presence::None => format!("ksip: no {kind} at all, neither the one chosen nor a default to stand in; calls and the ringtone play nowhere"),
+    })
+}
+fn note_stand_in(state: &AppState, kind: &str, target: &Target) {
+    let now = if target.stand_in == Some("absent") { Presence::StandIn } else { Presence::Chosen };
+    note_presence(state, kind, now, &target.id);
 }
 /// What the window shows for a kind of device: Windows' level and mute of
 /// the endpoint in use, the saved gain laid over, and whose endpoint it is.
@@ -304,7 +325,11 @@ pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<boo
         let (kind, expected) = (kind.to_string(), expected.map(str::to_string));
         state.phone.call(|reply| Command::SetVolume { kind, level, mute, expected, reply })?
     } else {
-        let target = target(state, kind, true)?;
+        let target = target(state, kind, true).inspect_err(|e| {
+            if *e == crate::audio::none_message(kind) {
+                note_presence(state, kind, Presence::None, "");
+            }
+        })?;
         let mut result = crate::audio::volume(kind, &target.id, None, None)?;
         let gain = state.audio_gain(kind);
         if gain > 100 {
@@ -396,5 +421,17 @@ mod tests {
         assert!(crate::audio::resolve("microphone", "bad\0id").is_err());
         assert!(crate::audio::peak("other", "default").is_err());
         assert!(crate::audio::peak("microphone", "bad\0id").is_err());
+    }
+    #[test]
+    fn each_change_of_presence_is_said_once() {
+        use Presence::{Chosen, StandIn};
+        assert!(presence_line("microphone", Chosen, Chosen, "").is_none(), "no change, no line");
+        let line = |before, now| presence_line("speaker", before, now, "{d}").unwrap();
+        assert!(line(Chosen, StandIn).contains("chosen is not there; {d} serves"));
+        assert!(line(StandIn, Chosen).contains("chosen is there again"));
+        assert!(line(StandIn, Presence::None).contains("no speaker at all") && line(StandIn, Presence::None).contains("ringtone"));
+        assert!(line(Presence::None, StandIn).contains("a speaker is there again; {d} serves"), "out of none, what serves is said");
+        assert!(line(Presence::None, Chosen).contains("chosen is there again"));
+        assert!(presence_line("microphone", Chosen, Presence::None, "").unwrap().contains("calls send silence"));
     }
 }

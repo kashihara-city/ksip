@@ -67,10 +67,16 @@ async function refreshVolume(kind,level=null,mute=null){
     if(result.stand_in==='failed')notices.push(t('AUDIO_DEVICE_KEPT'));
     if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));
     if(result.muted)notices.push(t('MICROPHONE_MUTED'));
-    $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);
+    $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);$(kind+'-volume-status').classList.remove('missing');
     logWorks('volume '+kind);
   }
-  catch(e){logFailure('volume '+kind,e);control.id=null;control.available=false;$(kind+'-level').textContent='—';$(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback?t('MICROPHONE_SILENT'):t(String(e));}
+  catch(e){
+    logFailure('volume '+kind,e);control.id=null;control.available=false;$(kind+'-level').textContent='—';
+    // No device of the kind at all is said in red: a call would send silence, or play nowhere, the ringtone included.
+    const none=String(e)==='AUDIO_MICROPHONE_NONE'||String(e)==='AUDIO_SPEAKER_NONE';
+    $(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback&&!none?t('MICROPHONE_SILENT'):t(String(e));
+    $(kind+'-volume-status').classList.toggle('missing',none);
+  }
   finally{control.pending=false;render();if(control.queued)refreshVolume(kind);}
 }
 // A change waiting to be sent, for the endpoint shown when it was made. The

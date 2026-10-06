@@ -56,6 +56,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       ALERT_START_FAILED:'着信音を鳴らせません（結果 {0}）。出力先の機器を確認してください',
       AUDIO_DEVICE_SAVED_MISSING:'保存されたデバイス（未検出）',
       AUDIO_DEVICE_UNPLUGGED:'選んだデバイスが外れています',
+      AUDIO_MICROPHONE_NONE:'使えるマイクがありません（選んだデバイスも、代わりの既定のデバイスもありません）。通話には無音を送ります',
+      AUDIO_SPEAKER_NONE:'使えるスピーカーがありません（選んだデバイスも、代わりの既定のデバイスもありません）。通話の音も着信音も鳴りません',
       AUDIO_INPUT_LEVEL:'入力レベル',
       AUDIO_MICROPHONE:'マイク',
       AUDIO_MICROPHONE_DEFAULT:'Windowsの既定の通信マイク',

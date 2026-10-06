@@ -257,7 +257,8 @@ summary {
 .mute.muted .waves {
   display:none;
 }
-.audio .hint.muted {
+.audio .hint.muted,
+.audio .hint.missing {
   color:#b3452f;
 }
 .audio .hint:empty {
