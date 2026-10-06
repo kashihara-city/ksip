@@ -32,10 +32,11 @@ $programs = @(
     @{ name = 'test-inband-dtmf'; sources = @('src-native/test/test-inband-dtmf.cpp', 'src-native/ksip_audio/inband_dtmf.cpp')
        flags = @('/DWIN32', '/Isrc-native', '/Itemp/build/native/include/re'); libs = @(); arguments = @() },
     # The WebRTC library is not instrumented, so the STL's container
-    # annotations (which ASan would otherwise add on this side) are off here,
-    # or the linker refuses the mix.
+    # annotations (which ASan would otherwise add on this side) are all off
+    # here, or the linker refuses the mix; all of them, since each STL adds
+    # to the list (vector and string, then optional).
     @{ name = 'test-webrtc-audio'; sources = @('src-native/test/test-webrtc-audio.cpp')
-       flags = @('/Isrc-native/webrtc', '/Itemp/build/native/include/ksip', '/D_DISABLE_VECTOR_ANNOTATION', '/D_DISABLE_STRING_ANNOTATION')
+       flags = @('/Isrc-native/webrtc', '/Itemp/build/native/include/ksip', '/D_DISABLE_STL_ANNOTATION')
        libs = @('/LIBPATH:temp/build/native/lib', 'ksip_webrtc_audio.lib', 'clang_rt.builtins-x86_64.lib', 'winmm.lib', 'crypt32.lib', 'iphlpapi.lib', 'secur32.lib', 'oleaut32.lib', 'advapi32.lib')
        arguments = @() }
 )
