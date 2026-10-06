@@ -502,6 +502,16 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
         .recv_timeout(std::time::Duration::from_secs(2))
         .map_err(|_| message("AUDIO_MONITOR_STALLED"))?
 }
+/// Whether two device lists name different devices (by id, kind and name),
+/// whichever order they come in.
+pub fn devices_differ(a: &[Device], b: &[Device]) -> bool {
+    fn key(list: &[Device]) -> Vec<(&str, &str, &str)> {
+        let mut names: Vec<(&str, &str, &str)> = list.iter().map(|d| (d.id.as_str(), d.kind.as_str(), d.name.as_str())).collect();
+        names.sort_unstable();
+        names
+    }
+    key(a) != key(b)
+}
 pub fn devices() -> Result<Vec<Device>, String> {
     fn run() -> windows::core::Result<Vec<Device>> {
         let _com = Com::new()?;

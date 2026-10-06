@@ -14,7 +14,6 @@ import {state, ready, busy, run, update, setError} from './session.js';
 import {render} from './phone.js';
 
 export const kinds=['microphone','speaker'];
-const peakPending={microphone:false,speaker:false};
 // For each kind: a request on its way, the slider held, what the last answer
 // said (available, muted, the endpoint's id), and a change waiting to be sent.
 export const volumes=Object.fromEntries(kinds.map(k=>[k,{pending:false,dragging:false,available:false,muted:false,id:null,sequence:0,queued:null}]));
@@ -38,46 +37,48 @@ function logWorks(where){
   if(said[where])logUi(where,'ok');
   delete said[where];
 }
-// The level and the mute are Windows' own for the endpoint in use; either is
-// set when given, and both are read back, so the icons follow what a headset
-// key or another program did within a second. A change the person made
-// always goes through the queue (queueChange), and leaves it only when it is
-// sent: while nothing can be sent (a request on its way, the slider held,
-// the phone busy with an operation) it waits there, and goes with the next
-// read, which the end of the request, the end of the drag or the poll a
-// second later brings. It is sent for the endpoint it was meant for
-// (`expected`): the backend leaves it unmade when another is in use by then.
-async function refreshVolume(kind,level=null,mute=null){
+// The level and the mute are Windows' own for the endpoint in use; both are
+// read with every look (pollAudio), so the icons follow what a headset key
+// or another program did within a tenth of a second, and either is set when
+// the person asks. A change the person made always goes through the queue
+// (queueChange), and leaves it only when it is sent (sendVolume): while
+// nothing can be sent (a request on its way, the slider held, the phone busy
+// with an operation) it waits there, and goes with the next look. It is sent
+// for the endpoint it was meant for (`expected`): the backend leaves it
+// unmade when another is in use by then.
+async function sendVolume(kind){
   const control=volumes[kind];
-  if(level!==null||mute!==null)queueChange(kind,{level,mute});
-  if(!ready||busy||control.pending||control.dragging||control.pointer)return;
-  const waiting=control.queued;
-  control.queued=null;
-  const expected=waiting?waiting.device:control.id;
-  if(waiting){level=waiting.level;mute=waiting.mute;}
+  if(!ready||busy||control.pending||control.dragging||control.pointer||!control.queued)return;
+  const waiting=control.queued;control.queued=null;
   const sequence=++control.sequence;control.pending=true;
   try{
-    const result=await invoke('audio_volume',{kind,level,mute,expected});
+    const result=await invoke('audio_volume',{kind,level:waiting.level,mute:waiting.mute,expected:waiting.device});
     if(sequence!==control.sequence||control.dragging)return;
-    control.id=result.id;
-    $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';
-    const notices=[];
-    if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));
-    if(result.stand_in==='absent')notices.push(t('AUDIO_DEVICE_FALLBACK'));
-    if(result.stand_in==='failed')notices.push(t('AUDIO_DEVICE_KEPT'));
-    if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));
-    if(result.muted)notices.push(t('MICROPHONE_MUTED'));
-    $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);$(kind+'-volume-status').classList.remove('missing');
-    logWorks('volume '+kind);
+    applyVolume(kind,result);
   }
-  catch(e){
-    logFailure('volume '+kind,e);control.id=null;control.available=false;$(kind+'-level').textContent='—';
-    // No device of the kind at all is said in red: a call would send silence, or play nowhere, the ringtone included.
-    const none=String(e)==='AUDIO_MICROPHONE_NONE'||String(e)==='AUDIO_SPEAKER_NONE';
-    $(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback&&!none?t('MICROPHONE_SILENT'):t(String(e));
-    $(kind+'-volume-status').classList.toggle('missing',none);
-  }
-  finally{control.pending=false;render();if(control.queued)refreshVolume(kind);}
+  catch(e){failVolume(kind,e);}
+  finally{control.pending=false;render();if(control.queued)sendVolume(kind);}
+}
+// What a look, or a change, said about a kind of device, onto its controls.
+function applyVolume(kind,result){
+  const control=volumes[kind];
+  control.id=result.id;
+  $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';
+  const notices=[];
+  if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));
+  if(result.stand_in==='absent')notices.push(t('AUDIO_DEVICE_FALLBACK'));
+  if(result.stand_in==='failed')notices.push(t('AUDIO_DEVICE_KEPT'));
+  if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));
+  if(result.muted)notices.push(t('MICROPHONE_MUTED'));
+  $(kind+'-volume-status').textContent=notices.join(' / ');$(kind+'-volume-status').classList.toggle('muted',result.muted);$(kind+'-volume-status').classList.remove('missing');
+  logWorks('volume '+kind);
+}
+function failVolume(kind,e){
+  const control=volumes[kind];
+  logFailure('volume '+kind,e);control.id=null;control.available=false;$(kind+'-level').textContent='—';
+  const none=String(e)==='AUDIO_MICROPHONE_NONE'||String(e)==='AUDIO_SPEAKER_NONE';
+  $(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback&&!none?t('MICROPHONE_SILENT'):t(String(e));
+  $(kind+'-volume-status').classList.toggle('missing',none);
 }
 // A change waiting to be sent, for the endpoint shown when it was made. The
 // volume and the mute are kept apart: a change of one does not take back a
@@ -88,10 +89,12 @@ function queueChange(kind,change){
   ++c.sequence;
   c.queued={device,level:change.level??waiting.level,mute:change.mute??waiting.mute};
 }
+
 function showMute(kind,muted){
   const control=volumes[kind],button=$(kind+'-mute'),label=t(muted?'AUDIO_UNMUTE':'AUDIO_MUTE');
   control.muted=muted;button.classList.toggle('muted',muted);button.setAttribute('aria-pressed',String(muted));button.title=label;button.setAttribute('aria-label',label);
 }
+
 // Windows' privacy settings refusing the microphone: said under it, the
 // switch that is off named, with a way to the settings; gone once the
 // microphone opens again (the meter tries with each reading).
@@ -100,20 +103,44 @@ function showPrivacy(error){
   $('microphone-privacy').hidden=!refused;
   if(refused)$('microphone-privacy-text').textContent=t(error);
 }
-async function refreshPeak(kind){
-  // In the tray nobody sees the meter, and not asking lets the microphone close.
-  if(!ready||$('configuration').open||peakPending[kind]||state.window_visible===false)return;peakPending[kind]=true;
-  try{
-    const result=await invoke('audio_peak',{kind}),gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(result.peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
-    $(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));
-    if(kind==='microphone')showPrivacy('');
-    logWorks('peak '+kind);
-  }
-  catch(e){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');if(kind==='microphone')showPrivacy(String(e));logFailure('peak '+kind,e);}
-  finally{peakPending[kind]=false;}
+
+// The meter: the peak off the endpoint in use, with the saved gain laid over,
+// as a level in dB over sixty.
+function applyPeak(kind,peak,error){
+  if(error){$(kind+'-meter-fill').style.width='0%';$(kind+'-meter').setAttribute('aria-valuenow','0');if(kind==='microphone')showPrivacy(String(error));logFailure('peak '+kind,error);return;}
+  const gain=kind==='microphone'?Math.max(1,(state.settings.microphone_gain||100)/100):1,raw=Math.max(0,Math.min(1,(peak||0)*gain)),db=raw>0?20*Math.log10(raw):-60,level=Math.round(Math.max(0,Math.min(100,(db+60)/60*100)));
+  $(kind+'-meter-fill').style.width=level+'%';$(kind+'-meter').setAttribute('aria-valuenow',String(level));
+  if(kind==='microphone')showPrivacy('');
+  logWorks('peak '+kind);
 }
-export async function pollVolumes(){await Promise.all(kinds.map(k=>refreshVolume(k)));setTimeout(pollVolumes,1000);}
-export async function pollAudioPeaks(){await Promise.all(kinds.map(refreshPeak));setTimeout(pollAudioPeaks,100);}
+// One look for both kinds (audio_levels): ten times a second while the
+// window is shown, once a second in the tray and behind the settings, where
+// nobody sees the meters. They are not asked for then, which lets the
+// microphone close; the volumes still are, so the device chosen going and
+// coming is written down through the night. A change waiting to be sent
+// goes first. The backend looks at the device lists along the way, so a
+// device plugged in or pulled shows in the lists within a second.
+let looking=false;
+export async function pollAudio(){
+  const meters=ready&&state.window_visible!==false&&!$('configuration').open;
+  if(ready&&!busy&&!looking){
+    looking=true;
+    try{
+      for(const kind of kinds)if(volumes[kind].queued)await sendVolume(kind);
+      const sequences=Object.fromEntries(kinds.map(k=>[k,++volumes[k].sequence]));
+      const levels=await invoke('audio_levels',{meters});
+      for(const kind of kinds){
+        const control=volumes[kind],side=levels[kind];
+        if(sequences[kind]!==control.sequence||control.pending||control.dragging||control.pointer)continue;
+        if(side.volume)applyVolume(kind,side.volume);else failVolume(kind,side.volume_error);
+        if(meters)applyPeak(kind,side.peak,side.peak_error);
+      }
+    }
+    catch(e){logUi('audio levels',e);}
+    finally{looking=false;render();}
+  }
+  setTimeout(pollAudio,meters?100:1000);
+}
 
 export function init(){
   $('refresh-devices').addEventListener('click',async()=>{
@@ -136,8 +163,8 @@ export function init(){
     $(kind+'-volume').addEventListener('pointerdown',()=>{volumes[kind].pointer=true;});
     for(const type of ['pointerup','pointercancel'])window.addEventListener(type,()=>{volumes[kind].pointer=false;});
     $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;$(kind+'-level').textContent=slider.value+'%';});
-    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;refreshVolume(kind,level);});
+    $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;queueChange(kind,{level,mute:null});sendVolume(kind);});
     // A second click while one is waiting toggles the waiting one back.
-    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===c.id?c.queued.mute:null;refreshVolume(kind,null,!(waiting??c.muted));});
+    $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===c.id?c.queued.mute:null;queueChange(kind,{level:null,mute:!(waiting??c.muted)});sendVolume(kind);});
   }
 }

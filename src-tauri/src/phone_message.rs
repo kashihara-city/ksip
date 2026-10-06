@@ -56,6 +56,10 @@ pub enum Command {
         reply: Reply<()>,
     },
     RefreshDevices(Reply<()>),
+    /// The window looked at the audio devices along with the levels (once
+    /// a second) and found them not as published: these are the ones there
+    /// now. No answer; the next snapshot carries them.
+    DevicesSeen(Vec<Device>),
     CalibrateAec {
         microphone: String,
         speaker: String,

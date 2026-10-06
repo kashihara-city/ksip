@@ -148,7 +148,7 @@ pub fn run(state: AppState) {
             commands::read_call_history,
             commands::refresh_devices,
             commands::audio_volume,
-            commands::audio_peak,
+            commands::audio_levels,
             commands::calibrate_aec,
             commands::select_audio_device,
             commands::open_sound_control,
