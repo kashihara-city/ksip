@@ -113,33 +113,40 @@ function applyPeak(kind,peak,error){
   if(kind==='microphone')showPrivacy('');
   logWorks('peak '+kind);
 }
-// One look for both kinds (audio_levels): ten times a second while the
-// window is shown, once a second in the tray and behind the settings, where
-// nobody sees the meters. They are not asked for then, which lets the
-// microphone close; the volumes still are, so the device chosen going and
-// coming is written down through the night. A change waiting to be sent
-// goes first. The backend looks at the device lists along the way, so a
-// device plugged in or pulled shows in the lists within a second.
+// The meters are wanted while the window is shown and the settings are not
+// over it; nobody sees them otherwise, and not asking lets the microphone
+// close.
+function metersWanted(){return ready&&state.window_visible!==false&&!$('configuration').open;}
+// One look for both kinds (audio_levels): the volumes always, so that the
+// device chosen going and coming is written down through the night, the
+// meters when wanted. A change waiting to be sent goes first. The backend
+// looks at the device lists along the way, so a device plugged in or pulled
+// shows in the lists within a second. One look at a time; a look is skipped
+// while the phone is busy with an operation.
 let looking=false;
-export async function pollAudio(){
-  const meters=ready&&state.window_visible!==false&&!$('configuration').open;
-  if(ready&&!busy&&!looking){
-    looking=true;
-    try{
-      for(const kind of kinds)if(volumes[kind].queued)await sendVolume(kind);
-      const sequences=Object.fromEntries(kinds.map(k=>[k,++volumes[k].sequence]));
-      const levels=await invoke('audio_levels',{meters});
-      for(const kind of kinds){
-        const control=volumes[kind],side=levels[kind];
-        if(sequences[kind]!==control.sequence||control.pending||control.dragging||control.pointer)continue;
-        if(side.volume)applyVolume(kind,side.volume);else failVolume(kind,side.volume_error);
-        if(meters)applyPeak(kind,side.peak,side.peak_error);
-      }
+export async function look(){
+  if(!ready||busy||looking)return;
+  const meters=metersWanted();
+  looking=true;
+  try{
+    for(const kind of kinds)if(volumes[kind].queued)await sendVolume(kind);
+    const sequences=Object.fromEntries(kinds.map(k=>[k,++volumes[k].sequence]));
+    const levels=await invoke('audio_levels',{meters});
+    for(const kind of kinds){
+      const control=volumes[kind],side=levels[kind];
+      if(sequences[kind]!==control.sequence||control.pending||control.dragging||control.pointer)continue;
+      if(side.volume)applyVolume(kind,side.volume);else failVolume(kind,side.volume_error);
+      if(meters)applyPeak(kind,side.peak,side.peak_error);
     }
-    catch(e){logUi('audio levels',e);}
-    finally{looking=false;render();}
   }
-  setTimeout(pollAudio,meters?100:1000);
+  catch(e){logUi('audio levels',e);}
+  finally{looking=false;render();}
+}
+// The looks, ten times a second while the meters are wanted, once a second
+// in the tray and behind the settings.
+export async function pollAudio(){
+  await look();
+  setTimeout(pollAudio,metersWanted()?100:1000);
 }
 
 export function init(){

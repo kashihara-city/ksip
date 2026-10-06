@@ -18,10 +18,10 @@ import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,peakHandler=null,privacyOpened=0;
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0;
 window.__invoke=async(command,args)=>{
   if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
-  if(command==='audio_peak'&&peakHandler)return peakHandler(args);
+  if(command==='audio_levels'&&levelsHandler)return levelsHandler(args);
   if(command==='open_microphone_privacy'){privacyOpened++;return null;}
   // A digit's request takes a while, as one does when the app waits for the engine.
   if(command==='action'&&args.name==='dtmf'){digitsSent.push(args.value);callsSent.push([args.id,args.value]);await new Promise(r=>setTimeout(r,240));return '';}
@@ -438,9 +438,15 @@ async function checks(){
   update({...state,running:false,calls:[],devices:[]});
   audio.init();
   let release=null,hold=false,microphone={level:100,muted:false};
+  // The look (audio_levels) reads both volumes, and is held when asked; a
+  // change (audio_volume) reaches the mock device at once.
+  const side=volume=>({volume:{...volume},volume_error:null,peak:0,peak_error:null});
+  levelsHandler=async()=>{
+    if(hold){hold=false;await new Promise(r=>release=r);}
+    return {microphone:side(microphone),speaker:side({level:100,muted:false})};
+  };
   volumeHandler=async args=>{
     if(args.kind!=='microphone')return {level:100,muted:false};
-    if(hold&&args.level===null&&args.mute===null){hold=false;await new Promise(r=>release=r);}
     if(args.level!==null)microphone.level=args.level;
     if(args.mute!==null)microphone.muted=args.mute;
     return {...microphone};
@@ -449,8 +455,8 @@ async function checks(){
   const setLevel=()=>{$('microphone-volume').value='70';$('microphone-volume').dispatchEvent(new Event('change',{bubbles:true}));};
   const outcomes=[];
   for(const order of [[pressMute,setLevel],[setLevel,pressMute]]){
-    microphone={level:100,muted:false};await audio.pollVolumes();
-    hold=true;const reading=audio.pollVolumes();await settle();
+    microphone={level:100,muted:false};await audio.look();
+    hold=true;const reading=audio.look();await settle();
     for(const act of order)act();
     release();await reading;await settle();await settle();
     outcomes.push({...microphone});
@@ -458,8 +464,8 @@ async function checks(){
   check(outcomes.every(o=>o.level===70&&o.muted===true),'a mute and a volume change made while the volume is read both reach the device, in either order',outcomes);
   // A mute waiting while the slider is being dragged, or while another
   // operation runs, is kept, and sent once that is over.
-  microphone={level:100,muted:false};await audio.pollVolumes();
-  hold=true;let reading=audio.pollVolumes();await settle();
+  microphone={level:100,muted:false};await audio.look();
+  hold=true;let reading=audio.look();await settle();
   pressMute();
   $('microphone-volume').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
   $('microphone-volume').value='70';$('microphone-volume').dispatchEvent(new Event('input',{bubbles:true}));
@@ -467,15 +473,15 @@ async function checks(){
   window.dispatchEvent(new PointerEvent('pointerup'));$('microphone-volume').dispatchEvent(new Event('change',{bubbles:true}));
   await new Promise(r=>setTimeout(r,300));
   const afterDrag={...microphone};
-  microphone={level:100,muted:false};await audio.pollVolumes();
-  hold=true;reading=audio.pollVolumes();await settle();
+  microphone={level:100,muted:false};await audio.look();
+  hold=true;reading=audio.look();await settle();
   pressMute();
   let finish=null;const operation=run(()=>new Promise(r=>finish=r)).catch(()=>{});
   release();await reading;await settle();
   finish();await operation;
   await new Promise(r=>setTimeout(r,1500));
   const afterOperation={...microphone};
-  volumeHandler=null;
+  volumeHandler=null;levelsHandler=null;
   check(afterDrag.level===70&&afterDrag.muted===true&&afterOperation.muted===true,'a mute waiting while the slider is dragged, or while another operation runs, is sent once that is over',[afterDrag,afterOperation]);
 
   // What a policy fixes: its field is locked and says so, whatever else the
@@ -533,15 +539,18 @@ async function checks(){
   if($('configuration').open)$('configuration').close();
   state.window_visible=true;
   let refuse=true;
-  peakHandler=args=>{if(args.kind==='microphone'&&refuse)throw 'MICROPHONE_PRIVACY_DESKTOP';return {id:args.device,peak:0.1};};
-  audio.pollAudioPeaks();
+  levelsHandler=args=>{
+    const side={volume:{level:100,muted:false},volume_error:null,peak:0.1,peak_error:null};
+    return {microphone:args.meters&&refuse?{...side,peak:null,peak_error:'MICROPHONE_PRIVACY_DESKTOP'}:side,speaker:side};
+  };
+  audio.look();
   await new Promise(r=>setTimeout(r,300));
   const privacyShown=!$('microphone-privacy').hidden,privacyText=$('microphone-privacy-text').textContent;
   $('open-microphone-privacy').click();await settle();
-  refuse=false;await new Promise(r=>setTimeout(r,300));
+  refuse=false;audio.look();await new Promise(r=>setTimeout(r,300));
   check(privacyShown&&privacyText.includes('デスクトップ アプリ')&&privacyOpened===1&&$('microphone-privacy').hidden,
     'a microphone the privacy settings refuse is said under it, the switch named, with the settings a click away; it goes once the microphone opens',[privacyShown,privacyText,privacyOpened,$('microphone-privacy').hidden]);
-  peakHandler=null;
+  levelsHandler=null;
 }
 try{await checks();}catch(e){check(false,'the checks ran to the end',String(e&&e.stack||e));}
 await fetch('/result',{method:'POST',body:JSON.stringify(results)});
