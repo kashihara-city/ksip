@@ -32,9 +32,10 @@ struct auplay_st {
     auplay_write_h *handler;
     void *arg;
     bool started;
+    static constexpr size_t kDeviceNameSize = 160;
     // The endpoint this player asked for, so that it can take the stream back.
-    char device_name[160];
-    const char *device() const { return device_name; }
+    char device_name[kDeviceNameSize];
+    [[nodiscard]] const char *device() const { return device_name; }
     void set_device(const char *device) { str_ncpy(device_name, device && device[0] ? device : "default", sizeof(device_name)); }
 };
 struct ausrc_st {
@@ -70,7 +71,7 @@ void add_state(odict *audio);
 template <class AnyCore>
 void add_playout_state(odict *audio, const char *name, AnyCore &core) {
     odict *side = nullptr;
-    if (odict_alloc(&side, 8)) return;
+    if (odict_alloc(&side, playback_session::kDictBuckets)) return;
     odict_entry_add(side, "playing", ODICT_BOOL, core.playing());
     const std::string endpoint = core.endpoint(true);
     if (!endpoint.empty()) {

@@ -2,6 +2,8 @@
 #include "system_ports.h"
 #include <cstring>
 #include <vector>
+#include <cstdint>
+#include <baresip.h>
 
 // baresip's own, declared in its src/core.h rather than its public header:
 // the RTP socket of a stream.
@@ -26,7 +28,7 @@ tmr g_look;
 // "rtp_ports 0" in the configuration: what libre takes as the system's ports.
 bool system_picked() {
     const config *c = conf_config();
-    return c && !c->avt.rtp_ports.min && !c->avt.rtp_ports.max;
+    return (c != nullptr) && (c->avt.rtp_ports.min == 0u) && (c->avt.rtp_ports.max == 0u);
 }
 // One empty datagram; a send that fails is said, since the way in is not
 // open then whatever the line after says.
@@ -39,12 +41,12 @@ void send_empty(void *sock, const sa *to) {
     mem_deref(mb);
 }
 // The call's audio stream, its SDP and its RTP socket; false while it has none.
-bool media_of(call *c, stream *&s, sdp_media *&m, struct rtp_sock *&rtp) {
-    audio *a = c ? call_audio(c) : nullptr;
+bool media_of(const call *c, stream *&s, sdp_media *&m, struct rtp_sock *&rtp) {
+    const audio *a = c ? call_audio(c) : nullptr;
     s = a ? audio_strm(a) : nullptr;
     m = s ? stream_sdpmedia(s) : nullptr;
     rtp = s ? stream_rtp_sock(s) : nullptr;
-    return m && rtp;
+    return (m != nullptr) && (rtp != nullptr);
 }
 // One empty datagram from the RTP socket and one from the RTCP socket to the
 // peer's media addresses, so that what the peer sends there gets in. A peer
@@ -71,8 +73,8 @@ void look(void *) {
     tmr_start(&g_look, kLookMs, look, nullptr);
     const uint64_t now = tmr_jiffies();
     std::vector<Quiet> kept;
-    for (le *u = list_head(uag_list()); u; u = u->next) {
-        for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
+    for (const le *u = list_head(uag_list()); u; u = u->next) {
+        for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             call *c = static_cast<call *>(l->data);
             // Not by the call's state (baresip has a 180 as "ringing" with or
             // without an SDP, and a 180 can carry early media): by the peer

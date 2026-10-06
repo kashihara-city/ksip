@@ -7,10 +7,16 @@
 # In: the checks that find mistakes (bugprone, cert, clang-analyzer,
 # concurrency, performance, the misc ones about unused and misleading
 # declarations) and the three C++ Core Guidelines checks about things left
-# uninitialised and classes missing half of their special members. Out: the
-# checks about the shape of the code (readability, modernize, misc's const
-# and include tidying), which are a choice to make on their own, and these
-# four, each for its reason:
+# uninitialised and classes missing half of their special members. With
+# them, the checks that make a mistake harder to write later: a local that
+# is never changed is const; a cast says what kind it is; a result that
+# must not be dropped is [[nodiscard]]; a bool is not silently an int or a
+# pointer, except as the condition of an if or a loop; a number in the code
+# has a name; and a file includes what it uses, so that a header losing an
+# include does not break a file elsewhere. Out: the checks about the shape
+# of the code (readability's bracing, naming and the like, modernize's
+# trailing return types), which are a choice to make on their own, and
+# these four, each for its reason:
 #   bugprone-easily-swappable-parameters: it flags every (source,
 #     destination) and (microphone, speaker) pair the interfaces have; a
 #     wrapper type for each is more than it is worth.
@@ -38,14 +44,17 @@ Checks: >
   performance-*,
   -performance-enum-size,
   misc-*,
-  -misc-const-correctness,
-  -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
   -misc-use-anonymous-namespace,
   -misc-use-internal-linkage,
   cppcoreguidelines-init-variables,
   cppcoreguidelines-pro-type-member-init,
-  cppcoreguidelines-special-member-functions
+  cppcoreguidelines-special-member-functions,
+  modernize-avoid-c-style-cast,
+  modernize-use-nodiscard,
+  modernize-use-scoped-lock,
+  readability-implicit-bool-conversion,
+  readability-magic-numbers
 WarningsAsErrors: '*'
 # KSIP's own headers are checked with the file that includes them; baresip's,
 # libre's and the bridge's are system headers to the build and stay out.
@@ -55,3 +64,15 @@ CheckOptions:
   # copying, are complete as they are.
   cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true
   cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted: true
+  # The handlers baresip and libre call back have the parameter types their
+  # typedefs say; the check is not to ask for const there.
+  misc-const-correctness.AnalyzeParameters: false
+  # `if (p)` and `while (n)` are how C and libre are written, and read fine;
+  # a pointer or a number becoming a bool anywhere else is spelled out.
+  readability-implicit-bool-conversion.AllowPointerConditions: true
+  readability-implicit-bool-conversion.AllowIntegerConditions: true
+  # libre is included as <re.h> and <rem.h>, the way it is meant to be, not
+  # by the re_*.h each symbol lives in; the Windows SDK likewise comes in as
+  # <windows.h> and the few headers that stand on their own, and LibreSSL
+  # by its public headers, not the ones its types are declared in.
+  misc-include-cleaner.IgnoreHeaders: '.*[/\\]Windows Kits[/\\].*;.*[/\\]re_[^/\\]*\.h;.*[/\\]rem_[^/\\]*\.h;.*[/\\]re\.h;.*[/\\]rem\.h;.*[/\\]openssl[/\\].*'

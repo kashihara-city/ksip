@@ -4,26 +4,44 @@
 #include <cmath>
 #include <filesystem>
 #include <string_view>
+#include <chrono>
+#include <climits>
+#include <array>
+#include <cstdio>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <mutex>
 
 namespace recording_session {
 namespace {
+// The WAV header: its length, the "RIFF" tag and the size field in front of
+// the rest, the fmt chunk's length, the PCM format tag, and the sample.
+constexpr uint32_t HEADER_BYTES = 44, RIFF_PREFIX = 8, FMT_CHUNK_BYTES = 16, FORMAT_PCM = 1, BITS_PER_SAMPLE = 16, BYTES_PER_SAMPLE = 2;
+// The most data a WAV can hold (its sizes are 32 bits), the clock's unit,
+// and the slack as a fraction of a second.
+constexpr uint64_t MAX_DATA_BYTES = 0xffff0000ULL, US_PER_S = 1000000;
+constexpr uint32_t SLACK_FRACTION = 5;
 bool put(FILE *f, const void *data, size_t n) { return fwrite(data, 1, n, f) == n; }
+template <size_t N> bool tag(FILE *f, const char (&text)[N]) { return put(f, text, N - 1); }
 bool le16(FILE *f, uint16_t n) {
-    const unsigned char b[2] = {static_cast<unsigned char>(n & 255), static_cast<unsigned char>(n >> 8)};
-    return put(f, b, 2);
+    const unsigned char b[2] = {static_cast<unsigned char>(n), static_cast<unsigned char>(n >> CHAR_BIT)};
+    return put(f, b, sizeof b);
 }
-bool le32(FILE *f, uint32_t n) { return le16(f, static_cast<uint16_t>(n & 65535)) && le16(f, static_cast<uint16_t>(n >> 16)); }
+bool le32(FILE *f, uint32_t n) { return le16(f, static_cast<uint16_t>(n)) && le16(f, static_cast<uint16_t>(n >> (2 * CHAR_BIT))); }
 } // namespace
 
 // The RIFF/WAVE header, written once the file opens and again with the
 // final sizes when it closes: 16-bit PCM, two channels. False when a write
 // failed.
 bool Recorder::header() {
-    return fseek(file, 0, SEEK_SET) == 0 && put(file, "RIFF", 4) && le32(file, 36 + (uint32_t)bytes) && put(file, "WAVEfmt ", 8) &&
-           le32(file, 16) && le16(file, 1) && le16(file, (uint16_t)channels) && le32(file, rate) && le32(file, rate * channels * 2) &&
-           le16(file, (uint16_t)(channels * 2)) && le16(file, 16) && put(file, "data", 4) && le32(file, (uint32_t)bytes);
+    constexpr uint32_t frame_bytes = channels * BYTES_PER_SAMPLE;
+    return fseek(file, 0, SEEK_SET) == 0 && tag(file, "RIFF") && le32(file, HEADER_BYTES - RIFF_PREFIX + static_cast<uint32_t>(bytes)) &&
+           tag(file, "WAVEfmt ") && le32(file, FMT_CHUNK_BYTES) && le16(file, FORMAT_PCM) && le16(file, static_cast<uint16_t>(channels)) &&
+           le32(file, rate) && le32(file, rate * frame_bytes) && le16(file, static_cast<uint16_t>(frame_bytes)) && le16(file, BITS_PER_SAMPLE) &&
+           tag(file, "data") && le32(file, static_cast<uint32_t>(bytes));
 }
-Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(path), started(std::chrono::steady_clock::now()), slack(sr / 5) {
+Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(path), started(std::chrono::steady_clock::now()), slack(sr / SLACK_FRACTION) {
     // The path comes as UTF-8; read as such (u8path, which did the same, is deprecated in C++20).
     const std::u8string_view utf8(reinterpret_cast<const char8_t *>(path.data()), path.size());
     file = _wfopen(std::filesystem::path(utf8).c_str(), L"wb");
@@ -33,20 +51,20 @@ Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(p
     worker = std::thread([this] { run(); });
 }
 bool Recorder::writable() const {
-    return (remote.count && local.count) || remote.count > slack || local.count > slack;
+    return ((remote.count != 0u) && (local.count != 0u)) || remote.count > slack || local.count > slack;
 }
 uint64_t Recorder::clock_frames() const {
-    auto passed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
-    return uint64_t(passed) * rate / 1000000;
+    const auto passed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+    return static_cast<uint64_t>(passed) * rate / US_PER_S;
 }
 int16_t Recorder::take(Side &side) {
-    int16_t v = side.ring[side.rd];
+    const int16_t v = side.ring[side.rd];
     side.rd = (side.rd + 1) % side.ring.size();
     --side.count;
     return v;
 }
 void Recorder::run() {
-    std::array<int16_t, 8192> buf{}; // 4096 frames of two channels
+    std::array<int16_t, BLOCK_SAMPLES> buf{}; // frames of two channels
     for (;;) {
         size_t n = 0;
         {
@@ -73,16 +91,16 @@ void Recorder::run() {
             if (!n) continue;
             n = std::min(n, buf.size() / 2);
             for (size_t i = 0; i < n; ++i) {
-                buf[2 * i] = take_far ? take(remote) : int16_t(0);
-                buf[2 * i + 1] = take_near ? take(local) : int16_t(0);
+                buf[2 * i] = take_far ? take(remote) : static_cast<int16_t>(0);
+                buf[2 * i + 1] = take_near ? take(local) : static_cast<int16_t>(0);
             }
             written += n;
         }
-        if (bytes + n * 4 > 0xffff0000ULL || fwrite(buf.data(), 2, 2 * n, file) != 2 * n) {
+        if (bytes + n * channels * BYTES_PER_SAMPLE > MAX_DATA_BYTES || fwrite(buf.data(), BYTES_PER_SAMPLE, channels * n, file) != channels * n) {
             failed = true;
             break;
         }
-        bytes += n * 4;
+        bytes += n * channels * BYTES_PER_SAMPLE;
     }
     if (!header() || ferror(file) || fflush(file) != 0) failed = true;
 }
@@ -97,10 +115,10 @@ void Recorder::run() {
 // takes more than half the ring, so that it cannot crowd the samples out;
 // a gap longer than that is placed short by the difference.
 void Recorder::append(Side &side, const int16_t *samples, size_t frames) {
-    std::lock_guard<std::mutex> lock(mutex);
+    const std::scoped_lock lock(mutex);
     if (done) return;
     const uint64_t accounted = written + side.count, now = clock_frames();
-    size_t gap = now > accounted + slack ? size_t(now - accounted) : 0;
+    size_t gap = now > accounted + slack ? static_cast<size_t>(now - accounted) : 0;
     gap = std::min(gap, side.ring.size() / 2);
     for (size_t i = 0; i < gap && side.count < side.ring.size(); ++i) {
         side.ring[side.wr] = 0;
@@ -135,20 +153,20 @@ void Recorder::push(Side &side, const int16_t *in, size_t frames, uint32_t in_ra
         append(side, in, frames);
         return;
     }
-    const double step = double(in_rate) / rate, end = double(frames) - 1.0;
+    const double step = static_cast<double>(in_rate) / rate, end = static_cast<double>(frames) - 1.0;
     for (;;) {
         size_t n = 0;
         while (n < side.scratch.size() && side.pos < end) {
-            long idx = (long)std::floor(side.pos);
-            double frac = side.pos - idx;
-            int a = idx < 0 ? side.last : in[idx], b = in[idx + 1];
-            side.scratch[n++] = (int16_t)std::lrint(a + (b - a) * frac);
+            const long idx = static_cast<long>(std::floor(side.pos));
+            const double frac = side.pos - idx;
+            const int a = idx < 0 ? side.last : in[idx], b = in[idx + 1];
+            side.scratch[n++] = static_cast<int16_t>(std::lrint(a + (b - a) * frac));
             side.pos += step;
         }
         if (n) append(side, side.scratch.data(), n);
         if (side.pos >= end) break;
     }
-    side.pos -= double(frames);
+    side.pos -= static_cast<double>(frames);
     side.last = in[frames - 1];
 }
 void Recorder::push_far(const int16_t *samples, size_t frames, uint32_t in_rate) { push(remote, samples, frames, in_rate); }
@@ -157,7 +175,7 @@ Recorder::Summary Recorder::finish() {
     if (!finished) {
         finished = true;
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            const std::scoped_lock lock(mutex);
             done = true;
         }
         wake.notify_one();

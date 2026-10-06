@@ -22,7 +22,7 @@ constexpr size_t QUEUE_LIMIT = 32;
 bool queue(const audio *stream, char digit);
 // While a digit of this stream is due, its tone (or the pause after it)
 // takes the place of the frame's samples; otherwise the frame is left alone.
-void fill(const audio *stream, auframe *f);
+void fill(const audio *stream, const auframe *f);
 // The stream's encoder is gone: what it had waiting goes with it.
 void forget(const audio *stream);
 } // namespace inband_dtmf

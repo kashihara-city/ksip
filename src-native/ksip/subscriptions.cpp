@@ -2,9 +2,15 @@
 #include "subscriptions.h"
 #include "sip_account.h"
 #include "ksip_io.h"
+#include "ksip_text.h"
 #include <array>
 #include <string>
 #include <unordered_map>
+#include <algorithm>
+#include <cstdint>
+#include <cstddef>
+#include <cerrno>
+#include <baresip.h>
 
 namespace subscriptions {
 namespace {
@@ -42,7 +48,7 @@ namespace {
 // no subscription) leaves the ones waiting or stopped alone.
 enum class Retry { Quick, Later, Stop };
 constexpr unsigned kQuickTries = 5;
-constexpr uint64_t kQuickMs = 1000, kLaterMs = 30000;
+constexpr uint64_t kQuickMs = 1000, kLaterMs = 30000, kMsPerS = 1000;
 struct RetryState {
     tmr timer{};
     unsigned quick_left = kQuickTries;
@@ -79,7 +85,7 @@ int auth_handler(char **username, char **password, const char *realm, void *arg)
 Retry how_to_retry(const struct sip_msg *msg, const struct sipevent_substate *substate, uint64_t &at_least) {
     at_least = 0;
     if (substate) {
-        if (pl_isset(&substate->retry_after)) at_least = pl_u32(&substate->retry_after) * 1000ull;
+        if (pl_isset(&substate->retry_after)) at_least = pl_u32(&substate->retry_after) * kMsPerS;
         // Read as sent: libre does not know invariant.
         pl reason = PL_INIT;
         (void)msg_param_decode(&substate->params, "reason", &reason);
@@ -88,12 +94,14 @@ Retry how_to_retry(const struct sip_msg *msg, const struct sipevent_substate *su
         if ((!pl_strcasecmp(&reason, "deactivated") || !pl_strcasecmp(&reason, "timeout")) && !at_least) return Retry::Quick;
         return Retry::Later;
     }
-    if (msg && msg->scode >= 300) {
-        if (auto retry_after = sip_msg_hdr(msg, SIP_HDR_RETRY_AFTER)) at_least = pl_u32(&retry_after->val) * 1000ull;
+    using namespace ksip_io::sip_status;
+    if (msg && msg->scode >= LOWEST_FAILURE) {
+        if (auto retry_after = sip_msg_hdr(msg, SIP_HDR_RETRY_AFTER)) at_least = pl_u32(&retry_after->val) * kMsPerS;
         switch (msg->scode) {
-        case 403: case 404: case 405: case 410: case 416: case 489: case 501: case 603: case 604:
+        case FORBIDDEN: case NOT_FOUND: case METHOD_NOT_ALLOWED: case GONE: case UNSUPPORTED_URI_SCHEME: case BAD_EVENT:
+        case NOT_IMPLEMENTED: case DECLINE: case DOES_NOT_EXIST_ANYWHERE:
             return Retry::Stop;
-        case 481:
+        case CALL_DOES_NOT_EXIST:
             return at_least ? Retry::Later : Retry::Quick;
         default:
             return Retry::Later;
@@ -111,7 +119,7 @@ bool schedule(RetryState &retry, Retry how, uint64_t at_least, tmr_h *handler, v
         info("ksip: %s subscription refused, not asked for again until the numbers are set again\n", what.c_str());
         return false;
     }
-    const bool quick = how == Retry::Quick && retry.quick_left;
+    const bool quick = how == Retry::Quick && (retry.quick_left != 0u);
     // The first quick try is spread over the first second, the others come a
     // second after the outcome of the one before.
     const uint64_t wait = !quick ? std::max(kLaterMs, at_least) : retry.quick_left == kQuickTries ? rand_u16() % kQuickMs : kQuickMs;
@@ -127,7 +135,7 @@ void parking_notify(struct sip *sip, const struct sip_msg *msg, void *arg) {
     // A NOTIFY is the proof that the subscription works: quick tries are
     // there again for the next time it ends.
     slot->retry.quick_left = kQuickTries;
-    std::string body(reinterpret_cast<const char *>(mbuf_buf(msg->mb)), mbuf_get_left(msg->mb));
+    const std::string body(reinterpret_cast<const char *>(mbuf_buf(msg->mb)), mbuf_get_left(msg->mb));
     auto info = ksip_io::read_dialog_info(body);
     if (!info.readable) {
         // Not something this reads (an empty body, another format): the state
@@ -143,7 +151,7 @@ void parking_notify(struct sip *sip, const struct sip_msg *msg, void *arg) {
         }
         slot->state = slot->dialogs.empty() ? "IDLE" : "INUSE";
     }
-    (void)sip_treply(nullptr, sip, msg, 200, "OK");
+    (void)sip_treply(nullptr, sip, msg, ksip_io::sip_status::OK, "OK");
 }
 // A subscription the server ends or refuses is written down with its answer:
 // it explains buttons that stay unknown, and a quit that waits on the server.
@@ -185,7 +193,7 @@ void mwi_notify(struct sip *sip, const struct sip_msg *msg, void *) {
     mwi_summary = std::string(reinterpret_cast<const char *>(mbuf_buf(msg->mb)), mbuf_get_left(msg->mb));
     // The first notify is the proof that the server took the subscription.
     info("ksip: mwi notify, %zu bytes\n", mwi_summary.size());
-    (void)sip_treply(nullptr, sip, msg, 200, "OK");
+    (void)sip_treply(nullptr, sip, msg, ksip_io::sip_status::OK, "OK");
 }
 void mwi_retry_now(void *) {
     mwi_retry.waiting = false;
@@ -202,8 +210,8 @@ int subscribe_mwi() {
     auto account_ua = sip_account::user_agent();
     if (!sip_account::registered() || mwi_sub || mwi_retry.waiting || mwi_retry.stopped || sip_account::own_user().empty()) return 0;
     const char *routev[1] = {ua_outbound(account_ua)};
-    std::string uri = "sip:" + sip_account::own_user() + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
-    int err = sipevent_subscribe(&mwi_sub, uag_sipevent_sock(), uri.c_str(), nullptr, account_aor(ua_account(account_ua)), "message-summary",
+    const std::string uri = "sip:" + sip_account::own_user() + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
+    const int err = sipevent_subscribe(&mwi_sub, uag_sipevent_sock(), uri.c_str(), nullptr, account_aor(ua_account(account_ua)), "message-summary",
                                  nullptr, 600, ua_cuser(account_ua), routev, routev[0] ? 1 : 0, auth_handler, ua_account(account_ua), true,
                                  nullptr, mwi_notify, mwi_closed, nullptr, "Accept: application/simple-message-summary\r\n");
     if (err) warning("ksip: mwi subscription to %s failed (%d)\n", uri.c_str(), err);
@@ -253,8 +261,8 @@ int subscribe_slot(ParkSlot &slot) {
     auto account_ua = sip_account::user_agent();
     if (!sip_account::registered() || slot.number.empty() || slot.sub || slot.retry.waiting || slot.retry.stopped) return 0;
     const char *routev[1] = {ua_outbound(account_ua)};
-    std::string uri = ksip_io::sip_uri(slot.number) ? slot.number : "sip:" + slot.number + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
-    int err = sipevent_subscribe(&slot.sub, uag_sipevent_sock(), uri.c_str(), nullptr, account_aor(ua_account(account_ua)), "dialog", nullptr,
+    const std::string uri = ksip_io::sip_uri(slot.number) ? slot.number : "sip:" + slot.number + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
+    const int err = sipevent_subscribe(&slot.sub, uag_sipevent_sock(), uri.c_str(), nullptr, account_aor(ua_account(account_ua)), "dialog", nullptr,
                                  600, ua_cuser(account_ua), routev, routev[0] ? 1 : 0, auth_handler, ua_account(account_ua), true, nullptr,
                                  parking_notify, parking_closed, &slot, "Accept: application/dialog-info+xml\r\n");
     if (err) slot.state = "UNKNOWN";
@@ -266,7 +274,7 @@ int subscribe_slot(ParkSlot &slot) {
 int subscribe_parking() {
     int result = 0;
     for (auto &slot : parking) {
-        int err = subscribe_slot(slot);
+        const int err = subscribe_slot(slot);
         if (!err) continue;
         if (!result) result = err;
         schedule(slot.retry, Retry::Later, 0, slot_retry, &slot, "parking " + slot.number);
@@ -316,7 +324,7 @@ int configure(re_printf *pf, void *arg) {
     // came in, and keeps whatever retry it has.
     clear_parking();
     for (size_t i = 0; i < parking.size(); ++i) parking[i].number = values[i];
-    int err = subscribe_parking();
+    const int err = subscribe_parking();
     if (!err) re_hprintf(pf, "Parking subscriptions configured\n");
     return err;
 }
@@ -324,7 +332,7 @@ int shutdown(re_printf *pf, void *) {
     // Each subscription ended here is a request the server still has to
     // answer before baresip can quit; the count says what a slow quit waits on.
     size_t watched = 0;
-    for (auto &slot : parking) if (slot.sub) ++watched;
+    for (const auto &slot : parking) if (slot.sub) ++watched;
     info("ksip: shutdown, ending %zu parking subscriptions%s\n", watched, mwi_sub ? " and the mwi subscription" : "");
     clear();
     return re_hprintf(pf, "KSIP subscriptions closed\n");
@@ -332,7 +340,7 @@ int shutdown(re_printf *pf, void *) {
 void write_state(odict *od) {
     odict_entry_add(od, "mwi_summary", ODICT_STRING, mwi_summary.c_str());
     odict *parks = nullptr;
-    if (odict_alloc(&parks, 8)) return;
+    if (odict_alloc(&parks, ksip_io::DICT_BUCKETS)) return;
     for (size_t i = 0; i < parking.size(); ++i) {
         odict *entry = nullptr;
         if (odict_alloc(&entry, 4)) continue;

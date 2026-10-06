@@ -3,12 +3,16 @@
 // parts are connected. The account, the calls, the transfer and the
 // subscriptions each own their state (account.cpp, calls.cpp,
 // transfer.cpp, subscriptions.cpp); reading and writing text is ksip_io's.
-#include <cmath>
 #include <algorithm>
 #include <re.h>
 #include <rem.h>
 #include <baresip.h>
 #include <string>
+#include <string_view>
+#include <cerrno>
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
 #include "ksip_audio_bridge.h"
 #include "audio_state.h"
 #include "ksip_io.h"
@@ -22,20 +26,22 @@
 namespace {
 bool sip_message_log = false;
 
+// A request line starts with its method and a space; these two are looked
+// at for a P-Asserted-Identity in the middle of a call.
+constexpr std::string_view UPDATE_LINE = "UPDATE ", INVITE_LINE = "INVITE ";
 void sip_trace(bool tx, enum sip_transp tp, const sa *src, const sa *dst, const uint8_t *packet, size_t length, void *) {
     // A keepalive (a blank line) is no SIP message; sip_account logs its own.
-    bool blank = packet && length && std::all_of(packet, packet + length, [](uint8_t c) { return c == '\r' || c == '\n'; });
+    const bool blank = (packet != nullptr) && (length != 0u) && std::all_of(packet, packet + length, [](uint8_t c) { return c == '\r' || c == '\n'; });
     if (sip_message_log && packet && length && !blank) ksip_io::log_sip_message(tx, packet, length);
     if (tx && packet) sip_account::on_sent(packet, length, tp, dst);
     if (packet && length) transfer::on_sip(tx, packet, length);
-    if (tx || !packet || length < 7) return;
+    if (tx || !packet || length < UPDATE_LINE.size()) return;
     sip_account::on_answer(packet, length, tp, src);
-    bool update = length >= 7 && memcmp(packet, "UPDATE ", 7) == 0;
-    bool reinvite = length >= 7 && memcmp(packet, "INVITE ", 7) == 0;
-    if (!update && !reinvite) return;
-    auto callid = ksip_io::sip_header(packet, length, "Call-ID"), pai = ksip_io::sip_header(packet, length, "P-Asserted-Identity");
+    const std::string_view head(reinterpret_cast<const char *>(packet), length);
+    if (!head.starts_with(UPDATE_LINE) && !head.starts_with(INVITE_LINE)) return;
+    const auto callid = ksip_io::sip_header(packet, length, "Call-ID"), pai = ksip_io::sip_header(packet, length, "P-Asserted-Identity");
     if (callid.empty() || pai.empty() || !calls::find(callid)) return;
-    pl value{pai.data(), pai.size()};
+    const pl value{pai.data(), pai.size()};
     sip_addr address{};
     if (sip_addr_decode(&address, &value) || !pl_isset(&address.uri.user)) return;
     std::string uri = "sip:" + std::string(address.uri.user.p, address.uri.user.l);
@@ -50,7 +56,7 @@ void event(bevent_ev ev, bevent *e, void *) {
     sip_account::on_event(ev, e);
     auto c = bevent_get_call(e);
     if (!c || !call_id(c)) return;
-    std::string id = call_id(c);
+    const std::string id = call_id(c);
     system_ports::on_event(ev, c);
     if (calls::on_event(ev, e, c, id)) return;
     transfer::on_event(ev, e, c, id);
@@ -61,9 +67,9 @@ void event(bevent_ev ev, bevent *e, void *) {
 }
 int state(re_printf *pf, void *) {
     odict *od = nullptr, *list = nullptr, *xfer = nullptr;
-    int err = odict_alloc(&od, 16);
-    err |= odict_alloc(&list, 16);
-    err |= odict_alloc(&xfer, 8);
+    int err = odict_alloc(&od, ksip_io::DICT_BUCKETS);
+    err |= odict_alloc(&list, ksip_io::DICT_BUCKETS);
+    err |= odict_alloc(&xfer, ksip_io::DICT_BUCKETS);
     if (err) {
         mem_deref(od);
         mem_deref(list);
@@ -72,10 +78,10 @@ int state(re_printf *pf, void *) {
     }
     sip_account::write_state(od);
     // Whether the detail log runs now: set at start, switched while running.
-    odict_entry_add(od, "detail_log", ODICT_BOOL, sip_message_log);
+    odict_entry_add(od, "detail_log", ODICT_BOOL, static_cast<int>(sip_message_log));
     trust_state::write_state(od);
     ksip_audio_add_state(od);
-    unsigned count = calls::write_state(od, list);
+    const unsigned count = calls::write_state(od, list);
     subscriptions::write_state(od);
     transfer::write_state(xfer);
     ksip_audio_stats stats{};
@@ -100,11 +106,11 @@ int action(re_printf *pf, void *arg) {
 int detail_log(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     if (!a || !a->prm) return EINVAL;
-    const bool on = !str_casecmp(a->prm, "on");
+    const bool on = str_casecmp(a->prm, "on") == 0;
     if (!on && str_casecmp(a->prm, "off")) return EINVAL;
     sip_message_log = on;
     log_enable_debug(on);
-    ksip_audio_set_log_level(on);
+    ksip_audio_set_log_level(static_cast<int>(on));
     return re_hprintf(pf, "Detail log %s\n", on ? "on" : "off");
 }
 // The microphone and speaker for the calls from now on, as endpoint ids (or

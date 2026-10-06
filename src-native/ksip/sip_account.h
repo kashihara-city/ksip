@@ -35,7 +35,7 @@ int login(re_printf *pf, void *arg);
 // register it again.
 int unregister();
 // The register events of the user agent.
-void on_event(bevent_ev ev, bevent *e);
+void on_event(bevent_ev ev, const bevent *e);
 // A REGISTER going out (from the SIP trace): what identifies its
 // transaction and where it goes, so that only its answer is taken.
 void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *dst);

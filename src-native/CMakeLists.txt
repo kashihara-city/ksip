@@ -30,6 +30,11 @@ endforeach()
 # static module table names.
 find_package(re CONFIG REQUIRED HINTS "${KSIP_NATIVE}/lib/cmake/re")
 add_compile_definitions(${RE_DEFINITIONS} STATIC)
+# MSVC's STL with its bounds checks kept in the release build: an index past
+# the end of a std::array, vector or string stops the process there (fastfail)
+# instead of reading or writing somebody else's memory. The same define goes
+# on the unit tests that compile these sources (scripts/test/audio-module.ps1).
+add_compile_definitions(_MSVC_STL_HARDENING=1)
 if(NOT OPENSSL_INCLUDE_DIR)
   set(OPENSSL_INCLUDE_DIR "${KSIP_NATIVE}/include")
 endif()

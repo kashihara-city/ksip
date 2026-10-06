@@ -7,6 +7,8 @@
 #include <re.h>
 #include <baresip.h>
 #include <string>
+#include <cstdint>
+#include <cstring>
 #include "ksip_audio_bridge.h"
 #include "microphone_mute.h"
 
@@ -34,7 +36,7 @@ bool read_mute(const char *id, bool &muted) {
     if (SUCCEEDED(hr)) {
         if (id && *id) {
             // Endpoint ids are plain ASCII ({0.0.1.00000000}.{GUID}).
-            std::wstring wide(id, id + strlen(id));
+            const std::wstring wide(id, id + strlen(id));
             hr = devices->GetDevice(wide.c_str(), &device);
         } else {
             hr = devices->GetDefaultAudioEndpoint(eCapture, eCommunications, &device);
@@ -54,8 +56,8 @@ bool read_mute(const char *id, bool &muted) {
 // not. Only the app's own calls are muted this way (nothing else in KSIP
 // mutes baresip's audio), so following the device undoes nothing.
 void apply(bool muted) {
-    for (le *u = list_head(uag_list()); u; u = u->next)
-        for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
+    for (const le *u = list_head(uag_list()); u; u = u->next)
+        for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             audio *a = call_audio(static_cast<call *>(l->data));
             if (a && audio_ismuted(a) != muted) audio_mute(a, muted);
         }

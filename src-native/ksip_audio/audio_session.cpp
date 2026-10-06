@@ -4,27 +4,37 @@
 // turns the bridge's PCM callbacks into baresip frames.
 #include "audio_session.h"
 #include "libre_clock.h"
+#include "session_core.h"
+#include "ksip_audio_bridge.h"
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <new>
+#include <atomic>
+#include <cstdint>
+#include <string>
+#include <thread>
+#include <baresip.h>
 
 namespace playback_session {
 namespace {
 ksip_audio *g_audio;
+// A frame of the fallback source is 10 ms, as the bridge's are; and the
+// clock's units.
+constexpr int kFrameMs = 10;
+constexpr int64_t kNsPerUs = 1000;
 
 int Render(void *arg, int16_t *samples, size_t frames) {
-    auto *state = static_cast<auplay_st *>(arg);
+    const auto *state = static_cast<auplay_st *>(arg);
     struct auframe frame;
     auframe_init(&frame, AUFMT_S16LE, samples, frames, kRate, kChannels);
     state->handler(&frame, state->arg);
     return 0;
 }
 void Capture(void *arg, const int16_t *samples, size_t frames, int64_t time_ns) {
-    auto *state = static_cast<ausrc_st *>(arg);
+    const auto *state = static_cast<ausrc_st *>(arg);
     struct auframe frame;
     auframe_init(&frame, AUFMT_S16LE, const_cast<int16_t *>(samples), frames, kRate, kChannels);
-    frame.timestamp = time_ns > 0 ? static_cast<uint64_t>(time_ns / 1000) : tmr_jiffies_usec();
+    frame.timestamp = time_ns > 0 ? static_cast<uint64_t>(time_ns / kNsPerUs) : tmr_jiffies_usec();
     state->handler(&frame, state->arg);
 }
 // Frames captured ahead of a call go nowhere.
@@ -34,23 +44,23 @@ void Discard(void *, const int16_t *, size_t, int64_t) {}
 struct BridgeAdm final : Adm {
     int start_playout(const char *device, void *player) override { return ksip_audio_start_playout(g_audio, device, Render, player); }
     void detach_playout() override { ksip_audio_detach_playout(g_audio); }
-    bool playout_running() override { return ksip_audio_playout_running(g_audio); }
+    bool playout_running() override { return ksip_audio_playout_running(g_audio) != 0; }
     void stop_playout() override { ksip_audio_stop_playout(g_audio); }
     int start_recording(const char *device, void *source) override {
         return source ? ksip_audio_start_recording(g_audio, device, Capture, source) : ksip_audio_start_recording(g_audio, device, Discard, nullptr);
     }
     void detach_recording() override { ksip_audio_detach_recording(g_audio); }
-    bool recording_running() override { return ksip_audio_recording_running(g_audio); }
+    bool recording_running() override { return ksip_audio_recording_running(g_audio) != 0; }
     void stop_recording() override { ksip_audio_stop_recording(g_audio); }
     std::string opened(bool playout) override {
         char id[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
-        ksip_audio_opened_endpoint(g_audio, playout, id, sizeof id);
+        ksip_audio_opened_endpoint(g_audio, static_cast<int>(playout), id, sizeof id);
         return id;
     }
-    bool listed(const char *device, bool playout) override { return ksip_audio_endpoint_listed(g_audio, device, playout) != 0; }
+    bool listed(const char *device, bool playout) override { return ksip_audio_endpoint_listed(g_audio, device, static_cast<int>(playout)) != 0; }
     std::string default_endpoint(bool playout) override {
         char id[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
-        ksip_audio_default_endpoint(g_audio, playout, id, sizeof id);
+        ksip_audio_default_endpoint(g_audio, static_cast<int>(playout), id, sizeof id);
         return id;
     }
 } g_adm;
@@ -68,7 +78,7 @@ void StartFallback(ausrc_st *state) {
         auto next = std::chrono::steady_clock::now();
         while (state->fallback_run.load()) {
             Capture(state, samples, kFrames, 0);
-            next += std::chrono::milliseconds(10);
+            next += std::chrono::milliseconds(kFrameMs);
             std::this_thread::sleep_until(next);
         }
     });
@@ -130,13 +140,13 @@ void AddEndpoint(odict *side, bool playout) {
     const std::string endpoint = g_core.endpoint(playout);
     if (endpoint.empty()) return;
     odict_entry_add(side, "endpoint", ODICT_STRING, endpoint.c_str());
-    odict_entry_add(side, "stand_in", ODICT_BOOL, g_core.stand_in(playout));
+    odict_entry_add(side, "stand_in", ODICT_BOOL, static_cast<int>(g_core.stand_in(playout)));
 }
 } // namespace
 void add_state(odict *audio) {
     static const char *const inputs[] = {"none", "device", "silence"};
     odict *microphone = nullptr;
-    if (!odict_alloc(&microphone, 8)) {
+    if (!odict_alloc(&microphone, kDictBuckets)) {
         odict_entry_add(microphone, "input", ODICT_STRING, inputs[static_cast<int>(g_core.input())]);
         AddEndpoint(microphone, false);
         AddFailures(microphone, g_core.microphone_failures());

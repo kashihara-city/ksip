@@ -49,7 +49,7 @@ struct RenderAdm final : playback_session::Adm {
     // in the small): it is on an endpoint that is there, and that is the one
     // asked for, or what the default stands for now when that was asked for,
     // or the one asked for is not there.
-    bool serves(const std::string &asked) const {
+    [[nodiscard]] bool serves(const std::string &asked) const {
         if (!current || render.ended() || !hooks.usable(render.id.c_str())) return false;
         if (asked == "default") {
             const std::string now = hooks.default_endpoint();

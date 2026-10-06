@@ -4,9 +4,13 @@
 #include "alert_adm.h"
 #include "alert_render.h"
 #include "libre_clock.h"
+#include "session_core.h"
+#include "ksip_audio_bridge.h"
 #include <cerrno>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <baresip.h>
 
 namespace alert_player {
 namespace {
@@ -25,7 +29,7 @@ struct auplay *g_player = nullptr;
 // the ringtone and the call are never on different speakers for it.
 bool usable(const char *id) {
     ksip_audio *bridge = playback_session::bridge();
-    return bridge && ksip_audio_endpoint_listed(bridge, id, 1);
+    return (bridge != nullptr) && (ksip_audio_endpoint_listed(bridge, id, 1) != 0);
 }
 // The speaker the default stands for now, as the calls see it.
 std::string default_speaker() {
@@ -44,7 +48,7 @@ Core<Alert, NoSource> g_core(g_adm, g_clock,
                              {[](const char *line) {
                                   // The core's words are the call's; here they are the alert's.
                                   std::string said = line;
-                                  if (said.rfind("ksip_audio:", 0) == 0) said.replace(0, 10, "ksip_alert");
+                                  if (said.rfind("ksip_audio:", 0) == 0) said.replace(0, std::strlen("ksip_audio"), "ksip_alert");
                                   for (const auto &[call, alert] : {std::pair{" WebRTC ADM", ""}, std::pair{"the call's", "the alert sound's"}, std::pair{"the call ", "the alert sound "}}) {
                                       for (size_t at = said.find(call); at != std::string::npos; at = said.find(call, at + std::strlen(alert)))
                                           said.replace(at, std::strlen(call), alert);

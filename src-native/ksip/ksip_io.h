@@ -9,11 +9,22 @@
 #include <algorithm>
 #include <re.h>
 #include <baresip.h>
+#include <cstdint>
 #include <string>
 #include "ksip_audio_bridge.h"
 #include "ksip_text.h"
 
 namespace ksip_io {
+// odict's hash buckets: the dictionaries here hold a handful of entries, so
+// one nominal size does for all of them. And how deep a command's JSON may nest.
+constexpr uint32_t DICT_BUCKETS = 16;
+constexpr unsigned JSON_DEPTH = 4;
+// The SIP status codes this module reads or answers with, by name.
+namespace sip_status {
+constexpr uint16_t OK = 200, LOWEST_FAILURE = 300, FORBIDDEN = 403, NOT_FOUND = 404, METHOD_NOT_ALLOWED = 405, GONE = 410,
+                   UNSUPPORTED_URI_SCHEME = 416, CALL_DOES_NOT_EXIST = 481, BUSY_HERE = 486, BAD_EVENT = 489,
+                   NOT_IMPLEMENTED = 501, DECLINE = 603, DOES_NOT_EXIST_ANYWHERE = 604;
+} // namespace sip_status
 using ksip_text::address_ok;
 using ksip_text::codec_list;
 using ksip_text::escape_user;

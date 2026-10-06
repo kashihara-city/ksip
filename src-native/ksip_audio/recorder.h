@@ -34,6 +34,10 @@
 #include <thread>
 
 namespace recording_session {
+// The highest rate a file is written at and the seconds a side's ring holds;
+// the samples a block (one push, one write) is at most.
+constexpr uint32_t MAX_RATE = 48000;
+constexpr size_t RING_SECONDS = 10, BLOCK_SAMPLES = 8192;
 class Recorder {
 public:
     // Opens the file (UTF-8 path) at `rate` and starts the writer; `opened()`
@@ -42,10 +46,10 @@ public:
     ~Recorder();
     Recorder(const Recorder &) = delete;
     Recorder &operator=(const Recorder &) = delete;
-    bool opened() const { return writing; }
-    uint32_t file_rate() const { return rate; }
+    [[nodiscard]] bool opened() const { return writing; }
+    [[nodiscard]] uint32_t file_rate() const { return rate; }
     // The path the file was opened under: the recording's name to the app.
-    const std::string &path() const { return file_path; }
+    [[nodiscard]] const std::string &path() const { return file_path; }
     // What the far end sent: `frames` samples at `rate`, brought to the
     // file's rate. What does not fit in the buffer is dropped and counted.
     void push_far(const int16_t *samples, size_t frames, uint32_t rate);
@@ -60,14 +64,14 @@ public:
     // is joined and the file closed. Complete when nothing failed and
     // nothing was dropped. Safe to call twice.
     Summary finish();
-    bool complete() const { return !failed && !dropped; }
+    [[nodiscard]] bool complete() const { return !failed && (dropped == 0u); }
 
 private:
     // One direction: its ring of samples at the file's rate, and the state
     // of the resampler that fills it (touched only by the pushing thread).
     struct Side {
         // Samples at the file's rate, gap silence included, in stream order.
-        std::array<int16_t, size_t{48000} * 10> ring{};
+        std::array<int16_t, size_t{MAX_RATE} * RING_SECONDS> ring{};
         size_t rd = 0, wr = 0, count = 0;
         // The input rate seen last, the place of the next output sample
         // between the input samples (index -1 is `last`, the last sample of
@@ -76,17 +80,17 @@ private:
         double pos = 0;
         int16_t last = 0;
         // Resampled output on its way to the ring, so that a push allocates nothing.
-        std::array<int16_t, 8192> scratch{};
+        std::array<int16_t, BLOCK_SAMPLES> scratch{};
     };
     void push(Side &side, const int16_t *samples, size_t frames, uint32_t rate);
     void append(Side &side, const int16_t *samples, size_t frames);
     // Frames the clock has counted since the file opened, at the file's rate.
-    uint64_t clock_frames() const;
+    [[nodiscard]] uint64_t clock_frames() const;
     // The next frame of a side; the caller has seen to it that there is one.
     int16_t take(Side &side);
     // Something can go to the file: both sides have samples, or one side has
     // waited longer than the slack for the other.
-    bool writable() const;
+    [[nodiscard]] bool writable() const;
     bool header();
     void run();
     std::mutex mutex;

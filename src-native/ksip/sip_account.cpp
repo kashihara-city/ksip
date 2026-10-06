@@ -6,15 +6,28 @@
 #include "sip_account.h"
 #include "ksip_io.h"
 #include "subscriptions.h"
+#include "ksip_text.h"
 #include <cstring>
 #include <utility>
+#include <string>
+#include <cstdint>
+#include <cerrno>
+#include <baresip.h>
 
 namespace sip_account {
 namespace {
 ua *account_ua = nullptr; // Owned by the UA group, not this module.
 std::string authority_, scheme_ = "udp", registration_ = "UNCONFIGURED";
 std::string transport_, media_encryption_, own_user_;
-uint32_t register_interval = 300;
+// The registration and keepalive intervals, in seconds: the defaults and
+// the range the configuration may set.
+constexpr uint32_t DEFAULT_REGISTER_S = 300, MIN_REGISTER_S = 30, MAX_REGISTER_S = 3600;
+constexpr uint32_t DEFAULT_KEEPALIVE_S = 60, MIN_KEEPALIVE_S = 10, MAX_KEEPALIVE_S = 600;
+// The credential: the length of its target name, of the password Windows
+// holds (bytes) and of the one taken (characters); and the largest port.
+constexpr size_t TARGET_SIZE = 200, MAX_BLOB_BYTES = 1024, MAX_PASSWORD = 512;
+constexpr uint32_t MAX_PORT = 65535;
+uint32_t register_interval = DEFAULT_REGISTER_S;
 // Set when this phone was taken off the server on purpose. The 200 OK for a
 // de-registration arrives as a register event, which must not undo it.
 bool unregistered = false;
@@ -37,7 +50,7 @@ std::string server_host_;
 // registrar requires "outbound", which the PBXs in use do not, and at the
 // registrar's interval, not ours.
 bool keepalive_on = true;
-uint32_t keepalive_interval = 60;
+uint32_t keepalive_interval = DEFAULT_KEEPALIVE_S;
 tmr keepalive_timer;
 sa registrar{};
 enum sip_transp registrar_tp = SIP_TRANSP_NONE;
@@ -53,7 +66,7 @@ enum sip_transp register_tp = SIP_TRANSP_NONE;
 } // namespace
 
 ua *user_agent() { return account_ua; }
-bool registered() { return account_ua && ua_isregistered(account_ua); }
+bool registered() { return (account_ua != nullptr) && ua_isregistered(account_ua); }
 const std::string &authority() { return authority_; }
 const std::string &scheme() { return scheme_; }
 std::string uri_for(const std::string &value) {
@@ -75,7 +88,7 @@ void send_keepalive(void *) {
     // The host is what the registration's TLS connection was verified
     // against; a connection opened again for this one is verified the same.
     std::string host = server_host_;
-    int err = sip_send_conn(uag_sip(), nullptr, registrar_tp, &registrar, host.data(), mb, nullptr, nullptr);
+    const int err = sip_send_conn(uag_sip(), nullptr, registrar_tp, &registrar, host.data(), mb, nullptr, nullptr);
     mem_deref(mb);
     if (err) {
         if (err != keepalive_failure)
@@ -108,30 +121,30 @@ int login(re_printf *pf, void *) {
     value = PL_INIT;
     if (!conf_get(conf_cur(), "ksip_mediaenc", &value) && pl_isset(&value)) pl_strdup(&mediaenc, &value);
     conf_get_u32(conf_cur(), "ksip_sip_port", &port);
-    wchar_t target[200];
-    DWORD n = GetEnvironmentVariableW(L"KSIP_CREDENTIAL_TARGET", target, RE_ARRAY_SIZE(target));
+    wchar_t target[TARGET_SIZE];
+    const DWORD n = GetEnvironmentVariableW(L"KSIP_CREDENTIAL_TARGET", target, RE_ARRAY_SIZE(target));
     int err = (!n || n >= RE_ARRAY_SIZE(target)) ? EINVAL : 0;
     PCREDENTIALW credential = nullptr;
     if (!err && !CredReadW(target, CRED_TYPE_GENERIC, 0, &credential)) err = EACCES;
     std::string auth, password;
     if (!err) {
         if (credential->UserName) {
-            int size = WideCharToMultiByte(CP_UTF8, 0, credential->UserName, -1, nullptr, 0, nullptr, nullptr);
+            const int size = WideCharToMultiByte(CP_UTF8, 0, credential->UserName, -1, nullptr, 0, nullptr, nullptr);
             if (size > 1) {
                 auth.resize(static_cast<size_t>(size - 1));
                 WideCharToMultiByte(CP_UTF8, 0, credential->UserName, -1, auth.data(), size, nullptr, nullptr);
             }
         }
-        if (credential->CredentialBlobSize && credential->CredentialBlobSize <= 1024)
+        if (credential->CredentialBlobSize && credential->CredentialBlobSize <= MAX_BLOB_BYTES)
             password.assign(reinterpret_cast<char *>(credential->CredentialBlob), credential->CredentialBlobSize);
         SecureZeroMemory(credential->CredentialBlob, credential->CredentialBlobSize);
         CredFree(credential);
     }
     // An empty extension means the account registers under its user name.
-    std::string user = (extension && *extension) ? extension : auth;
+    const std::string user = (extension && *extension) ? extension : auth;
     own_user_ = user;
     if (!err && (!token(server, ".-") || !token(user.c_str(), "_.+-") || !token(auth.c_str(), "_.+-") ||
-                 password.empty() || password.size() > 512 || !port || port > 65535))
+                 password.empty() || password.size() > MAX_PASSWORD || !port || port > MAX_PORT))
         err = EINVAL;
     if (!err) {
         server_host_ = server;
@@ -142,7 +155,7 @@ int login(re_printf *pf, void *) {
         pl list = PL_INIT;
         std::string names;
         if (!conf_get(conf_cur(), "ksip_audio_codecs", &list) && pl_isset(&list)) names.assign(list.p, list.l);
-        std::string codecs = ksip_io::codec_list(names);
+        const std::string codecs = ksip_io::codec_list(names);
         std::string aor = "<sip:" + user + "@" + authority_ + ";transport=" + scheme_ + ">;regint=0;audio_codecs=" + codecs +
                           ";answermode=manual;call_transfer=yes";
         media_encryption_ = (mediaenc && *mediaenc) ? mediaenc : "";
@@ -181,7 +194,7 @@ int unregister() {
     transport_.clear();
     return 0;
 }
-void on_event(bevent_ev ev, bevent *e) {
+void on_event(bevent_ev ev, const bevent *e) {
     if (bevent_get_ua(e) != account_ua) return;
     if (ev == BEVENT_REGISTER_OK && !unregistered) {
         registration_ = "REGISTER_OK";
@@ -220,7 +233,7 @@ void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp, const s
     // The registrar the registration went to, as the name resolved, and the
     // flow it is on. The first one starts the keepalives.
     registrar = register_dst;
-    bool first = registrar_tp == SIP_TRANSP_NONE;
+    const bool first = registrar_tp == SIP_TRANSP_NONE;
     registrar_tp = tp;
     if (first && keepalive_on) tmr_start(&keepalive_timer, keepalive_interval * 1000ull, send_keepalive, nullptr);
 }
@@ -231,7 +244,7 @@ void write_state(odict *od) {
 }
 void init() {
     uint32_t interval = register_interval;
-    if (!conf_get_u32(conf_cur(), "ksip_register_interval", &interval) && interval >= 30 && interval <= 3600) register_interval = interval;
+    if (!conf_get_u32(conf_cur(), "ksip_register_interval", &interval) && interval >= MIN_REGISTER_S && interval <= MAX_REGISTER_S) register_interval = interval;
     tmr_init(&keepalive_timer);
     // The app writes both; anything it would not write keeps the defaults.
     pl mode = PL_INIT;
@@ -240,7 +253,7 @@ void init() {
         else if (!pl_strcasecmp(&mode, "crlf")) keepalive_on = true;
     }
     interval = keepalive_interval;
-    if (!conf_get_u32(conf_cur(), "ksip_keepalive_interval", &interval) && interval >= 10 && interval <= 600) keepalive_interval = interval;
+    if (!conf_get_u32(conf_cur(), "ksip_keepalive_interval", &interval) && interval >= MIN_KEEPALIVE_S && interval <= MAX_KEEPALIVE_S) keepalive_interval = interval;
 }
 void close() {
     tmr_cancel(&keepalive_timer);

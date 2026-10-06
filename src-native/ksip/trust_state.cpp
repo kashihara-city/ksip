@@ -9,6 +9,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509_vfy.h>
 #include "trust_state.h"
+#include <cstdint>
 
 // libre's accessor for a TLS context's OpenSSL context: declared in its
 // private src/tls/openssl/tls.h, defined in the static library.
@@ -17,9 +18,9 @@ extern "C" SSL_CTX *tls_ssl_ctx(const struct tls *tls);
 namespace trust_state {
 void write_state(odict *od) {
     // No TLS transport: there is no store to verify with, and nothing is said.
-    struct tls *tls = uag_tls();
+    const struct tls *tls = uag_tls();
     if (!tls) return;
-    SSL_CTX *context = tls_ssl_ctx(tls);
+    const SSL_CTX *context = tls_ssl_ctx(tls);
     X509_STORE *store = context ? SSL_CTX_get_cert_store(context) : nullptr;
     int64_t certificates = 0;
     if (store) {

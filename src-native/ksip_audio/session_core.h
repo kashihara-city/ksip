@@ -27,6 +27,8 @@
 #include <vector>
 
 namespace playback_session {
+// odict's hash buckets: a nominal size for the few entries written here.
+constexpr uint32_t kDictBuckets = 8;
 // What the session asks of the device bridge. A player or a source is
 // named by its address, which the bridge hands to the render or capture
 // callback as its argument; a null source means frames go nowhere.
@@ -297,15 +299,15 @@ public:
         if (active_source) waiting |= watch(false, elapsed);
         keep_watching(waiting);
     }
-    Play *playout() const { return active_playout; }
-    Source *source() const { return active_source; }
-    size_t player_count() const { return players.size(); }
+    [[nodiscard]] Play *playout() const { return active_playout; }
+    [[nodiscard]] Source *source() const { return active_source; }
+    [[nodiscard]] size_t player_count() const { return players.size(); }
     // How things stand, read off who has the streams, so that it cannot
     // disagree with them: a source that started has the device, one that did
     // not runs on the fallback's silence, and a new source replaces either.
-    Input input() const { return !active_source ? Input::None : active_source->started ? Input::Device : Input::Silence; }
+    [[nodiscard]] Input input() const { return !active_source ? Input::None : active_source->started ? Input::Device : Input::Silence; }
     // A player has the stream and it is up (an owner whose start failed is not playing).
-    bool playing() const { return active_playout && active_playout->started; }
+    [[nodiscard]] bool playing() const { return active_playout && active_playout->started; }
     // The endpoint the side's call stream is on, as the bridge opened it;
     // empty while the stream is not up.
     std::string endpoint(bool playout) {
@@ -328,8 +330,8 @@ public:
         unsigned count = 0;
         int last_result = 0;
     };
-    Failures speaker_failures() const { return speaker; }
-    Failures microphone_failures() const { return microphone; }
+    [[nodiscard]] Failures speaker_failures() const { return speaker; }
+    [[nodiscard]] Failures microphone_failures() const { return microphone; }
 
 private:
     // The devices one operation tried and found would not start, so that
@@ -469,8 +471,8 @@ private:
         return Outcome::Down;
     }
     // The device a side asks for: the owner's.
-    std::string asked(bool playout) const { return playout ? std::string(active_playout ? active_playout->device() : "") : source_device; }
-    bool up(bool playout) const { return playout ? playing() : input() == Input::Device; }
+    [[nodiscard]] std::string asked(bool playout) const { return playout ? std::string(active_playout ? active_playout->device() : "") : source_device; }
+    [[nodiscard]] bool up(bool playout) const { return playout ? playing() : input() == Input::Device; }
     // The side's stream the owner started is not running: WebRTC's own
     // restart of it (the device in use went) failed, and nothing comes
     // through it, though the endpoint it opened for that is still noted.

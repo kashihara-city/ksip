@@ -3,8 +3,13 @@
 #include "sip_account.h"
 #include "transfer.h"
 #include "inband_dtmf.h"
+#include "ksip_io.h"
 #include <cstring>
 #include <unordered_map>
+#include <cerrno>
+#include <cstdint>
+#include <string>
+#include <baresip.h>
 
 namespace calls {
 using namespace ksip_io;
@@ -21,9 +26,9 @@ bool dnd = false;
 bool maintenance = false;
 
 // Whether some other call is being talked on right now.
-bool talking_elsewhere(call *except) {
-    for (le *u = list_head(uag_list()); u; u = u->next)
-        for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
+bool talking_elsewhere(const call *except) {
+    for (const le *u = list_head(uag_list()); u; u = u->next)
+        for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             auto other = static_cast<call *>(l->data);
             if (other != except && call_state(other) == CALL_STATE_ESTABLISHED && !call_is_onhold(other)) return true;
         }
@@ -35,10 +40,10 @@ call *find(const std::string &id) { return id.empty() ? nullptr : uag_call_find(
 // The module does this itself (call_hold_other_calls is off): baresip would
 // also do it when a second call is answered by the far end, and that took
 // the person away from the call they had gone back to.
-int hold_others(call *except) {
+int hold_others(const call *except) {
     int err = 0;
-    for (le *u = list_head(uag_list()); u; u = u->next)
-        for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
+    for (const le *u = list_head(uag_list()); u; u = u->next)
+        for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             auto other = static_cast<call *>(l->data);
             if (other != except && call_state(other) == CALL_STATE_ESTABLISHED && !call_is_onhold(other)) err |= call_hold(other, true);
         }
@@ -48,7 +53,7 @@ void note_identity(const std::string &callid, const std::string &uri, const std:
     connected_identity[callid] = uri;
     if (name) connected_name[callid] = *name;
 }
-bool on_event(bevent_ev ev, bevent *e, call *c, const std::string &) {
+bool on_event(bevent_ev ev, const bevent *e, call *c, const std::string &) {
     if (ev == BEVENT_CALL_ESTABLISHED && talking_elsewhere(c)) {
         // The far end answered a call while the person was talking on another
         // one (they had gone back to it while this one rang). The person stays
@@ -60,12 +65,12 @@ bool on_event(bevent_ev ev, bevent *e, call *c, const std::string &) {
         // The app hears of it through CALL_INCOMING and the CALL_CLOSED that
         // follows, with these words; the state reply carries no list of its own.
         info("ksip: %s, incoming call refused as busy\n", dnd ? "dnd" : "maintenance");
-        ua_hangup(bevent_get_ua(e), c, 486, "Busy Here");
+        ua_hangup(bevent_get_ua(e), c, ksip_io::sip_status::BUSY_HERE, "Busy Here");
         return true;
     }
     return false;
 }
-void on_call_closed(call *c, const std::string &id) {
+void on_call_closed(const call *c, const std::string &id) {
     auto account_ua = sip_account::user_agent();
     if (!account_ua) return;
     // Calling a second person holds the first call. When the second one
@@ -74,7 +79,7 @@ void on_call_closed(call *c, const std::string &id) {
     // the call was returned to.
     int others = 0;
     call *remaining = nullptr;
-    for (le *l = list_head(ua_calls(account_ua)); l; l = l->next)
+    for (const le *l = list_head(ua_calls(account_ua)); l; l = l->next)
         if (static_cast<call *>(l->data) != c) {
             ++others;
             remaining = static_cast<call *>(l->data);
@@ -109,12 +114,12 @@ int action(re_printf *pf, const ActionRequest &request) {
         if (!transfer::idle() || !(sip_uri(value) ? address_ok(value) : token(value.c_str(), "*#+"))) return EINVAL;
         // A number is completed with the configured registrar; a URI is sent as
         // it was written. Either way the library has to be able to read it.
-        std::string uri = sip_account::uri_for(value);
+        const std::string uri = sip_account::uri_for(value);
         struct uri decoded{};
         struct pl span;
         pl_set_str(&span, uri.c_str());
         if (uri_decode(&decoded, &span)) return EINVAL;
-        for (le *l = list_head(ua_calls(account_ua)); l; l = l->next) {
+        for (const le *l = list_head(ua_calls(account_ua)); l; l = l->next) {
             auto other = static_cast<call *>(l->data);
             if (call_state(other) == CALL_STATE_ESTABLISHED && !call_is_onhold(other)) {
                 c = other;
@@ -141,7 +146,7 @@ int action(re_printf *pf, const ActionRequest &request) {
         std::string bare = value;
         if (bare.size() >= 2 && bare.front() == '<' && bare.back() == '>') bare = bare.substr(1, bare.size() - 2);
         if (!(sip_uri(bare) ? address_ok(value) : token(value.c_str(), "*#+"))) return EINVAL;
-        std::string uri = sip_uri(bare) ? value : "sip:" + escape_user(value) + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
+        const std::string uri = sip_uri(bare) ? value : "sip:" + escape_user(value) + "@" + sip_account::authority() + ";transport=" + sip_account::scheme();
         return call_transfer(c, uri.c_str());
     }
     // Do not disturb is about the account as well: on or off, no call named.
@@ -157,8 +162,8 @@ int action(re_printf *pf, const ActionRequest &request) {
             maintenance = false;
             return 0;
         }
-        for (le *u = list_head(uag_list()); u; u = u->next)
-            for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next)
+        for (const le *u = list_head(uag_list()); u; u = u->next)
+            for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next)
                 if (call_state(static_cast<call *>(l->data)) != CALL_STATE_TERMINATED) return EBUSY;
         maintenance = true;
         return 0;
@@ -196,35 +201,37 @@ int action(re_printf *pf, const ActionRequest &request) {
     }
     return EINVAL;
 }
+// Room for a codec's name and rate, "opus 48000Hz" and the like.
+constexpr size_t kCodecTextSize = 64;
 unsigned write_state(odict *od, odict *list) {
     odict_entry_add(od, "dnd", ODICT_BOOL, dnd ? 1 : 0);
     unsigned index = 0;
-    for (le *u = list_head(uag_list()); u; u = u->next) {
-        for (le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
+    for (const le *u = list_head(uag_list()); u; u = u->next) {
+        for (const le *l = list_head(ua_calls(static_cast<ua *>(u->data))); l; l = l->next) {
             auto c = static_cast<call *>(l->data);
             if (call_state(c) == CALL_STATE_TERMINATED) continue;
             odict *entry = nullptr;
-            if (odict_alloc(&entry, 8)) continue;
+            if (odict_alloc(&entry, ksip_io::DICT_BUCKETS)) continue;
             odict_entry_add(entry, "id", ODICT_STRING, call_id(c));
-            auto identity = connected_identity.find(call_id(c));
+            const auto identity = connected_identity.find(call_id(c));
             odict_entry_add(entry, "peer", ODICT_STRING, identity == connected_identity.end() ? call_peeruri(c) : identity->second.c_str());
             // The caller's name: the one PAI gave, else the one From gave.
-            auto named = connected_name.find(call_id(c));
+            const auto named = connected_name.find(call_id(c));
             pl from_name;
             pl_set_str(&from_name, call_peername(c) ? call_peername(c) : "");
             odict_entry_add(entry, "name", ODICT_STRING, (named == connected_name.end() ? display_name(from_name) : named->second).c_str());
             odict_entry_add(entry, "state", ODICT_STRING, call_statename(c));
-            odict_entry_add(entry, "held", ODICT_BOOL, call_is_onhold(c));
+            odict_entry_add(entry, "held", ODICT_BOOL, static_cast<int>(call_is_onhold(c)));
             odict_entry_add(entry, "duration", ODICT_INT, static_cast<int64_t>(call_duration(c)));
             auto audio = call_audio(c);
             if (auto codec = audio ? audio_codec(audio, true) : nullptr) {
-                char described[64];
+                char described[kCodecTextSize];
                 if (re_snprintf(described, sizeof(described), "%s %uHz", codec->name, codec->srate) > 0)
                     odict_entry_add(entry, "codec", ODICT_STRING, described);
             }
             // True only once the encryption is actually established, which for
             // DTLS is a moment after the call is answered.
-            odict_entry_add(entry, "secure", ODICT_BOOL, audio && stream_is_secure(audio_strm(audio)));
+            odict_entry_add(entry, "secure", ODICT_BOOL, static_cast<int>((audio != nullptr) && stream_is_secure(audio_strm(audio))));
             odict_entry_add(entry, "transport", ODICT_STRING, sip_transp_name(call_transp(c)));
             odict_entry_add(list, std::to_string(index++).c_str(), ODICT_OBJECT, entry);
             mem_deref(entry);

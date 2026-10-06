@@ -6,6 +6,11 @@
 #include <algorithm>
 #include <utility>
 #include <vector>
+#include <string>
+#include <cstdint>
+#include <cerrno>
+#include <cstddef>
+#include <baresip.h>
 
 namespace transfer {
 namespace {
@@ -79,7 +84,7 @@ void clear() {
 // with no NOTIFY.
 constexpr uint64_t REFER_LIMIT_MS = 64 * SIP_T1 + 2000;
 void refer_deadline(void *) {
-    std::string resume = refer_accepted ? consultation : original;
+    const std::string resume = refer_accepted ? consultation : original;
     debug("ksip: transfer: no %s within 64*T1 of the REFER, resuming %s\n", refer_accepted ? "NOTIFY" : "answer",
           refer_accepted ? "the call it was to be replaced by" : "the call it went to");
     clear();
@@ -122,10 +127,10 @@ void refer_went() {
 // way round as well, but then sent neither NOTIFY nor BYE, and both calls
 // stayed on screen. Two started in the same second go by the order the user
 // agent made them in.
-bool established_first(call *a, call *b) {
-    uint32_t da = call_duration(a), db = call_duration(b);
+bool established_first(const call *a, const call *b) {
+    const uint32_t da = call_duration(a), db = call_duration(b);
     if (da != db) return da > db;
-    for (le *l = list_head(ua_calls(call_get_ua(a))); l; l = l->next) {
+    for (const le *l = list_head(ua_calls(call_get_ua(a))); l; l = l->next) {
         if (l->data == a) return true;
         if (l->data == b) return false;
     }
@@ -208,7 +213,7 @@ int start(const std::string &one, const std::string &other) {
     refer_waiting.clear();
     for (call *each : {from, to})
         if (!call_is_onhold(each)) {
-            int err = call_hold(each, true);
+            const int err = call_hold(each, true);
             if (err) {
                 clear();
                 return err;
@@ -221,7 +226,7 @@ int start(const std::string &one, const std::string &other) {
     tmr_start(&refer_timer, refer_waiting.empty() ? 0 : 2000, send_refer, nullptr);
     return 0;
 }
-void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id) {
+void on_event(bevent_ev ev, const bevent *e, call *c, const std::string &id) {
     if (ev == BEVENT_CALL_REMOTE_SDP && refer_armed && !str_cmp(bevent_get_text(e), "answer")) {
         // The answer to a hold sent for the transfer. Its ACK goes out right
         // after this event, so the REFER follows from the timer, not from here.
@@ -234,8 +239,8 @@ void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id) {
         // other way round can go out at once; only for a refusal that came
         // straight away, though, which is how a server says it does not take
         // a transfer that way.
-        uint64_t after = tmr_jiffies() - refer_sent_at;
-        bool refused = after <= REFUSED_WITHIN_MS;
+        const uint64_t after = tmr_jiffies() - refer_sent_at;
+        const bool refused = after <= REFUSED_WITHIN_MS;
         if (!refused) debug("ksip: transfer: failed %llu ms after the REFER, not tried the other way round\n", static_cast<unsigned long long>(after));
         if (refused && !transfer_reversed && other && call_state(c) == CALL_STATE_ESTABLISHED &&
             call_state(other) == CALL_STATE_ESTABLISHED && refer_reversed(c, other))
@@ -247,9 +252,9 @@ void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id) {
 }
 bool on_call_closed(call *, const std::string &id, const char *text) {
     if (id == original || id == consultation) {
-        std::string other = id == original ? consultation : original;
-        bool completed = id == original && !str_cmp(text, "Call transfered");
-        bool was_original = id == original;
+        const std::string other = id == original ? consultation : original;
+        const bool completed = id == original && (str_cmp(text, "Call transfered") == 0);
+        const bool was_original = id == original;
         clear();
         set_outcome(completed ? "TRANSFER_DONE" : was_original ? "TRANSFER_ORIGINAL_CLOSED" : "TRANSFER_OTHER_CLOSED");
         if (auto remaining = calls::find(other)) {
@@ -280,7 +285,7 @@ bool release_leftover(const std::string &id) {
 void write_state(odict *xfer) {
     odict_entry_add(xfer, "original", ODICT_STRING, original.c_str());
     odict_entry_add(xfer, "consultation", ODICT_STRING, consultation.c_str());
-    odict_entry_add(xfer, "pending", ODICT_BOOL, pending_);
+    odict_entry_add(xfer, "pending", ODICT_BOOL, static_cast<int>(pending_));
     odict_entry_add(xfer, "outcome", ODICT_STRING, outcome.c_str());
     odict_entry_add(xfer, "outcome_seq", ODICT_INT, static_cast<int64_t>(outcome_seq));
 }

@@ -6,8 +6,13 @@
 #include "audio_state.h"
 #include "alert_player.h"
 #include "microphone_mute.h"
+#include "session_core.h"
+#include "ksip_audio_bridge.h"
 #include <cerrno>
 #include <cstring>
+#include <algorithm>
+#include <cstdint>
+#include <baresip.h>
 
 namespace {
 struct auplay *g_player;
@@ -76,10 +81,14 @@ int NoiseLevel(const char *level) {
         if (!std::strcmp(level, names[i])) return i;
     return std::strcmp(level, "off") ? 2 : -1;
 }
+// The echo canceller's delay when the configuration names none, and room
+// for the noise suppression level's word.
+constexpr uint32_t kDefaultDelayMs = 20;
+constexpr size_t kLevelTextSize = 24;
 int module_init() {
-    uint32_t delay = 20;
+    uint32_t delay = kDefaultDelayMs;
     bool aec = true, high_pass = true, agc = false, detail = false, raw_microphone = true, raw_speaker = true;
-    char level[24] = "high";
+    char level[kLevelTextSize] = "high";
     conf_get_u32(conf_cur(), "webrtc_aec_delay_ms", &delay);
     conf_get_bool(conf_cur(), "ksip_aec_enabled", &aec);
     conf_get_bool(conf_cur(), "ksip_high_pass", &high_pass);
@@ -90,11 +99,11 @@ int module_init() {
     // audio; both by default, each its own switch for a setting to come.
     conf_get_bool(conf_cur(), "ksip_raw_microphone", &raw_microphone);
     conf_get_bool(conf_cur(), "ksip_raw_speaker", &raw_speaker);
-    ksip_audio_set_raw(raw_microphone, raw_speaker);
-    const ksip_audio_processing processing{aec, high_pass, NoiseLevel(level), agc};
+    ksip_audio_set_raw(static_cast<int>(raw_microphone), static_cast<int>(raw_speaker));
+    const ksip_audio_processing processing{static_cast<int>(aec), static_cast<int>(high_pass), NoiseLevel(level), static_cast<int>(agc)};
     const bool enabled = aec || high_pass || processing.noise_suppression >= 0 || agc;
     // Set before creating, so that the device warnings of a failing start show up.
-    ksip_audio_set_log_level(detail);
+    ksip_audio_set_log_level(static_cast<int>(detail));
     const int result = ksip_audio_create(std::min(delay, 500u), &processing, &g_audio);
     if (result) return ENODEV;
     playback_session::open(g_audio);
@@ -141,17 +150,17 @@ int module_close() {
 extern "C" int ksip_audio_add_state(struct odict *od) {
     if (!od) return EINVAL;
     odict *audio = nullptr;
-    int err = odict_alloc(&audio, 8);
+    int err = odict_alloc(&audio, playback_session::kDictBuckets);
     if (err) return err;
-    odict_entry_add(audio, "ready", ODICT_BOOL, g_ready);
-    odict_entry_add(audio, "processing", ODICT_BOOL, g_ready && g_processing);
+    odict_entry_add(audio, "ready", ODICT_BOOL, static_cast<int>(g_ready));
+    odict_entry_add(audio, "processing", ODICT_BOOL, static_cast<int>(g_ready && g_processing));
     // Not up, the session has had nothing to do: no input, no output, no
     // failures, which is what it says.
     playback_session::add_state(audio);
     alert_player::add_state(audio);
     // Whether the last capture and playout streams took RAW mode; not there before the first.
-    if (const int raw = g_audio ? ksip_audio_capture_raw() : 0) odict_entry_add(audio, "capture_raw", ODICT_BOOL, raw == 1);
-    if (const int raw = g_audio ? ksip_audio_playout_raw() : 0) odict_entry_add(audio, "playout_raw", ODICT_BOOL, raw == 1);
+    if (const int raw = g_audio ? ksip_audio_capture_raw() : 0) odict_entry_add(audio, "capture_raw", ODICT_BOOL, static_cast<int>(raw == 1));
+    if (const int raw = g_audio ? ksip_audio_playout_raw() : 0) odict_entry_add(audio, "playout_raw", ODICT_BOOL, static_cast<int>(raw == 1));
     err = odict_entry_add(od, "audio", ODICT_OBJECT, audio);
     mem_deref(audio);
     return err;

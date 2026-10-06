@@ -23,13 +23,13 @@
 // Lifetime: module-static state; init() at module load, close() at unload;
 // not re-initialised.
 #define WIN32_LEAN_AND_MEAN
-#include <cmath>
-#include <algorithm>
 #include <re.h>
 #include <baresip.h>
 #include <windows.h>
 #include <cstring>
 #include <string>
+#include <cerrno>
+#include <cstdint>
 
 namespace {
 enum { kMaxFrame = 65536 };
@@ -49,9 +49,18 @@ int print_to_string(const char *p, size_t size, void *arg) {
     static_cast<std::string *>(arg)->append(p, size);
     return 0;
 }
+// odict's hash buckets and how deep a command's JSON may nest; the room a
+// netstring takes around its body (the length, the colon and the comma); the
+// text of an error, and of the secret the app hands over.
+constexpr uint32_t kDictBuckets = 16;
+constexpr unsigned kJsonDepth = 16;
+constexpr size_t kFrameOverhead = 24, kErrorTextSize = 256, kSecretSize = 256;
+// A frame's length has at most this many digits (kMaxFrame has seven), and
+// a frame has to show its colon by then.
+constexpr size_t kMaxLengthDigits = 9;
 int send_frame(const std::string &body) {
     if (!conn || !established) return ENOTCONN;
-    mbuf *mb = mbuf_alloc(body.size() + 24);
+    mbuf *mb = mbuf_alloc(body.size() + kFrameOverhead);
     if (!mb) return ENOMEM;
     int err = mbuf_printf(mb, "%zu:", body.size());
     err |= mbuf_write_mem(mb, reinterpret_cast<const uint8_t *>(body.data()), body.size());
@@ -65,10 +74,10 @@ int send_frame(const std::string &body) {
 }
 std::string encode_response(int cmd_error, const std::string &data, const char *token) {
     odict *od = nullptr;
-    if (odict_alloc(&od, 8)) return {};
-    char m[256];
-    odict_entry_add(od, "response", ODICT_BOOL, true);
-    odict_entry_add(od, "ok", ODICT_BOOL, cmd_error == 0);
+    if (odict_alloc(&od, kDictBuckets)) return {};
+    char m[kErrorTextSize];
+    odict_entry_add(od, "response", ODICT_BOOL, 1);
+    odict_entry_add(od, "ok", ODICT_BOOL, static_cast<int>(cmd_error == 0));
     if (cmd_error && data.empty()) odict_entry_add(od, "data", ODICT_STRING, str_error(cmd_error, m, sizeof(m)));
     else odict_entry_add(od, "data", ODICT_STRING, data.c_str());
     if (token) odict_entry_add(od, "token", ODICT_STRING, token);
@@ -92,7 +101,7 @@ void end(const char *why) {
 // One frame: the command runs, the answer goes back with the token.
 void run_command(const char *data, size_t len) {
     odict *od = nullptr;
-    if (json_decode_odict(&od, 32, data, len, 16) || !odict_string(od, "command")) {
+    if (json_decode_odict(&od, kDictBuckets, data, len, kJsonDepth) || !odict_string(od, "command")) {
         mem_deref(od);
         warning("ksip_ctrl: a frame could not be read\n");
         return;
@@ -102,9 +111,9 @@ void run_command(const char *data, size_t len) {
     if (prm && *prm) line += std::string(" ") + prm;
     std::string answer;
     re_printf pf = {print_to_string, &answer};
-    int err = cmd_process_long(baresip_commands(), line.c_str(), line.size(), &pf, nullptr);
+    const int err = cmd_process_long(baresip_commands(), line.c_str(), line.size(), &pf, nullptr);
     if (err) warning("ksip_ctrl: command %s failed (%m)\n", cmd, err);
-    auto body = encode_response(err, answer, tok);
+    const auto body = encode_response(err, answer, tok);
     mem_deref(od);
     if (!body.empty() && send_frame(body)) warning("ksip_ctrl: failed to send the response\n");
 }
@@ -113,13 +122,13 @@ void recv_handler(mbuf *mb, void *) {
     if (ended) return;
     in.append(reinterpret_cast<const char *>(mbuf_buf(mb)), mbuf_get_left(mb));
     for (;;) {
-        auto colon = in.find(':');
+        const auto colon = in.find(':');
         if (colon == std::string::npos) {
-            if (in.size() > 10) end("the app sent something that is not a frame");
+            if (in.size() > kMaxLengthDigits + 1) end("the app sent something that is not a frame");
             return;
         }
-        if (colon == 0 || colon > 9 || in.find_first_not_of("0123456789") < colon) return end("the app sent something that is not a frame");
-        size_t len = std::stoul(in.substr(0, colon));
+        if (colon == 0 || colon > kMaxLengthDigits || in.find_first_not_of("0123456789") < colon) return end("the app sent something that is not a frame");
+        const size_t len = std::stoul(in.substr(0, colon));
         if (len > kMaxFrame) return end("the app sent a frame too long");
         if (in.size() < colon + 1 + len + 1) return; // the rest is still to come
         if (in[colon + 1 + len] != ',') return end("the app sent something that is not a frame");
@@ -138,7 +147,7 @@ void estab_handler(void *) {
     odict_entry_add(od, "secret", ODICT_STRING, secret.c_str());
     std::string body;
     re_printf pf = {print_to_string, &body};
-    int err = json_encode_odict(&pf, od);
+    const int err = json_encode_odict(&pf, od);
     mem_deref(od);
     if (err || send_frame(body)) return end("the greeting could not be sent");
     info("ksip_ctrl: connected to the app\n");
@@ -154,8 +163,8 @@ void close_handler(int err, void *) {
 void event_handler(bevent_ev, bevent *event, void *) {
     if (!established || ended) return;
     odict *od = nullptr;
-    if (odict_alloc(&od, 8)) return;
-    int err = odict_entry_add(od, "event", ODICT_BOOL, true);
+    if (odict_alloc(&od, kDictBuckets)) return;
+    int err = odict_entry_add(od, "event", ODICT_BOOL, 1);
     err |= bevent_odict_encode(od, event);
     std::string body;
     re_printf pf = {print_to_string, &body};
@@ -184,8 +193,8 @@ int refuse(const char *why, int err) {
 int init() {
     tmr_init(&release_timer);
     tmr_init(&quit_timer);
-    char value[256] = {};
-    DWORD n = GetEnvironmentVariableA("KSIP_CONTROL_SECRET", value, sizeof(value));
+    char value[kSecretSize] = {};
+    const DWORD n = GetEnvironmentVariableA("KSIP_CONTROL_SECRET", value, sizeof(value));
     if (n > 0 && n < sizeof(value)) secret.assign(value, n);
     SecureZeroMemory(value, sizeof(value));
     if (secret.empty()) return refuse("no control secret in the environment", EINVAL);

@@ -14,6 +14,7 @@
 #include <rem.h>
 #include <baresip.h>
 #include <atomic>
+#include <cstddef>
 #include <string>
 #include <thread>
 
@@ -25,8 +26,9 @@ struct Alert {
     void *arg;
     auplay_prm prm;
     bool started;
-    char device_name[160];
-    const char *device() const { return device_name; }
+    static constexpr size_t kDeviceNameSize = 160;
+    char device_name[kDeviceNameSize];
+    [[nodiscard]] const char *device() const { return device_name; }
     void set_device(const char *device) { str_ncpy(device_name, device && device[0] ? device : "default", sizeof(device_name)); }
 };
 

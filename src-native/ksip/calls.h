@@ -17,7 +17,7 @@
 namespace calls {
 call *find(const std::string &id);
 // Puts every call being talked on, other than the given one, on hold.
-int hold_others(call *except);
+int hold_others(const call *except);
 // A P-Asserted-Identity arrived for a call: the number the PBX asserts, and
 // the name if it gave one.
 void note_identity(const std::string &callid, const std::string &uri, const std::string *name);
@@ -25,10 +25,10 @@ void note_identity(const std::string &callid, const std::string &uri, const std:
 void forget(const std::string &id);
 // The call events that are about the calls themselves. True when the event
 // was an incoming call refused here, which nothing else should handle.
-bool on_event(bevent_ev ev, bevent *e, call *c, const std::string &id);
+bool on_event(bevent_ev ev, const bevent *e, call *c, const std::string &id);
 // A call that ended and was not a transfer's: the first call is brought
 // back when the second one ends.
-void on_call_closed(call *c, const std::string &id);
+void on_call_closed(const call *c, const std::string &id);
 // The ksip_action command, once read.
 int action(re_printf *pf, const ksip_io::ActionRequest &request);
 // The calls array of the state reply, and the switches; returns how many

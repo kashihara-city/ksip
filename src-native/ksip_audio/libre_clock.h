@@ -37,7 +37,7 @@ private:
     Slot slots[3]{};
     Slot &slot(Timer which) { return slots[static_cast<int>(which)]; }
     static void fired(void *arg) {
-        auto *s = static_cast<Slot *>(arg);
+        const auto *s = static_cast<Slot *>(arg);
         if (s->clock->fire) s->clock->fire(s->which);
     }
 };

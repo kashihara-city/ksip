@@ -14,6 +14,9 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <cerrno>
+#include <cstdint>
+#include <system_error>
 #include "recording_session.h"
 #include "inband_dtmf.h"
 
@@ -30,11 +33,11 @@ struct Decode {
 };
 // The software gain: samples are scaled and clipped; a gain of one leaves
 // the frame alone.
-void amplify(auframe *f, float gain) {
+void amplify(const auframe *f, float gain) {
     if (gain <= 1.f) return;
     if (f->fmt == AUFMT_S16LE) {
         auto samples = static_cast<int16_t *>(f->sampv);
-        for (size_t i = 0; i < f->sampc; ++i) samples[i] = (int16_t)std::clamp(std::lrint(static_cast<float>(samples[i]) * gain), -32768L, 32767L);
+        for (size_t i = 0; i < f->sampc; ++i) samples[i] = static_cast<int16_t>(std::clamp(std::lrint(static_cast<float>(samples[i]) * gain), long{INT16_MIN}, long{INT16_MAX}));
     } else if (f->fmt == AUFMT_FLOAT) {
         auto samples = static_cast<float *>(f->sampv);
         for (size_t i = 0; i < f->sampc; ++i) samples[i] = std::clamp(samples[i] * gain, -1.f, 1.f);
@@ -52,7 +55,7 @@ void destroy_encode(void *p) {
 }
 int update_encode(aufilt_enc_st **st, void **, const aufilt *, aufilt_prm *, const audio *stream) {
     if (*st) return 0;
-    auto e = (Encode *)mem_zalloc(sizeof(Encode), destroy_encode);
+    auto e = static_cast<Encode *>(mem_zalloc(sizeof(Encode), destroy_encode));
     if (!e) return ENOMEM;
     e->stream = stream;
     *st = &e->base;
@@ -69,7 +72,7 @@ int process_encode(aufilt_enc_st *st, auframe *f) {
 }
 int update_decode(aufilt_dec_st **st, void **, const aufilt *, aufilt_prm *p, const audio *stream) {
     if (*st) return 0;
-    auto d = (Decode *)mem_zalloc(sizeof(Decode), destroy_decode);
+    auto d = static_cast<Decode *>(mem_zalloc(sizeof(Decode), destroy_decode));
     if (!d) return ENOMEM;
     d->stream = stream;
     recording_session::decoder_created(stream, p->srate);
@@ -82,16 +85,19 @@ int process_decode(aufilt_dec_st *st, auframe *f) {
     return 0;
 }
 int start(re_printf *pf, void *arg) {
-    auto a = (cmd_arg *)arg;
+    auto a = static_cast<cmd_arg *>(arg);
     return recording_session::start(pf, a ? a->prm : nullptr);
 }
 int stop(re_printf *pf, void *) { return recording_session::stop(pf); }
 int select_recording(re_printf *pf, void *arg) {
-    auto a = (cmd_arg *)arg;
+    auto a = static_cast<cmd_arg *>(arg);
     return recording_session::select(pf, a ? a->prm : nullptr);
 }
+// The software gain as the app sets it: a percentage, from 100 (as is) to 200.
+constexpr uint32_t kMinGainPercent = 100, kMaxGainPercent = 200;
+constexpr float kPercent = 100.f;
 int gain(re_printf *pf, void *arg) {
-    auto a = (cmd_arg *)arg;
+    auto a = static_cast<cmd_arg *>(arg);
     if (!a || !str_isset(a->prm)) return EINVAL;
     // "<kind> <level>": the level a percentage from 100 to 200 with nothing
     // after it, read strictly (sscanf would take a sign and overflow quietly).
@@ -102,8 +108,8 @@ int gain(re_printf *pf, void *arg) {
     const std::string_view number = prm.substr(space + 1);
     unsigned level = 0;
     const auto [end, ec] = std::from_chars(number.data(), number.data() + number.size(), level);
-    if (ec != std::errc() || end != number.data() + number.size() || level < 100 || level > 200) return EINVAL;
-    auto value = static_cast<float>(level) / 100.f;
+    if (ec != std::errc() || end != number.data() + number.size() || level < kMinGainPercent || level > kMaxGainPercent) return EINVAL;
+    const auto value = static_cast<float>(level) / kPercent;
     if (kind == "microphone") microphone_gain.store(value, std::memory_order_relaxed);
     else if (kind == "speaker") speaker_gain.store(value, std::memory_order_relaxed);
     else return EINVAL;
@@ -117,11 +123,11 @@ const cmd commands[] = {
     {"ksip_gain", 0, CMD_PRM, "Set microphone/speaker software gain", gain},
 };
 int init() {
-    uint32_t mic = 100, speaker = 100;
+    uint32_t mic = kMinGainPercent, speaker = kMinGainPercent;
     (void)conf_get_u32(conf_cur(), "ksip_microphone_gain", &mic);
     (void)conf_get_u32(conf_cur(), "ksip_speaker_gain", &speaker);
-    microphone_gain.store(static_cast<float>(std::clamp(mic, 100u, 200u)) / 100.f);
-    speaker_gain.store(static_cast<float>(std::clamp(speaker, 100u, 200u)) / 100.f);
+    microphone_gain.store(static_cast<float>(std::clamp(mic, kMinGainPercent, kMaxGainPercent)) / kPercent);
+    speaker_gain.store(static_cast<float>(std::clamp(speaker, kMinGainPercent, kMaxGainPercent)) / kPercent);
     filter.name = "ksip_audio_filter";
     filter.encupdh = update_encode;
     filter.ench = process_encode;

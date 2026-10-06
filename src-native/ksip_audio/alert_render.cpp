@@ -8,13 +8,22 @@
 #include <audioclient.h>
 #include <mmreg.h>
 #include <cerrno>
+#include <climits>
 #include <cstring>
 #include <vector>
+#include <string>
+#include <cstdint>
+#include <atomic>
+#include <re.h>
+#include <baresip.h>
 #include "alert_render.h"
 
 namespace alert_player {
 namespace {
 constexpr REFERENCE_TIME kRefPerMs = 10000;
+constexpr uint32_t kMsPerS = 1000;
+// How long the feeder waits when the buffer has no room for the next block.
+constexpr DWORD kFullWaitMs = 5;
 std::wstring wide(const std::string &utf8) {
     const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
     std::wstring out(n > 0 ? static_cast<size_t>(n) : 0, L'\0');
@@ -94,8 +103,8 @@ int WasapiRender::open(const std::string &endpoint, void *player) {
         f->wFormatTag = WAVE_FORMAT_PCM;
         f->nChannels = prm.ch;
         f->nSamplesPerSec = prm.srate;
-        f->wBitsPerSample = static_cast<WORD>(aufmt_sample_size(static_cast<enum aufmt>(prm.fmt)) * 8);
-        f->nBlockAlign = static_cast<WORD>((f->wBitsPerSample / 8) * f->nChannels);
+        f->wBitsPerSample = static_cast<WORD>(aufmt_sample_size(static_cast<enum aufmt>(prm.fmt)) * CHAR_BIT);
+        f->nBlockAlign = static_cast<WORD>((f->wBitsPerSample / CHAR_BIT) * f->nChannels);
         f->nAvgBytesPerSec = f->nSamplesPerSec * f->nBlockAlign;
         f->cbSize = 0;
         step = "IAudioClient::Initialize";
@@ -123,7 +132,7 @@ int WasapiRender::open(const std::string &endpoint, void *player) {
         return errno_of(hr);
     }
     w->started = true;
-    w->frames = prm.srate * prm.ptime / 1000;
+    w->frames = prm.srate * prm.ptime / kMsPerS;
     w->sampc = static_cast<size_t>(w->frames) * prm.ch;
     w->samples.assign(aufmt_sample_size(static_cast<enum aufmt>(prm.fmt)) * w->sampc, 0);
     stopped.store(false, std::memory_order_relaxed);
@@ -136,7 +145,7 @@ void WasapiRender::feed() {
     Wasapi *w = wasapi;
     const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
     const auplay_prm &prm = w->alert->prm;
-    auframe af;
+    auframe af{};
     auframe_init(&af, static_cast<enum aufmt>(prm.fmt), w->samples.data(), w->sampc, prm.srate, prm.ch);
     const char *step = nullptr;
     HRESULT hr = S_OK;
@@ -148,7 +157,7 @@ void WasapiRender::feed() {
             break;
         }
         if (w->buffer_frames - padding < w->frames) {
-            Sleep(5);
+            Sleep(kFullWaitMs);
             continue;
         }
         w->alert->handler(&af, w->alert->arg);

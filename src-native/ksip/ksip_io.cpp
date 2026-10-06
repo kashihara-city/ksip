@@ -1,7 +1,12 @@
 // The module's reading and writing that touches libre or baresip; see ksip_io.h.
 #define WIN32_LEAN_AND_MEAN
 #include "ksip_io.h"
+#include "ksip_text.h"
+#include "ksip_audio_bridge.h"
 #include <cstring>
+#include <string>
+#include <cstdint>
+#include <baresip.h>
 
 namespace ksip_io {
 std::string display_name(const pl &name) {
@@ -12,11 +17,11 @@ std::string display_name(const pl &name) {
     return s;
 }
 void log_sip_message(bool tx, const uint8_t *packet, size_t length) {
-    for (auto &line : ksip_text::scrubbed_sip_lines(packet, length)) info("ksip sip %s %s\n", tx ? ">" : "<", line.c_str());
+    for (const auto &line : ksip_text::scrubbed_sip_lines(packet, length)) info("ksip sip %s %s\n", tx ? ">" : "<", line.c_str());
 }
 bool parse_action(const char *prm, ActionRequest &request) {
     odict *od = nullptr;
-    if (!prm || json_decode_odict(&od, 16, prm, strlen(prm), 4)) return false;
+    if (!prm || json_decode_odict(&od, DICT_BUCKETS, prm, strlen(prm), JSON_DEPTH)) return false;
     request.op = odict_string(od, "op") ? odict_string(od, "op") : "";
     request.id = odict_string(od, "id") ? odict_string(od, "id") : "";
     request.value = odict_string(od, "value") ? odict_string(od, "value") : "";
@@ -26,7 +31,7 @@ bool parse_action(const char *prm, ActionRequest &request) {
 }
 void add_audio_stats(odict *od, const ksip_audio_stats &stats) {
     odict *aec = nullptr;
-    if (odict_alloc(&aec, 24)) return;
+    if (odict_alloc(&aec, DICT_BUCKETS)) return;
     if (stats.flags & KSIP_AUDIO_STATS_ECHO_RETURN_LOSS) odict_entry_add(aec, "echo_return_loss", ODICT_DOUBLE, stats.echo_return_loss);
     if (stats.flags & KSIP_AUDIO_STATS_ECHO_RETURN_LOSS_ENHANCEMENT) odict_entry_add(aec, "echo_return_loss_enhancement", ODICT_DOUBLE, stats.echo_return_loss_enhancement);
     if (stats.flags & KSIP_AUDIO_STATS_DELAY) odict_entry_add(aec, "delay_ms", ODICT_INT, static_cast<int64_t>(stats.delay_ms));
@@ -47,7 +52,7 @@ void add_audio_stats(odict *od, const ksip_audio_stats &stats) {
         odict_entry_add(aec, "agc_gain_db", ODICT_DOUBLE, stats.agc_gain_db);
     }
     odict_entry_add(aec, "stream_delay_ms", ODICT_INT, static_cast<int64_t>(stats.stream_delay_ms));
-    odict_entry_add(aec, "stream_delay_from_device", ODICT_BOOL, stats.stream_delay_from_device != 0);
+    odict_entry_add(aec, "stream_delay_from_device", ODICT_BOOL, static_cast<int>(stats.stream_delay_from_device != 0));
     odict_entry_add(aec, "render_frames", ODICT_INT, static_cast<int64_t>(stats.render_frames));
     odict_entry_add(aec, "capture_frames", ODICT_INT, static_cast<int64_t>(stats.capture_frames));
     odict_entry_add(aec, "render_errors", ODICT_INT, static_cast<int64_t>(stats.render_errors));

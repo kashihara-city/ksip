@@ -28,7 +28,7 @@ int start(const std::string &one, const std::string &other);
 // held call after each of two second calls) would otherwise look unchanged.
 void set_outcome(const char *code);
 // The events a transfer follows.
-void on_event(bevent_ev ev, bevent *e, call *c, const std::string &id);
+void on_event(bevent_ev ev, const bevent *e, call *c, const std::string &id);
 // A closed call that was one of the transfer's legs, or the transferred leg
 // saying so itself: true when the closing was the transfer's to handle.
 bool on_call_closed(call *c, const std::string &id, const char *text);
