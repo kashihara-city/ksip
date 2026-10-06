@@ -500,6 +500,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/rust.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/clang-tidy.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/audio-module.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/sanitizers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/webrtc-restart.ps1
 python -X utf8 scripts/test/audio-devices.py
 python -X utf8 scripts/test/supply-chain.py
@@ -519,6 +520,8 @@ python -X utf8 scripts/test/sbom.py
 くり返しのテストは、1回ごとにマイクを開き、300 ms 鳴らしてから閉じ、開始が成功したのに音が一度も届かなかった回があれば失敗にします。`scripts/build/patch-webrtc.py` がWebRTCのマイクとスピーカーの開始を直す前は、USBオーディオで100回に1回ほどこれが起き、通話はRTPを送らず、相手の声も録音も無くなりました。確率でしか起きないので、WebRTCを更新したときや `patch-webrtc.py` を変えたときに、マイクとスピーカーのあるPCで流します。使うマイクは `KSIP_TEST_AUDIO_MIC` にエンドポイントIDで指定でき、省けばWindowsの既定です。
 
 `test/audio-module.ps1` は音声モジュールのうち機器も baresip も要らない部分を単体で試します。再生ストリームの引継ぎ（新しいプレーヤーが取り、去れば前のプレーヤーへ返す、起動に失敗した切替は取り上げた相手へ返す）、マイクが開かないときの無音の代替、通話中の機器の切り替え（動いている流れを新しい機器へ移し、開けなければ元の機器のまま）、状態の報告（入力が機器か無音か、再生しているか、失敗した開始の数）が失敗・引継ぎ・取り直しの後も実際と合うこと、コールバック解除中の競合（実行中の呼び出しを待つ、呼び出しの中からの解除は待たない）、WAV 録音のバッファと見出し、着信音の橋渡し（既定で鳴らしている実機器が外れれば新しい既定へ、既定の代替中にそれも外れれば次の既定へ、選んだスピーカーが戻れば戻る、既定の変更を追う、列挙に残ったままストリームが終われば開き直す、同期で返る開始失敗の計上と既定の代替、最後の1台の消失と復帰）です。
+
+`test/sanitizers.ps1` は、`audio-module.ps1` と `aec.ps1` の 3 つの単体テストのプログラムを、エンジンを組むのと同じ clang-cl の AddressSanitizer と UndefinedBehaviorSanitizer で組んで流します。KSIP 自身のコードのはみ出し・解放後の使用・二重解放は前者で、符号付きの桁あふれ・不正なシフト・位置合わせやヌルの参照は後者で、その場で失敗になります（UBSan はどの検出も致命にする設定）。計測器の付いたコードは遅いので、壁時計で測る録音のテスト 3 本は `--no-clock` で外します。機器も baresip も要らず、1 分ほどです。
 
 `test/webrtc-restart.ps1` は、パッチ済みWebRTCのソースから Start・StopThread・Finalize を切り出し、内部再開と同じく自分の handle を持つ音声スレッド上で IAudioClient::Start を失敗させ、5秒以内に戻ることを確かめます。`patch-webrtc.py` の再開失敗の変更が無いと、スレッドが自分の終了を待って戻りません。続けて、開始に失敗して初期化だけが残ったストリーム（WebRTC は初期化済みのストリームへの機器の設定を拒む）を、bridge の次の開始が解放して機器を開けることを、bridge の開始・停止と WebRTC の StartRecording・StopRecording・SetDevice をそのまま切り出して確かめます。`native.ps1` が用意する `temp/w/src` が要り、無ければ SKIP です。
 

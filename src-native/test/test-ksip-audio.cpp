@@ -1457,7 +1457,11 @@ void an_inband_digit_is_its_two_tones_for_as_long_as_the_rules_ask() {
 }
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    // --no-clock: without the three recorder tests that time themselves by
+    // the wall clock, for runs under the sanitizers, whose slowness moves
+    // what those measure.
+    const bool clock = !(argc >= 2 && std::strcmp(argv[1], "--no-clock") == 0);
     digest_headers_are_hidden_however_they_are_written();
     a_header_is_found_however_it_is_spaced();
     dialog_info_is_read_as_xml_allows_it_and_not_when_cut_off();
@@ -1512,10 +1516,12 @@ int main() {
     finishing_twice_is_once();
     this_side_is_kept_while_the_far_end_is_silent();
     samples_at_another_rate_are_brought_to_the_file_rate();
-    a_gap_in_the_far_end_leaves_this_side_in_place();
     a_rate_change_in_the_middle_keeps_the_time_axis();
-    a_side_that_starts_late_is_placed_where_the_clock_says();
-    silence_for_a_gap_goes_after_the_samples_already_in_hand();
-    std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
+    if (clock) {
+        a_gap_in_the_far_end_leaves_this_side_in_place();
+        a_side_that_starts_late_is_placed_where_the_clock_says();
+        silence_for_a_gap_goes_after_the_samples_already_in_hand();
+    }
+    std::printf("%s: %d failure(s)%s\n", failures ? "FAIL" : "PASS", failures, clock ? "" : " (the clock tests left out)");
     return failures ? 1 : 0;
 }

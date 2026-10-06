@@ -228,6 +228,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "clang-tidy.ps1 failed" }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
           if ($LASTEXITCODE -ne 0) { throw "aec.ps1 failed" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/audio-module.ps1
+          if ($LASTEXITCODE -ne 0) { throw "audio-module.ps1 failed" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/sanitizers.ps1
+          if ($LASTEXITCODE -ne 0) { throw "sanitizers.ps1 failed" }
           foreach ($script in "loopback-call", "loopback-gain", "loopback-silent-mic") {
             python -X utf8 "scripts/test/$script.py"
             if ($LASTEXITCODE -ne 0) { throw "$script.py failed" }

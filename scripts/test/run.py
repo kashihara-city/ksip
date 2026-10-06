@@ -8,7 +8,7 @@ TESTS = ROOT / 'scripts/test'
 # group needs a real microphone and speaker and takes minutes, so it runs only
 # when asked for.
 SUITE = [
-    ('offline', 'rust.ps1'), ('offline', 'clang-tidy.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'webrtc-restart.ps1'), ('offline', 'audio-devices.py'),
+    ('offline', 'rust.ps1'), ('offline', 'clang-tidy.ps1'), ('offline', 'aec.ps1'), ('offline', 'audio-module.ps1'), ('offline', 'sanitizers.ps1'), ('offline', 'webrtc-restart.ps1'), ('offline', 'audio-devices.py'),
     ('offline', 'supply-chain.py'), ('offline', 'i18n.py'), ('offline', 'settings-dialog.py'), ('offline', 'no-secrets.py'),
     ('offline', 'build-paths.py'), ('offline', 'line-endings.py'), ('offline', 'admx.py'), ('offline', 'sbom.py'),
     ('device', 'webrtc-device.ps1'), ('device', 'pbx-device-switch.py'),
