@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <string_view>
 
 namespace recording_session {
 namespace {
@@ -34,7 +35,9 @@ void Recorder::header() {
     le32(file, (uint32_t)bytes);
 }
 Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(path), started(std::chrono::steady_clock::now()), slack(sr / 5) {
-    file = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
+    // The path comes as UTF-8; read as such (u8path, which did the same, is deprecated in C++20).
+    const std::u8string_view utf8(reinterpret_cast<const char8_t *>(path.data()), path.size());
+    file = _wfopen(std::filesystem::path(utf8).c_str(), L"wb");
     if (!file) return;
     writing = true;
     header();

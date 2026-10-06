@@ -9,7 +9,7 @@ RECORD = ROOT / 'temp/build/build-record.json'
 WEBRTC = Path(os.environ.get('KSIP_WEBRTC_SOURCE') or ROOT / 'temp/w/src')
 # What the SBOM reads besides the exe, and what the exe is linked from: the
 # SBOM is only made while these are as they were at the build (see sbom.py).
-LINKED = ['ksip_entry', 'ksip_stdio', 'ksip_trust', 'libbaresip', 'opus', 'g722_static', 'ssl', 'crypto', 're-static',
+LINKED = ['ksip_entry', 'ksip_app', 'ksip_modules', 'libbaresip', 'opus', 'g722_static', 'ssl', 'crypto', 're-static',
           'ksip_webrtc_audio', 'clang_rt.builtins-x86_64']
 INPUTS = ['src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'deps/native-sources.lock.json', 'temp/build/webrtc-notices/LICENSE.md',
           *[f'temp/build/native/lib/{name}.lib' for name in LINKED]]

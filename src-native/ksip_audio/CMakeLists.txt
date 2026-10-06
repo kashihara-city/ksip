@@ -1,9 +1,9 @@
+# The audio devices through the WebRTC bridge, and the alert sounds. One of
+# the objects of ksip_modules.lib (../CMakeLists.txt).
 project(ksip_audio)
 if(NOT WIN32)
   return()
 endif()
-list(APPEND MODULES_DETECTED ${PROJECT_NAME})
-set(MODULES_DETECTED ${MODULES_DETECTED} PARENT_SCOPE)
 add_library(${PROJECT_NAME} OBJECT device_module.cpp audio_session.cpp microphone_mute.cpp alert_player.cpp alert_render.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

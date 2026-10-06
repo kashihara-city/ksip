@@ -1,6 +1,7 @@
+# The engine's SIP side: the account, the calls, the transfer, the
+# subscriptions and the app's commands. One of the objects of ksip_modules.lib
+# (../CMakeLists.txt).
 project(ksip)
-list(APPEND MODULES_DETECTED ${PROJECT_NAME})
-set(MODULES_DETECTED ${MODULES_DETECTED} PARENT_SCOPE)
 add_library(${PROJECT_NAME} OBJECT ksip.cpp ksip_io.cpp ksip_text.cpp sip_account.cpp calls.cpp transfer.cpp subscriptions.cpp trust_state.cpp system_ports.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)

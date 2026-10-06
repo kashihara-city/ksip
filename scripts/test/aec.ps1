@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../dev-env.ps1"
 Set-Location (Split-Path (Split-Path $PSScriptRoot))
-cl /nologo /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Isrc-native/webrtc /Itemp/build/native/include/ksip src-native/test-webrtc-audio.cpp /Fetemp/build/test-webrtc-audio.exe /Fotemp/build/test-webrtc-audio.obj /link /LIBPATH:temp/build/native/lib ksip_webrtc_audio.lib clang_rt.builtins-x86_64.lib winmm.lib crypt32.lib iphlpapi.lib secur32.lib oleaut32.lib advapi32.lib
+cl /nologo /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Isrc-native/webrtc /Itemp/build/native/include/ksip src-native/test/test-webrtc-audio.cpp /Fetemp/build/test-webrtc-audio.exe /Fotemp/build/test-webrtc-audio.obj /link /LIBPATH:temp/build/native/lib ksip_webrtc_audio.lib clang_rt.builtins-x86_64.lib winmm.lib crypt32.lib iphlpapi.lib secur32.lib oleaut32.lib advapi32.lib
 if ($LASTEXITCODE -ne 0) { throw 'WebRTC audio ABI link test failed' }
 & temp/build/test-webrtc-audio.exe
 if ($LASTEXITCODE -ne 0) { throw 'WebRTC audio ABI smoke test failed' }

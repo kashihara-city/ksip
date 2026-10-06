@@ -7,9 +7,13 @@ fn main() {
     let lib = root.join("temp/build/native/lib");
     println!("cargo:rustc-link-search=native={}", lib.display());
     for name in [
+        // baresip's main under another name (patch-baresip.py).
         "ksip_entry",
-        "ksip_stdio",
-        "ksip_trust",
+        // What the app calls directly, and the KSIP modules, built apart from
+        // baresip (src-native/CMakeLists.txt); baresip's static module table
+        // names the modules.
+        "ksip_app",
+        "ksip_modules",
         "libbaresip",
         // Codec libraries the baresip modules call into.
         "opus",

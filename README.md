@@ -412,7 +412,8 @@ docs/                READMEに載せる画面の画像
 src-web/             HTML・CSS・vanilla JavaScriptの画面（app.js を入口に ES modules で分割。npm なし）
 src-web/locales/     言語ファイル
 src-tauri/           Rust/Tauriのソースと固定設定
-src-native/          KSIP固有のC/C++ソースとビルド定義
+src-native/          KSIP固有のC++ソースとビルド定義（自前のCMakeプロジェクト。WebRTCと同じclang-clで組む）
+src-native/test/     C++の単体テスト。audio-module.ps1 と aec.ps1 がそのつど組んで流す
 scripts/dev-env.ps1  MSVCツールチェーンとPATH。ビルド・テストの共通土台
 scripts/deps/        固定版の依存を取得する。ネットワーク必須、依存更新時のみ
 scripts/build/       取得済みの依存からビルドする。オフライン、毎回
@@ -458,6 +459,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/app.ps1
 `deps/fetch-baresip.py` はbaresip・re・Opus・libg722・LibreSSLの固定アーカイブをハッシュ検証します。
 `deps/fetch-webrtc.py` は固定した公式Google WebRTCとdepot_tools revisionをパス長対策済みの `temp/w/`・`temp/d/` へ`gclient`で取得してDEPSも検証します。
 `build/native.ps1` は内部で `build/webrtc.ps1` を呼びます。
+組むものとコンパイラーは次のとおりです。WebRTC は固定版に同梱の clang-cl（GN/Ninja）、LibreSSL・Opus・libg722・re・baresip は配布されたままの CMake プロジェクトを MSVC で、KSIP 自身のコード（`src-native/`、baresip のモジュール 4 つと、アプリが直接呼ぶ `app/` の `stdio.cpp`・`trust.cpp`。すべて C++）は自前の CMake プロジェクト（`src-native/CMakeLists.txt`）を WebRTC と同じ clang-cl で組みます。KSIP のコードを 1 つのコンパイラーに通し、その警告と検査を積み上げられるようにするためで、baresip と各ライブラリには手を入れません。モジュールは 1 つのアーカイブ `ksip_modules.lib`、`app/` は `ksip_app.lib` になり、baresip の側では `patch-baresip.py` が置くソース無しのスタブ（`modules/ksip*/CMakeLists.txt`）がモジュールの名前だけを静的なモジュール表に載せ、アプリがそのアーカイブを baresip と一緒にリンクします（`src-tauri/build.rs`）。アーカイブは MSVC の `lib.exe` で作り、`/Brepro` と `-ffile-prefix-map` で再現可能にします。
 `build/app.ps1` は `build/embed-notices.py` を呼んでから `release/` の `ksip.exe` と `ksip-v<version>.exe` を置き換えます。運用中のフォルダをそのままビルド先にできるよう、履歴や録音には触れません。配布物を作る場合は最後に `python -X utf8 scripts/build/package.py` を実行します。
 
 `build/app.ps1` はビルド機のパスがバイナリへ残らないよう、`RUSTFLAGS` を組み立ててcargoへ渡します。これは `.cargo/config.toml` の `rustflags` を置き換えるため、静的CRTの指定も同じ場所に書いてあります。外部DLLへの依存が残れば `test/app-single-exe.ps1` が失敗します。

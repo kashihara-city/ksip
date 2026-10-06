@@ -18,7 +18,7 @@ use windows_sys::Win32::Security::Cryptography::{
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
-// Declared as src-native/trust.c defines it:
+// Declared as src-native/app/trust.cpp defines it:
 // `int ksip_x509_parses(const unsigned char *der, long length)`.
 unsafe extern "C" {
     /// Whether the engine's TLS library can read this certificate. It reads a

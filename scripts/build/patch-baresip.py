@@ -21,9 +21,12 @@
 #                                 OpenSSL nor mbedTLS is used (LibreSSL is).
 #   baresip/src/main.c            take only "-f PROFILE_DIRECTORY" on the
 #                                 command line, since MSVC has no getopt.
-#   baresip/CMakeLists.txt        append src-native/embedded.cmake, which adds
-#                                 the KSIP modules copied in below and the
-#                                 embedded entry point.
+#   baresip/CMakeLists.txt        append the embedded entry point (baresip's
+#                                 main under another name). The KSIP modules
+#                                 are built apart (src-native/CMakeLists.txt,
+#                                 with clang-cl); baresip gets a stub per
+#                                 module below, so that its static module
+#                                 table names them.
 #
 # Nothing else in re or baresip is touched; baresip itself is as released.
 # What the system-picked ports need besides (an empty datagram that opens the
@@ -214,21 +217,39 @@ text = text.replace(anchor, """	/* KSIP: RFC 3605, when RTCP is not on the port 
 """ + anchor)
 stream.write_text(text)
 
-# Embedding: the KSIP modules live in this repository and are copied beside
-# baresip's own modules, and embedded.cmake adds them to the build.
-shutil.copytree(ROOT / "src-native/ksip_audio",
-                baresip / "modules/ksip_audio", dirs_exist_ok=True)
-# The filter module lives in the same folder as the device module; baresip
-# wants a folder per module, so it gets one holding only the CMakeLists.
-(baresip / "modules/ksip_audio_filter").mkdir(parents=True, exist_ok=True)
-shutil.copy2(ROOT / "src-native/ksip_audio/filter/CMakeLists.txt",
-             baresip / "modules/ksip_audio_filter/CMakeLists.txt")
-shutil.copytree(ROOT / "src-native/ksip",
-                baresip / "modules/ksip", dirs_exist_ok=True)
-# The app's authenticated control connection, in place of baresip's ctrl_tcp.
-shutil.copytree(ROOT / "src-native/ksip_ctrl",
-                baresip / "modules/ksip_ctrl", dirs_exist_ok=True)
+# Embedding: the KSIP modules are built apart from baresip, with clang-cl,
+# into one archive (src-native/CMakeLists.txt, native.ps1). baresip gets a
+# stub per module, with no sources of its own, so that its static module
+# table names each one (exports_<name>) and the archive is linked where the
+# module's objects would be, with what the modules need besides (the WebRTC
+# bridge and its builtins, the Windows libraries). A copy of the sources an
+# earlier version of this script made is removed first.
+needed = ";".join([
+    "${KSIP_NATIVE}/lib/ksip_webrtc_audio.lib",
+    "${KSIP_NATIVE}/lib/clang_rt.builtins-x86_64.lib",
+    "winmm", "crypt32", "iphlpapi", "secur32", "oleaut32", "ole32", "uuid", "advapi32",
+])
+for name in ("ksip_audio", "ksip_audio_filter", "ksip", "ksip_ctrl"):
+    folder = baresip / "modules" / name
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    (folder / "CMakeLists.txt").write_text(
+        "# KSIP: a module built apart (src-native/CMakeLists.txt); only named here.\n"
+        f"project({name})\n"
+        "list(APPEND MODULES_DETECTED ${PROJECT_NAME})\n"
+        "set(MODULES_DETECTED ${MODULES_DETECTED} PARENT_SCOPE)\n"
+        "add_library(${PROJECT_NAME} STATIC IMPORTED GLOBAL)\n"
+        "set_target_properties(${PROJECT_NAME} PROPERTIES\n"
+        '  IMPORTED_LOCATION "${KSIP_NATIVE}/lib/ksip_modules.lib"\n'
+        f'  INTERFACE_LINK_LIBRARIES "{needed}")\n')
 
+# The embedded entry point: baresip's main, under another name, for the app
+# to call when it runs as the engine (src-tauri/src/native.rs).
 cmake = baresip / "CMakeLists.txt"
-cmake.write_text(cmake.read_text() + "\n# KSIP embedded entry point\n" +
-                 (ROOT / "src-native/embedded.cmake").read_text())
+cmake.write_text(cmake.read_text() + """
+# KSIP embedded entry point
+add_library(ksip_entry STATIC src/main.c)
+target_compile_definitions(ksip_entry PRIVATE main=ksip_engine_main)
+target_link_libraries(ksip_entry PRIVATE baresip)
+install(TARGETS ksip_entry ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+""")
