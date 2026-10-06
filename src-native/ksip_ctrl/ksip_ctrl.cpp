@@ -1,6 +1,7 @@
 // The app's control connection to the engine: JSON commands and their
 // answers in netstring frames over TCP on the loopback address, and the
-// engine's events the same way back.
+// engine's events the same way back. (The engine's other link to the app,
+// its stdout and stderr on the app's pipes, is stdio.cpp beside this.)
 //
 // The engine listens on nothing. The app holds a listening socket from
 // before it starts the engine until the engine has connected, so there is no

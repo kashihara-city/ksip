@@ -8,7 +8,7 @@ use windows_sys::Win32::{
 };
 // Declared as the C side defines them: ksip_engine_main is baresip's
 // `int main(int argc, char *argv[])` renamed (scripts/build/patch-baresip.py), and
-// ksip_stdio_init is `extern "C" void ksip_stdio_init()` in src-native/app/stdio.cpp.
+// ksip_stdio_init is `extern "C" void ksip_stdio_init()` in src-native/ksip_ctrl/stdio.cpp.
 unsafe extern "C" {
     fn ksip_engine_main(argc: i32, argv: *mut *mut c_char) -> i32;
     fn ksip_stdio_init();

@@ -1,7 +1,7 @@
 # KSIP's own native code, built apart from baresip: the baresip modules (ksip,
-# the engine's SIP side; ksip_ctrl, the app's control connection; ksip_audio,
-# the audio devices through WebRTC; ksip_audio_filter, the recording and the
-# in-band DTMF) and what the app calls directly (app/), all C++. Compiled
+# the engine's SIP side; ksip_ctrl, the engine's side of the app's links to
+# it; ksip_audio, the audio devices through WebRTC; ksip_audio_filter, the
+# recording and the in-band DTMF), all C++. Compiled
 # with the clang-cl the pinned WebRTC brings along
 # (native.ps1 passes it), so that all of KSIP's code goes through one
 # compiler, whose warnings and checks the rest can build on; baresip and the
@@ -68,9 +68,4 @@ add_library(ksip_modules STATIC
   $<TARGET_OBJECTS:ksip_audio>
   $<TARGET_OBJECTS:ksip_audio_filter>)
 
-# What the app calls directly, outside baresip (app/): the CRT streams of the
-# engine process bound to the app's pipes before baresip's main runs, and
-# the certificate check through LibreSSL, in the app's own process.
-add_subdirectory(app)
-
-install(TARGETS ksip_modules ksip_app ARCHIVE DESTINATION lib)
+install(TARGETS ksip_modules ARCHIVE DESTINATION lib)

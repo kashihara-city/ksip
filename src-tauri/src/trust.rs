@@ -18,12 +18,38 @@ use windows_sys::Win32::Security::Cryptography::{
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 
-// Declared as src-native/app/trust.cpp defines it:
-// `int ksip_x509_parses(const unsigned char *der, long length)`.
+// The engine's TLS library (LibreSSL, linked into this executable for the
+// engine) reading a certificate; declared as <openssl/x509.h> does:
+// `X509 *d2i_X509(X509 **a, const unsigned char **in, long len)` and
+// `void X509_free(X509 *a)`. An X509 is only ever handled by pointer here.
+#[repr(C)]
+struct X509 {
+    _private: [u8; 0],
+}
 unsafe extern "C" {
-    /// Whether the engine's TLS library can read this certificate. It reads a
-    /// PEM bundle as all or nothing, so one it cannot read would empty the list.
-    fn ksip_x509_parses(der: *const u8, length: std::ffi::c_long) -> i32;
+    fn d2i_X509(out: *mut *mut X509, der: *mut *const u8, length: std::ffi::c_long) -> *mut X509;
+    fn X509_free(certificate: *mut X509);
+}
+/// Whether the engine's TLS library can read this certificate. It reads a
+/// PEM bundle as all or nothing, so one it cannot read would empty the list.
+/// The library takes a long, 32 bits on Windows; a certificate longer than
+/// that is not readable, not cut short.
+fn engine_reads(der: &[u8]) -> bool {
+    let Ok(length) = std::ffi::c_long::try_from(der.len()) else {
+        return false;
+    };
+    let mut cursor = der.as_ptr();
+    // SAFETY: d2i_X509 reads at most `length` bytes from `cursor`, which is
+    // exactly that long, moves `cursor` along and keeps nothing of it; the
+    // certificate it makes is freed here, once.
+    unsafe {
+        let certificate = d2i_X509(std::ptr::null_mut(), &mut cursor, length);
+        if certificate.is_null() {
+            return false;
+        }
+        X509_free(certificate);
+    }
+    true
 }
 
 /// The trust anchors taken from Windows, and how many were left out: as
@@ -190,16 +216,7 @@ pub fn windows_trust() -> Result<Trust, String> {
         let der = unsafe { std::slice::from_raw_parts(encoded, length) };
         // SAFETY: a null time means now; `info` is the context's own certificate info.
         let in_date = unsafe { CertVerifyTimeValidity(std::ptr::null(), info) } == 0;
-        // The C function takes a long, 32 bits on Windows; cbCertEncoded is a
-        // DWORD, so a length that does not fit is left out, not cut short.
-        let Ok(long_length) = std::ffi::c_long::try_from(length) else {
-            trust.left_out += 1;
-            continue;
-        };
-        // SAFETY: the C function only reads `long_length` bytes from `der`,
-        // which is exactly that long (checked to fit above), and does not keep it.
-        let readable = unsafe { ksip_x509_parses(der.as_ptr(), long_length) } != 0;
-        if !in_date || !readable {
+        if !in_date || !engine_reads(der) {
             trust.left_out += 1;
             continue;
         }
@@ -342,8 +359,7 @@ mod tests {
 
     #[test]
     fn the_engine_library_refuses_what_is_not_a_certificate() {
-        let junk = b"not a certificate";
-        // SAFETY: the C function reads the given bytes only.
-        assert_eq!(unsafe { ksip_x509_parses(junk.as_ptr(), junk.len() as _) }, 0);
+        assert!(!engine_reads(b"not a certificate"));
+        assert!(!engine_reads(b""));
     }
 }

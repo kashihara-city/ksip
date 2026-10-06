@@ -9,10 +9,9 @@ fn main() {
     for name in [
         // baresip's main under another name (patch-baresip.py).
         "ksip_entry",
-        // What the app calls directly, and the KSIP modules, built apart from
-        // baresip (src-native/CMakeLists.txt); baresip's static module table
-        // names the modules.
-        "ksip_app",
+        // The KSIP modules, built apart from baresip (src-native/CMakeLists.txt);
+        // baresip's static module table names them. The one function the app
+        // calls before baresip's main (ksip_stdio_init) is in there too.
         "ksip_modules",
         "libbaresip",
         // Codec libraries the baresip modules call into.

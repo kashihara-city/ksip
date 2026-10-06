@@ -1,3 +1,8 @@
+// The engine's stdout and stderr bound to the pipes the app handed it, so
+// that everything baresip and libre print reaches the app's log. Not a
+// module: the app calls ksip_stdio_init in the engine process before
+// baresip's main (src-tauri/native.rs), since a module's init would come
+// after the start-up lines, and after whatever stops the start.
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
