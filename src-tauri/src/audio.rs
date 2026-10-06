@@ -118,6 +118,13 @@ pub struct Calibration {
     pub samples: u8,
     pub spread_ms: u16,
     pub stable: bool,
+    /// The endpoints measured, by name as the window lists them, and whether
+    /// one of them stood in for the device chosen (the default while that
+    /// is not there): the delay saved is that pair's. Filled in by the
+    /// phone, which picked them (phone_actor.rs, calibrate_aec).
+    pub microphone: String,
+    pub speaker: String,
+    pub stand_in: bool,
 }
 struct MicSession {
     /// The endpoint the session was asked for: what the choice stands for
@@ -212,6 +219,10 @@ unsafe fn take_string(value: PWSTR) -> windows::core::Result<String> {
 /// it does not know at all (GetDevice's ERROR_NOT_FOUND: a choice from
 /// another machine, a device removed for good). The engine opens the
 /// default in place of both (device_selection.cc), and so does `resolve`.
+/// So is one that goes while it is read: a stream or meter held on it
+/// answers AUDCLNT_E_DEVICE_INVALIDATED, and one being opened as it goes
+/// ERROR_NOT_CONNECTED, for the one reading before Windows says the
+/// endpoint is no longer active.
 fn not_there(e: &windows::core::Error) -> bool {
     let code = e.code();
     code == unplugged().code()
@@ -233,10 +244,6 @@ fn error(e: windows::core::Error) -> String {
     if not_there(&e) {
         return message("AUDIO_DEVICE_UNPLUGGED");
     }
-/// So is one that goes while it is read: a stream or meter held on it
-/// answers AUDCLNT_E_DEVICE_INVALIDATED, and one being opened as it goes
-/// ERROR_NOT_CONNECTED, for the one reading before Windows says the
-/// endpoint is no longer active.
     message_with("AUDIO_DEVICE_FAILED", [e])
 }
 /// Windows' privacy switches for the microphone, as Settings > Privacy &
@@ -834,8 +841,9 @@ fn calibrate_once(
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(error)?;
-        // The chosen devices themselves, never the default in their place: a
-        // delay measured on a stand-in would be saved for the chosen ones.
+        // The endpoints given, as they are: which ones serve the choices
+        // (the default in place of a device that is not there) is the
+        // caller's to decide (phone_actor.rs, calibrate_aec).
         let microphone = endpoint(&enumerator, eCapture, microphone_id).map_err(error)?;
         let speaker = endpoint(&enumerator, eRender, speaker_id).map_err(error)?;
         let schedule: Vec<(usize, u8)> = variants
@@ -958,6 +966,9 @@ fn calibrate_once(
             .round()
             .clamp(0.0, 100.0) as u8;
         Ok(Calibration {
+            microphone: String::new(),
+            speaker: String::new(),
+            stand_in: false,
             measured_ms: measured,
             recommended_ms: measured,
             confidence,
@@ -1004,6 +1015,9 @@ fn aggregate_careful(
     let stability = (1.0 - (spread as f32 / 40.0).min(0.50))
         * (successful_sessions as f32 / attempted_sessions as f32);
     Ok(Calibration {
+            microphone: String::new(),
+            speaker: String::new(),
+            stand_in: false,
         measured_ms: measured,
         recommended_ms: measured,
         confidence: (mean_confidence as f32 * stability).round() as u8,
@@ -1070,6 +1084,18 @@ mod privacy_tests {
 mod tests {
     use super::*;
 
+    // A device going while it is read answers otherwise than "not active"
+    // for that one reading; it is not there all the same.
+    #[test]
+    fn a_device_going_while_read_is_not_there() {
+        use windows::core::Error;
+        assert!(not_there(&Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)));
+        assert!(not_there(&Error::from_hresult(windows::Win32::Foundation::ERROR_NOT_CONNECTED.to_hresult())));
+        assert!(not_there(&unplugged()));
+        assert!(!not_there(&Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED)), "a refusal is not an absence");
+        assert_eq!(error(Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)), message("AUDIO_DEVICE_UNPLUGGED"));
+    }
+
     // The endpoint a call's stream is on is the target while there is one,
     // whatever the choice stands for now; without a call the choice is
     // resolved (a look at Windows, which "other" never gets to).
@@ -1084,18 +1110,6 @@ mod tests {
         let found = target("microphone", "default", Some(&elsewhere), true).unwrap();
         assert_eq!(found.stand_in, None, "the default asked for stands in for nothing");
         assert!(target("other", "default", None, true).is_err());
-    // A device going while it is read answers otherwise than "not active"
-    // for that one reading; it is not there all the same.
-    #[test]
-    fn a_device_going_while_read_is_not_there() {
-        use windows::core::Error;
-        assert!(not_there(&Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)));
-        assert!(not_there(&Error::from_hresult(windows::Win32::Foundation::ERROR_NOT_CONNECTED.to_hresult())));
-        assert!(not_there(&unplugged()));
-        assert!(!not_there(&Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED)), "a refusal is not an absence");
-        assert_eq!(error(Error::from_hresult(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED)), message("AUDIO_DEVICE_UNPLUGGED"));
-    }
-
     }
     // A change the window meant for the endpoint it was shown is made only
     // while that is the one in use when the phone gets to it.
@@ -1161,6 +1175,9 @@ mod tests {
     #[test]
     fn unstable_careful_measurement_still_returns_a_reference_value() {
         let run = |measured_ms| Calibration {
+            microphone: String::new(),
+            speaker: String::new(),
+            stand_in: false,
             measured_ms,
             recommended_ms: measured_ms,
             confidence: 80,

@@ -154,7 +154,7 @@ export function openSettings(){
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
   $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;$('raw_microphone').checked=state.settings.raw_microphone!==false;$('raw_speaker').checked=state.settings.raw_speaker!==false;
-  $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');
+  $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');$('calibration-devices').textContent='';
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
   if(dropped.length){const note=$('settings-file-note');note.textContent=fill('SETTINGS_CODECS_DROPPED',dropped.join(', '));note.hidden=false;}
   lockManaged();
@@ -207,8 +207,10 @@ function syncButtonRow(n){
   $('extended-count').textContent=set(false)?fill('BUTTON_COUNT',set(false)):'';
 }
 async function calibrateAec(careful){
-  $('calibration-status').textContent=t(careful?'CALIBRATION_RUNNING_CAREFUL':'CALIBRATION_RUNNING_SIMPLE');
-  try{await run(async()=>{const result=await invoke('calibrate_aec',{microphone:state.settings.microphone||'default',speaker:state.settings.speaker||'default',careful});$('aec_delay_ms').value=result.recommended_ms;updateSaveLabel();$('calibration-status').textContent=fill('CALIBRATION_RESULT',t(result.stable?'CALIBRATION_RECOMMENDED':'CALIBRATION_UNSTABLE'),result.recommended_ms,result.samples,result.spread_ms,result.confidence);});}
+  $('calibration-status').textContent=t(careful?'CALIBRATION_RUNNING_CAREFUL':'CALIBRATION_RUNNING_SIMPLE');$('calibration-devices').textContent='';
+  try{await run(async()=>{const result=await invoke('calibrate_aec',{microphone:state.settings.microphone||'default',speaker:state.settings.speaker||'default',careful});$('aec_delay_ms').value=result.recommended_ms;updateSaveLabel();$('calibration-status').textContent=fill('CALIBRATION_RESULT',t(result.stable?'CALIBRATION_RECOMMENDED':'CALIBRATION_UNSTABLE'),result.recommended_ms,result.samples,result.spread_ms,result.confidence);
+    // Which pair was measured, the default standing in for a device that is not there included: the delay saved is theirs.
+    $('calibration-devices').textContent=fill('CALIBRATION_DEVICES',result.microphone,result.speaker)+(result.stand_in?' '+t('CALIBRATION_STAND_IN'):'');});}
   catch(e){$('calibration-status').textContent=t(String(e));logUi('aec calibration',e);}
 }
 // A settings file's values (as import_settings_file hands them over) go

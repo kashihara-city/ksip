@@ -106,6 +106,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       CALIBRATION_NO_RESULT:'測定値を取得できませんでした。{0}',
       CALIBRATION_RECOMMENDED:'推奨',
       CALIBRATION_RESULT:'{0} {1}ms（{2}信号・ばらつき {3}ms・信頼度 {4}%）',
+      CALIBRATION_DEVICES:'測ったデバイス: {0} / {1}',
+      CALIBRATION_STAND_IN:'（選んだデバイスが無いため、代わりの既定のデバイスで測りました）',
       CALIBRATION_RUNNING_CAREFUL:'慎重に測定中… 音が10回鳴ります（約11秒）',
       CALIBRATION_RUNNING_SIMPLE:'測定中… 音が2回鳴ります',
       CALIBRATION_SIGNAL_UNCLEAR:'測定音を明瞭に検出できませんでした（{0}/{1}回）。音量と周囲の騒音を確認してください',

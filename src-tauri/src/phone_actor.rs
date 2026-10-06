@@ -1830,8 +1830,17 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
     if s.borrow().engine_busy() {
         return Err(message("WORKER_OUTSTANDING"));
     }
-    let microphone = crate::audio::resolve("microphone", &microphone)?.id;
-    let speaker = crate::audio::resolve("speaker", &speaker)?.id;
+    let microphone = crate::audio::resolve("microphone", &microphone)?;
+    let speaker = crate::audio::resolve("speaker", &speaker)?;
+    // The result says which endpoints were measured, by the names the
+    // window lists, so that a delay measured on a stand-in is seen as such.
+    let named = |id: &str| {
+        let p = s.borrow();
+        p.view.devices.iter().find(|d| d.id == id).map_or_else(|| id.to_string(), |d| d.name.clone())
+    };
+    let (microphone_name, speaker_name) = (named(&microphone.id), named(&speaker.id));
+    let stand_in = microphone.stand_in || speaker.stand_in;
+    let (microphone, speaker) = (microphone.id, speaker.id);
     let owner = enter_maintenance(s).await?;
     s.borrow_mut().work_exclusive(move || Work::Calibrated(crate::audio::calibrate_aec(&microphone, &speaker, careful)));
     let result = match await_work(s, CALIBRATION_TIMEOUT).await {
@@ -1846,7 +1855,7 @@ async fn calibrate_aec(s: &Shared, microphone: String, speaker: String, careful:
         }
     };
     leave_maintenance(s, owner).await;
-    result
+    result.map(|calibration| Calibration { microphone: microphone_name, speaker: speaker_name, stand_in, ..calibration })
 }
 /// A volume or mute change for the endpoint in use for the kind at this
 /// moment, as the phone's own view has it (the engine's last report), not as

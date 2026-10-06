@@ -106,6 +106,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       CALIBRATION_NO_RESULT:'No measurement could be taken. {0}',
       CALIBRATION_RECOMMENDED:'Recommended',
       CALIBRATION_RESULT:'{0} {1} ms ({2} signals · spread {3} ms · confidence {4}%)',
+      CALIBRATION_DEVICES:'Measured on: {0} / {1}',
+      CALIBRATION_STAND_IN:'(the chosen device is not there, so the default standing in was measured)',
       CALIBRATION_RUNNING_CAREFUL:'Measuring carefully… ten tones will play (about 11 seconds)',
       CALIBRATION_RUNNING_SIMPLE:'Measuring… two tones will play',
       CALIBRATION_SIGNAL_UNCLEAR:'The tone was not heard clearly ({0} of {1}). Check the volume and the noise around you',

@@ -36,6 +36,9 @@ try {
     Click-Id 'calibrate-aec'
     $result=Wait-Recommendation
     if([int]$delay.Current.Value -ne $result[0]){throw 'Recommendation was not copied to the delay field'}
+    # Which pair was measured is said under the result, by the names the device lists show.
+    $measured=Wait-Text 'calibration-devices' '^測ったデバイス: .+ / .+'
+    "PASS: 測ったデバイスを結果の下に出す（$measured）"
     Click-Id 'close-settings';Click-Id 'settings-button'
     if([int](Delay-Edit).Current.Value -ne 20){throw 'Closing settings persisted the recommendation'}
     Click-Id 'calibrate-aec-careful'

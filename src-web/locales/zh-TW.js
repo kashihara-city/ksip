@@ -106,6 +106,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       CALIBRATION_NO_RESULT:'無法取得量測值。{0}',
       CALIBRATION_RECOMMENDED:'建議',
       CALIBRATION_RESULT:'{0} {1} ms（{2} 個訊號 · 變異 {3} ms · 信心度 {4}%）',
+      CALIBRATION_DEVICES:'測量的裝置：{0} / {1}',
+      CALIBRATION_STAND_IN:'（所選裝置不存在，已改用預設裝置測量）',
       CALIBRATION_RUNNING_CAREFUL:'仔細量測中… 將播放 10 次提示音（約 11 秒）',
       CALIBRATION_RUNNING_SIMPLE:'量測中… 將播放 2 次提示音',
       CALIBRATION_SIGNAL_UNCLEAR:'無法清楚偵測提示音（{0}/{1} 次），請確認音量與周圍噪音',

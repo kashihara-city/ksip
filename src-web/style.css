@@ -520,6 +520,12 @@ button {
 .calibration #calibration-status {
   display:inline;
 }
+.calibration #calibration-devices {
+  display:block;
+}
+.calibration #calibration-devices:empty {
+  display:none;
+}
 #close-settings {
   background:#e3eae6;
   border-color:#c3d2cb;
