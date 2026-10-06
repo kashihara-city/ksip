@@ -17,6 +17,10 @@ uint32_t register_interval = 300;
 // Set when this phone was taken off the server on purpose. The 200 OK for a
 // de-registration arrives as a register event, which must not undo it.
 bool unregistered = false;
+// A registration failed since the last that succeeded: the next success is
+// the server back (restarted, reachable again), and the subscriptions are
+// asked for anew then (subscriptions::resubscribe_all).
+bool failed_since_ok = false;
 std::string server_host_;
 
 // Keepalives: a blank line (CRLF CRLF) to the registrar every interval, on
@@ -180,10 +184,13 @@ void on_event(bevent_ev ev, bevent *e) {
     if (bevent_get_ua(e) != account_ua) return;
     if (ev == BEVENT_REGISTER_OK && !unregistered) {
         registration_ = "REGISTER_OK";
+        if (failed_since_ok) subscriptions::resubscribe_all();
+        failed_since_ok = false;
         subscriptions::subscribe_all();
     }
     if (ev == BEVENT_REGISTER_FAIL) {
         registration_ = "REGISTER_FAIL";
+        failed_since_ok = true;
         transport_.clear();
     }
     if (ev == BEVENT_REGISTERING) registration_ = "REGISTERING";

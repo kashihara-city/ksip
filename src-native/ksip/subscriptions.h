@@ -17,6 +17,9 @@
 namespace subscriptions {
 // Subscribes to everything not yet subscribed, once the account is registered.
 void subscribe_all();
+// The registration is back after a failure: every subscription that is up is
+// asked for anew (see subscriptions.cpp).
+void resubscribe_all();
 // The ksip_parking command: the numbers to watch, comma-separated.
 int configure(re_printf *pf, void *arg);
 // The ksip_shutdown command: every subscription is ended, so that baresip

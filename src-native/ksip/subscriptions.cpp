@@ -279,6 +279,33 @@ void subscribe_all() {
     (void)subscribe_parking();
     if (subscribe_mwi()) schedule(mwi_retry, Retry::Later, 0, mwi_retry_now, nullptr, "mwi");
 }
+// The registration came back after a failure (the PBX restarted, the network
+// went): the server may have lost the subscriptions while it was away, and
+// would say so only at their next refresh, up to nine minutes on, the buttons
+// missing every change meanwhile. So each one that is up is ended and asked
+// for anew as a quick try (see Retry): spread over the first second, against
+// a server that has just come back to many phones at once, the state it last
+// reported shown until the new NOTIFY, and the quick tries all there again,
+// as for a subscription that starts. One that waits for its next try keeps
+// it, and one refused stays so.
+void resubscribe_all() {
+    size_t anew = 0;
+    for (auto &slot : parking) {
+        if (!slot.sub || slot.retry.stopped) continue;
+        slot.sub = static_cast<sipsub *>(mem_deref(slot.sub));
+        slot.retry.quick_left = kQuickTries;
+        schedule(slot.retry, Retry::Quick, 0, slot_retry, &slot, "parking " + slot.number);
+        ++anew;
+    }
+    if (mwi_sub && !mwi_retry.stopped) {
+        mwi_sub = static_cast<sipsub *>(mem_deref(mwi_sub));
+        mwi_retry.quick_left = kQuickTries;
+        schedule(mwi_retry, Retry::Quick, 0, mwi_retry_now, nullptr, "mwi");
+        ++anew;
+    }
+    // None before the first registration: nothing to say then.
+    if (anew) info("ksip: the registration is back after a failure, %zu subscriptions are asked for anew\n", anew);
+}
 int configure(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     // Up to WATCH_COUNT comma-separated numbers; an empty one is a slot nobody watches.

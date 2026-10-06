@@ -1,4 +1,4 @@
-"""Watch numbers at a PBX faked on 127.0.0.1 that ends or refuses their subscriptions in every way the engine tells apart, and check when each is asked for again: a 481 or a NOTIFY ending with deactivated at once (the button keeping its state meanwhile), five quick tries at most and then 30 seconds, a retry-after taken, and an explicit refusal (403, NOTIFY reason invariant) not again until the numbers are set again."""
+"""Watch numbers at a PBX faked on 127.0.0.1 that ends or refuses their subscriptions in every way the engine tells apart, and check when each is asked for again: a 481 or a NOTIFY ending with deactivated at once (the button keeping its state meanwhile), five quick tries at most and then 30 seconds, a retry-after taken, and an explicit refusal (403, NOTIFY reason invariant) not again until the numbers are set again. And that a registration back after a failure (a PBX restarted) has every subscription asked for anew at once, rather than at its next refresh."""
 import random, re, socket, threading, time
 from sip_fixture import Phone
 
@@ -21,6 +21,10 @@ class FakePbx:
         self.lock = threading.Lock()
         # Every SUBSCRIBE that came in: (time, number, Call-ID, a refresh, what it was answered).
         self.subscribes = []
+        # Every REGISTER answered: (time, code). What it is answered with, and
+        # for how long a registration holds.
+        self.registers = []
+        self.register_code, self.register_expires = 200, 300
         self.cseq = 0
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
@@ -42,8 +46,14 @@ class FakePbx:
                 continue
             text = data.decode('utf-8', errors='replace')
             if text.startswith('REGISTER '):
-                self.answer(text, peer, 200, 'OK', tag='reg', extra=self.header(text, 'contact') and
-                            f'Contact: {self.header(text, "contact")};expires=300\r\nExpires: 300\r\n')
+                code, expires = self.register_code, self.register_expires
+                if code == 200:
+                    self.answer(text, peer, 200, 'OK', tag='reg', extra=self.header(text, 'contact') and
+                                f'Contact: {self.header(text, "contact")};expires={expires}\r\nExpires: {expires}\r\n')
+                else:
+                    self.answer(text, peer, code, 'Server Internal Error', tag='reg')
+                with self.lock:
+                    self.registers.append((time.monotonic(), code))
             elif text.startswith('SUBSCRIBE '):
                 self.subscribe(text, peer)
 
@@ -96,6 +106,8 @@ class FakePbx:
         tag = f'{random.getrandbits(32):x}'
         if self.header(text, 'event') == 'message-summary':
             self.accept(text, peer)
+            with self.lock:
+                self.subscribes.append((time.monotonic(), 'mwi', self.header(text, 'call-id'), refresh, 200))
             return
         if number == REFRESH_481:
             # The PBX's habit: a refresh it has forgotten the subscription of.
@@ -203,5 +215,48 @@ def main():
         pbx.close()
 
 
+def recovery():
+    """A PBX that refuses one re-registration (as while it restarts) and takes
+    the next: the subscriptions are asked for anew when it is back."""
+    pbx = FakePbx()
+    pbx.register_expires = 30
+    phone = None
+    try:
+        account = dict(server='127.0.0.1', port=pbx.port, extension='1001', auth_user='1001', password='loopback-test-only')
+        phone = Phone('subscription-recovery', account, extra_config='net_interface 127.0.0.1\nksip_register_interval 30')
+        phone.command('ksip_parking', WATCHED)
+        phone.wait(lambda s: state_of(phone, WATCHED) == 'INUSE' and pbx.of('mwi'), timeout=10)
+        pbx.register_code = 500
+        end = time.monotonic() + 45
+        while time.monotonic() < end and not any(code == 500 for _, code in pbx.registers):
+            time.sleep(0.2)
+        assert any(code == 500 for _, code in pbx.registers), f'no re-registration in 45s: {pbx.registers}'
+        pbx.register_code = 200
+        refused = max(when for when, code in pbx.registers if code == 500)
+        seen = []
+        end = time.monotonic() + 90
+        while time.monotonic() < end:
+            seen.append(state_of(phone, WATCHED))
+            back = [when for when, code in pbx.registers if code == 200 and when > refused]
+            fresh = [s for s in pbx.of(WATCHED) + pbx.of('mwi') if not s[3] and back and s[0] > back[0]]
+            if back and len({s[1] for s in fresh}) == 2:
+                break
+            time.sleep(0.05)
+        assert back, f'the registration did not come back: {pbx.registers}'
+        assert len({s[1] for s in fresh}) == 2, f'not asked for anew after the registration came back: {pbx.of(WATCHED)} {pbx.of("mwi")}'
+        late = max(s[0] for s in fresh) - back[0]
+        assert late <= 1.5, f'asked for anew {late:.2f}s after the registration came back'
+        assert all(s == 'INUSE' for s in seen), f'state not kept: {sorted(set(seen))}'
+        print(f'PASS: 登録が失敗から戻ると、BLF と留守電の購読を {late:.2f} 秒以内に新しく張り直し、その間も表示が保たれる')
+    finally:
+        if phone:
+            phone.close()
+        pbx.close()
+
+
+# The number watched in the recovery: any the fake PBX simply accepts.
+WATCHED = '207'
+
 if __name__ == '__main__':
     main()
+    recovery()
