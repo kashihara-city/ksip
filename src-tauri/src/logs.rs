@@ -21,10 +21,15 @@ const LOG_LIMIT: usize = 1000;
 /// How many lines are kept for a file that cannot be written before the
 /// oldest are let go.
 const PENDING_LIMIT: usize = 20_000;
-/// What the file keeps after a rewrite while the detail log is on. SIP traces
-/// and WebRTC's lines fill the ordinary thousand in seconds, and a report
-/// needs the minutes around a failure. The tab keeps LOG_LIMIT either way.
-const DETAIL_LOG_FILE_LIMIT: usize = 10000;
+/// What the file keeps after a rewrite while the detail log is on, and how
+/// long it grows before one. SIP traces and WebRTC's lines fill the ordinary
+/// thousand in seconds, and a report needs the hours around a failure: a
+/// night of them (some 20,000 lines in eleven hours, about 2 MB) once lost its
+/// first hours at the twice-ten-thousand that was the rule then. Forty to
+/// fifty thousand keep a day and a night (some 5 MB). The tab keeps LOG_LIMIT
+/// either way.
+const DETAIL_LOG_FILE_LIMIT: usize = 40_000;
+const DETAIL_LOG_FILE_REWRITE_AT: usize = 50_000;
 pub(crate) const LOG_FILE: &str = "ksip-log.jsonl";
 // Which layer a log line came from. It is written into the line so that a
 // support log shows at a glance whether the app or the engine said it.
@@ -127,7 +132,8 @@ impl LogLine {
 }
 /// The log tab and its file. The tab holds this run's last lines; the file is
 /// one JSON object per line and is only ever appended to, except when it has
-/// grown to twice the limit and is written afresh with what the tab holds.
+/// grown past its ceiling (twice the limit; 50,000 lines for 40,000 with the
+/// detail log) and is shortened to its last lines.
 /// Another process appends to it too: the link handler, when there is
 /// nothing to hand a link to. Those lines are picked up from the file.
 pub struct Logs {
@@ -143,9 +149,10 @@ pub struct Logs {
     /// The file as it was last seen: how many lines, and where it ended.
     file_lines: usize,
     offset: u64,
-    /// How many lines the file keeps after a rewrite, which happens once it
-    /// holds twice as many.
+    /// How many lines the file keeps after a rewrite, and how many it holds
+    /// before one.
     file_limit: usize,
+    file_rewrite_at: usize,
     /// Whether the last attempt to write the file failed. The unwritten lines
     /// stay in `entries` meanwhile, and are tried again with the next ones.
     write_failed: bool,
@@ -165,12 +172,17 @@ impl Logs {
             file_lines,
             offset,
             file_limit: LOG_LIMIT,
+            file_rewrite_at: 2 * LOG_LIMIT,
             write_failed: false,
         }
     }
-    /// The detail log keeps ten times as many lines in the file.
+    /// The detail log keeps many more lines in the file.
     pub fn set_detail(&mut self, detail: bool) {
-        self.file_limit = if detail { DETAIL_LOG_FILE_LIMIT } else { LOG_LIMIT };
+        (self.file_limit, self.file_rewrite_at) = if detail {
+            (DETAIL_LOG_FILE_LIMIT, DETAIL_LOG_FILE_REWRITE_AT)
+        } else {
+            (LOG_LIMIT, 2 * LOG_LIMIT)
+        };
     }
     pub(crate) fn push(&mut self, line: LogLine) {
         self.pending.push_back(line.clone());
@@ -251,7 +263,7 @@ impl Logs {
     /// Takes a sync's outcome into the books. Err whenever the write failed
     /// (the batch goes back in front of what is owed, to be tried again with
     /// it), with `first` saying whether this failure is news. Ok(true) when
-    /// the file has grown to twice the limit and wants shortening
+    /// the file has grown past its ceiling and wants shortening
     /// (`keep_last_lines` and then `file_shortened`), which the caller does
     /// without the lock.
     pub fn commit_sync(&mut self, plan: SyncPlan, outcome: SyncOutcome) -> Result<bool, SyncFailure> {
@@ -280,7 +292,7 @@ impl Logs {
                     self.write_failed = false;
                     self.push(LogLine::new(stamp(), LOG_APP, message("JOURNAL_WRITE_RECOVERED")));
                 }
-                Ok(self.file_lines > 2 * self.file_limit)
+                Ok(self.file_lines > self.file_rewrite_at)
             }
             Err(error) => {
                 let first = !self.write_failed;
@@ -600,8 +612,8 @@ mod tests {
         let again = Logs::open(&dir);
         assert_eq!(again.file_lines, LOG_LIMIT);
         assert_eq!(again.offset, std::fs::metadata(&path).unwrap().len());
-        // With the detail log on the file keeps ten times as much: the same
-        // bursts bring no rewrite, and turning detail off brings one.
+        // With the detail log on the file keeps far more: the same bursts
+        // bring no rewrite, and turning detail off brings one.
         logs.set_detail(true);
         for i in 0..3 * burst {
             logs.push(LogLine::new("t".into(), LOG_APP, format!("more {i}")));
