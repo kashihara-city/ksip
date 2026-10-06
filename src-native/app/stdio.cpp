@@ -19,6 +19,8 @@ extern "C" void ksip_stdio_init() {
         if (fd < 0) { CloseHandle(copy); continue; }
         _dup2(fd, _fileno(stream));
         _close(fd);
-        setvbuf(stream, nullptr, _IONBF, 0);
+        // Unbuffered, so that a line reaches the app as it is written; a
+        // refusal leaves the stream buffered, which still works.
+        static_cast<void>(setvbuf(stream, nullptr, _IONBF, 0));
     }
 }

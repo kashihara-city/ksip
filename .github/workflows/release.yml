@@ -147,6 +147,15 @@ jobs:
           "fetch-webrtc: {0:N1} min" -f ((Get-Date) - $started).TotalMinutes
           Get-PSDrive C, D | ForEach-Object { "{0}: {1:N1} GB free" -f $_.Name, ($_.Free / 1GB) }
 
+      - name: Fetch the pinned clang-tidy
+        shell: pwsh
+        working-directory: ${{ env.KSIP_ROOT }}
+        run: |
+          # WebRTC に同梱の clang-cl と同じ版の clang-tidy を、ハッシュ検証して clang-cl の隣に置く
+          # （test/clang-tidy.ps1 が使う）。
+          python -X utf8 scripts/deps/fetch-clang-tidy.py
+          if ($LASTEXITCODE -ne 0) { throw "fetch-clang-tidy.py failed" }
+
       - name: Fetch the locked Rust dependencies
         shell: pwsh
         working-directory: ${{ env.KSIP_ROOT }}
@@ -215,6 +224,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           python -X utf8 scripts/test/build-paths.py
           if ($LASTEXITCODE -ne 0) { throw "build-paths.py failed" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/clang-tidy.ps1
+          if ($LASTEXITCODE -ne 0) { throw "clang-tidy.ps1 failed" }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
           if ($LASTEXITCODE -ne 0) { throw "aec.ps1 failed" }
           foreach ($script in "loopback-call", "loopback-gain", "loopback-silent-mic") {

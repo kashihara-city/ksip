@@ -7,32 +7,21 @@
 
 namespace recording_session {
 namespace {
-void le16(FILE *f, uint16_t n) {
-    fputc(n & 255, f);
-    fputc(n >> 8, f);
+bool put(FILE *f, const void *data, size_t n) { return fwrite(data, 1, n, f) == n; }
+bool le16(FILE *f, uint16_t n) {
+    const unsigned char b[2] = {static_cast<unsigned char>(n & 255), static_cast<unsigned char>(n >> 8)};
+    return put(f, b, 2);
 }
-void le32(FILE *f, uint32_t n) {
-    le16(f, n & 65535);
-    le16(f, n >> 16);
-}
+bool le32(FILE *f, uint32_t n) { return le16(f, static_cast<uint16_t>(n & 65535)) && le16(f, static_cast<uint16_t>(n >> 16)); }
 } // namespace
 
 // The RIFF/WAVE header, written once the file opens and again with the
-// final sizes when it closes: 16-bit PCM, two channels.
-void Recorder::header() {
-    fseek(file, 0, SEEK_SET);
-    fwrite("RIFF", 1, 4, file);
-    le32(file, 36 + (uint32_t)bytes);
-    fwrite("WAVEfmt ", 1, 8, file);
-    le32(file, 16);
-    le16(file, 1);
-    le16(file, (uint16_t)channels);
-    le32(file, rate);
-    le32(file, rate * channels * 2);
-    le16(file, (uint16_t)(channels * 2));
-    le16(file, 16);
-    fwrite("data", 1, 4, file);
-    le32(file, (uint32_t)bytes);
+// final sizes when it closes: 16-bit PCM, two channels. False when a write
+// failed.
+bool Recorder::header() {
+    return fseek(file, 0, SEEK_SET) == 0 && put(file, "RIFF", 4) && le32(file, 36 + (uint32_t)bytes) && put(file, "WAVEfmt ", 8) &&
+           le32(file, 16) && le16(file, 1) && le16(file, (uint16_t)channels) && le32(file, rate) && le32(file, rate * channels * 2) &&
+           le16(file, (uint16_t)(channels * 2)) && le16(file, 16) && put(file, "data", 4) && le32(file, (uint32_t)bytes);
 }
 Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(path), started(std::chrono::steady_clock::now()), slack(sr / 5) {
     // The path comes as UTF-8; read as such (u8path, which did the same, is deprecated in C++20).
@@ -40,7 +29,7 @@ Recorder::Recorder(const std::string &path, uint32_t sr) : rate(sr), file_path(p
     file = _wfopen(std::filesystem::path(utf8).c_str(), L"wb");
     if (!file) return;
     writing = true;
-    header();
+    if (!header()) failed = true;
     worker = std::thread([this] { run(); });
 }
 bool Recorder::writable() const {
@@ -57,9 +46,9 @@ int16_t Recorder::take(Side &side) {
     return v;
 }
 void Recorder::run() {
-    std::array<int16_t, 8192> buf; // 4096 frames of two channels
+    std::array<int16_t, 8192> buf{}; // 4096 frames of two channels
     for (;;) {
-        size_t n;
+        size_t n = 0;
         {
             std::unique_lock<std::mutex> lock(mutex);
             wake.wait(lock, [this] { return done || writable(); });
@@ -67,7 +56,7 @@ void Recorder::run() {
             // The two sides pair up as far as both have come. A side alone
             // waits the slack for the other, then goes with silence on the
             // other channel; at the end, whatever is left goes that way.
-            bool take_far, take_near;
+            bool take_far = false, take_near = false;
             const size_t far_have = remote.count, near_have = local.count;
             if (far_have && near_have) {
                 n = std::min(far_have, near_have);
@@ -95,8 +84,7 @@ void Recorder::run() {
         }
         bytes += n * 4;
     }
-    header();
-    if (ferror(file) || fflush(file) != 0) failed = true;
+    if (!header() || ferror(file) || fflush(file) != 0) failed = true;
 }
 // Into the side's ring, under the lock; what does not fit is counted. First
 // the side is placed on the clock: the frames it has accounted for (written

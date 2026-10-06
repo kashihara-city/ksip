@@ -4,6 +4,7 @@
 #include "ksip_text.h"
 #include "sip_account.h"
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 namespace transfer {
@@ -289,7 +290,7 @@ void on_sip(bool tx, const uint8_t *packet, size_t length) {
         // The REFER going out (a retransmission carries the same ids, a
         // resend after a challenge new ones): its 2xx is known by them.
         auto ids = ksip_text::request_ids(packet, length, "REFER");
-        if (!ids.call_id.empty()) refer_sent = ids;
+        if (!ids.call_id.empty()) refer_sent = std::move(ids);
         // Our 2xx to a NOTIFY in the REFER's dialog: libre hands a NOTIFY to
         // baresip only as one of the REFER's subscription (listen.c: its Event
         // and the id in it, the dialog, a Subscription-State; else 481, 489 or
@@ -314,7 +315,7 @@ void on_sip(bool tx, const uint8_t *packet, size_t length) {
     // refused (another subscription's, a stale Event id, another dialog's
     // tags, no Subscription-State) leaves the limit running.
     auto notify = ksip_text::request_ids(packet, length, "NOTIFY");
-    if (!refer_notified && !notify.call_id.empty() && notify.call_id == refer_sent.call_id) notify_seen = notify;
+    if (!refer_notified && !notify.call_id.empty() && notify.call_id == refer_sent.call_id) notify_seen = std::move(notify);
 }
 void init() {
     tmr_init(&transfer_timer);

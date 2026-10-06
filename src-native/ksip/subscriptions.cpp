@@ -44,7 +44,7 @@ enum class Retry { Quick, Later, Stop };
 constexpr unsigned kQuickTries = 5;
 constexpr uint64_t kQuickMs = 1000, kLaterMs = 30000;
 struct RetryState {
-    tmr timer;
+    tmr timer{};
     unsigned quick_left = kQuickTries;
     bool waiting = false, stopped = false;
 };
@@ -315,7 +315,7 @@ int configure(re_printf *pf, void *arg) {
     // stays subscribed, whichever order the registration and this command
     // came in, and keeps whatever retry it has.
     clear_parking();
-    for (size_t i = 0; i < values.size() && i < parking.size(); ++i) parking[i].number = values[i];
+    for (size_t i = 0; i < parking.size(); ++i) parking[i].number = values[i];
     int err = subscribe_parking();
     if (!err) re_hprintf(pf, "Parking subscriptions configured\n");
     return err;

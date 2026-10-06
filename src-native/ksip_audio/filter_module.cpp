@@ -9,8 +9,11 @@
 #include <rem.h>
 #include <baresip.h>
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include "recording_session.h"
 #include "inband_dtmf.h"
 
@@ -31,7 +34,7 @@ void amplify(auframe *f, float gain) {
     if (gain <= 1.f) return;
     if (f->fmt == AUFMT_S16LE) {
         auto samples = static_cast<int16_t *>(f->sampv);
-        for (size_t i = 0; i < f->sampc; ++i) samples[i] = (int16_t)std::clamp(std::lrint(samples[i] * gain), -32768L, 32767L);
+        for (size_t i = 0; i < f->sampc; ++i) samples[i] = (int16_t)std::clamp(std::lrint(static_cast<float>(samples[i]) * gain), -32768L, 32767L);
     } else if (f->fmt == AUFMT_FLOAT) {
         auto samples = static_cast<float *>(f->sampv);
         for (size_t i = 0; i < f->sampc; ++i) samples[i] = std::clamp(samples[i] * gain, -1.f, 1.f);
@@ -90,15 +93,21 @@ int select_recording(re_printf *pf, void *arg) {
 int gain(re_printf *pf, void *arg) {
     auto a = (cmd_arg *)arg;
     if (!a || !str_isset(a->prm)) return EINVAL;
-    char kind[16] = {};
+    // "<kind> <level>": the level a percentage from 100 to 200 with nothing
+    // after it, read strictly (sscanf would take a sign and overflow quietly).
+    const std::string_view prm(a->prm);
+    const size_t space = prm.find(' ');
+    if (space == std::string_view::npos) return EINVAL;
+    const std::string kind(prm.substr(0, space));
+    const std::string_view number = prm.substr(space + 1);
     unsigned level = 0;
-    char extra = 0;
-    if (sscanf(a->prm, "%15s %u %c", kind, &level, &extra) != 2 || level < 100 || level > 200) return EINVAL;
+    const auto [end, ec] = std::from_chars(number.data(), number.data() + number.size(), level);
+    if (ec != std::errc() || end != number.data() + number.size() || level < 100 || level > 200) return EINVAL;
     auto value = static_cast<float>(level) / 100.f;
-    if (strcmp(kind, "microphone") == 0) microphone_gain.store(value, std::memory_order_relaxed);
-    else if (strcmp(kind, "speaker") == 0) speaker_gain.store(value, std::memory_order_relaxed);
+    if (kind == "microphone") microphone_gain.store(value, std::memory_order_relaxed);
+    else if (kind == "speaker") speaker_gain.store(value, std::memory_order_relaxed);
     else return EINVAL;
-    return re_hprintf(pf, "%s software gain %u%%\n", kind, level);
+    return re_hprintf(pf, "%s software gain %u%%\n", kind.c_str(), level);
 }
 aufilt filter = {};
 const cmd commands[] = {

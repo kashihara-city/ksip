@@ -67,7 +67,7 @@ private:
     // of the resampler that fills it (touched only by the pushing thread).
     struct Side {
         // Samples at the file's rate, gap silence included, in stream order.
-        std::array<int16_t, 48000 * 10> ring{};
+        std::array<int16_t, size_t{48000} * 10> ring{};
         size_t rd = 0, wr = 0, count = 0;
         // The input rate seen last, the place of the next output sample
         // between the input samples (index -1 is `last`, the last sample of
@@ -87,7 +87,7 @@ private:
     // Something can go to the file: both sides have samples, or one side has
     // waited longer than the slack for the other.
     bool writable() const;
-    void header();
+    bool header();
     void run();
     std::mutex mutex;
     std::condition_variable wake;

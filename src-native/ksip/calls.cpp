@@ -110,7 +110,7 @@ int action(re_printf *pf, const ActionRequest &request) {
         // A number is completed with the configured registrar; a URI is sent as
         // it was written. Either way the library has to be able to read it.
         std::string uri = sip_account::uri_for(value);
-        struct uri decoded;
+        struct uri decoded{};
         struct pl span;
         pl_set_str(&span, uri.c_str());
         if (uri_decode(&decoded, &span)) return EINVAL;

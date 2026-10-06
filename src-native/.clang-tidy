@@ -1,0 +1,57 @@
+# clang-tidy for KSIP's own C++ (everything under src-native that
+# CMakeLists.txt compiles). scripts/test/clang-tidy.ps1 runs it with the
+# compile commands native.ps1 writes, so that the checks see each file with
+# the flags of the build; any finding fails the test. The clang-tidy is the
+# one of the clang-cl the build uses (scripts/deps/fetch-clang-tidy.py).
+#
+# In: the checks that find mistakes (bugprone, cert, clang-analyzer,
+# concurrency, performance, the misc ones about unused and misleading
+# declarations) and the three C++ Core Guidelines checks about things left
+# uninitialised and classes missing half of their special members. Out: the
+# checks about the shape of the code (readability, modernize, misc's const
+# and include tidying), which are a choice to make on their own, and these
+# four, each for its reason:
+#   bugprone-easily-swappable-parameters: it flags every (source,
+#     destination) and (microphone, speaker) pair the interfaces have; a
+#     wrapper type for each is more than it is worth.
+#   bugprone-signed-bitwise: libre's errors are ints gathered with
+#     `err |= f()`, and the flags of the Windows and the bridge headers are
+#     ints; there is nothing to fix on KSIP's side.
+#   bugprone-throwing-static-initialization / cert-err58-cpp: the modules
+#     keep their state in namespace-scope objects (maps, strings, the audio
+#     cores); the only exception their constructors could raise is
+#     bad_alloc while the process starts, and stopping there is right.
+#   performance-enum-size: none of the enums is stored in bulk.
+# cppcoreguidelines-owning-memory stays out too: it reasons in gsl::owner,
+# which KSIP does not use; the one FILE* and the one new/delete are paired
+# within their class.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-signed-bitwise,
+  -bugprone-throwing-static-initialization,
+  cert-*,
+  -cert-err58-cpp,
+  clang-analyzer-*,
+  concurrency-*,
+  performance-*,
+  -performance-enum-size,
+  misc-*,
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-use-anonymous-namespace,
+  -misc-use-internal-linkage,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-special-member-functions
+WarningsAsErrors: '*'
+# KSIP's own headers are checked with the file that includes them; baresip's,
+# libre's and the bridge's are system headers to the build and stay out.
+HeaderFilterRegex: '.*[/\\]src-native[/\\].*'
+CheckOptions:
+  # An interface with only a virtual destructor, and a class that forbids
+  # copying, are complete as they are.
+  cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true
+  cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted: true

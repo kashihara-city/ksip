@@ -10,7 +10,7 @@ std::string lower(std::string s) {
     for (auto &ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     return s;
 }
-std::string trim(std::string s) {
+std::string trim(const std::string &s) {
     auto first = s.find_first_not_of(" \t\r\n"), last = s.find_last_not_of(" \t\r\n");
     return first == std::string::npos ? std::string() : s.substr(first, last - first + 1);
 }

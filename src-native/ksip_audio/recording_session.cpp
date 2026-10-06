@@ -2,6 +2,7 @@
 #include "recording_session.h"
 #include "recorder.h"
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <array>
@@ -39,7 +40,10 @@ std::unique_ptr<Recorder> prepare(const std::string &path, uint32_t rate) {
     try {
         auto r = std::make_unique<Recorder>(path, rate);
         if (r->opened()) return r;
-    } catch (...) {
+    } catch (const std::exception &e) {
+        // The writer thread or its buffers could not be made: as good as a
+        // file that cannot be opened, with the reason in the log.
+        warning("ksip: recording: %s\n", e.what());
     }
     return nullptr;
 }
@@ -157,7 +161,7 @@ int start(re_printf *pf, const char *prm) {
             path = text.substr(space + 1);
         } else id.clear();
     }
-    uint32_t rate;
+    uint32_t rate = 0;
     {
         std::lock_guard<std::mutex> lock(gate);
         if (current || !reserved_path.empty()) return EALREADY;
@@ -201,8 +205,8 @@ int stop(re_printf *pf) {
 }
 int select(re_printf *pf, const char *prm) {
     if (!str_isset(prm)) return EINVAL;
-    const audio *target;
-    uint32_t rate;
+    const audio *target = nullptr;
+    uint32_t rate = 0;
     std::string path;
     {
         std::lock_guard<std::mutex> lock(gate);

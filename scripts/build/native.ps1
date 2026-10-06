@@ -67,7 +67,9 @@ $ksipFlags = "/O2 /DNDEBUG /DNOCRYPT /Brepro /clang:-ffile-prefix-map=$root/= /c
 # (the GitHub runner has LLVM installed), and llvm-lib knows no /Brepro.
 $lib = (Get-Command lib.exe).Source
 $link = (Get-Command link.exe).Source
-Run cmake (@('-S','src-native','-B','temp/build/ksip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release',"-DCMAKE_C_COMPILER=$clang","-DCMAKE_CXX_COMPILER=$clang","-DCMAKE_C_FLAGS_RELEASE=$ksipFlags","-DCMAKE_CXX_FLAGS_RELEASE=$ksipFlags",'-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_AR=$lib","-DCMAKE_LINKER=$link","-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',"-DKSIP_NATIVE=$prefix","-DBARESIP_SOURCE=$root/temp/vendor/baresip") + $tls)
+# The compile commands are for scripts/test/clang-tidy.ps1, which checks
+# each file with the flags it was built with.
+Run cmake (@('-S','src-native','-B','temp/build/ksip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',"-DCMAKE_C_COMPILER=$clang","-DCMAKE_CXX_COMPILER=$clang","-DCMAKE_C_FLAGS_RELEASE=$ksipFlags","-DCMAKE_CXX_FLAGS_RELEASE=$ksipFlags",'-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_AR=$lib","-DCMAKE_LINKER=$link","-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',"-DKSIP_NATIVE=$prefix","-DBARESIP_SOURCE=$root/temp/vendor/baresip") + $tls)
 Run cmake @('--build','temp/build/ksip','--parallel','8')
 Run cmake @('--install','temp/build/ksip')
 $paths = @('-DSHARE_PATH=share/baresip','-DMOD_PATH=lib/baresip/modules')

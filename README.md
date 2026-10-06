@@ -412,7 +412,7 @@ docs/                READMEに載せる画面の画像
 src-web/             HTML・CSS・vanilla JavaScriptの画面（app.js を入口に ES modules で分割。npm なし）
 src-web/locales/     言語ファイル
 src-tauri/           Rust/Tauriのソースと固定設定
-src-native/          KSIP固有のC++ソースとビルド定義（自前のCMakeプロジェクト。WebRTCと同じclang-clで組む）
+src-native/          KSIP固有のC++ソースとビルド定義（自前のCMakeプロジェクト。WebRTCと同じclang-clで組む。`.clang-tidy` は test/clang-tidy.ps1 の検査の集合）
 src-native/test/     C++の単体テスト。audio-module.ps1 と aec.ps1 がそのつど組んで流す
 scripts/dev-env.ps1  MSVCツールチェーンとPATH。ビルド・テストの共通土台
 scripts/deps/        固定版の依存を取得する。ネットワーク必須、依存更新時のみ
@@ -446,18 +446,20 @@ temp/w/・temp/d/     パス長を抑えたGoogle WebRTC・depot_tools
 
 ### ビルド手順
 
-この順で実行します。1・2は環境構築時と依存更新時だけ、3・4は毎回です。
+この順で実行します。1〜3は環境構築時と依存更新時だけ、4・5は毎回です。
 同じコミットをどの環境で組んでも同じexeになるように、ソースの改行は `.gitattributes` でCRLFに固定してあります。`src-web/` はそのままexeへ埋め込まれるため、取り出しの改行が違えば別のexeができます（Rust と C/C++ はコンパイラが改行を正規化するので影響しません）。`test/line-endings.py` が `src-web/` の改行を見ます。
 
 ```powershell
 python -X utf8 scripts/deps/fetch-baresip.py
 python -X utf8 scripts/deps/fetch-webrtc.py
+python -X utf8 scripts/deps/fetch-clang-tidy.py
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/native.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/app.ps1
 ```
 
 `deps/fetch-baresip.py` はbaresip・re・Opus・libg722・LibreSSLの固定アーカイブをハッシュ検証します。
 `deps/fetch-webrtc.py` は固定した公式Google WebRTCとdepot_tools revisionをパス長対策済みの `temp/w/`・`temp/d/` へ`gclient`で取得してDEPSも検証します。
+`deps/fetch-clang-tidy.py` は、その WebRTC に同梱の clang-cl と同じ版の clang-tidy を同じ配布元からハッシュ検証して取り、clang-cl の隣に置きます（`test/clang-tidy.ps1` が使います）。版は WebRTC の `tools/clang/scripts/update.py` から読むので、WebRTC を更新して版が変わると、新しいアーカイブのハッシュをスクリプトに足すまで止まります。
 `build/native.ps1` は内部で `build/webrtc.ps1` を呼びます。
 組むものとコンパイラーは次のとおりです。WebRTC は固定版に同梱の clang-cl（GN/Ninja）、LibreSSL・Opus・libg722・re・baresip は配布されたままの CMake プロジェクトを MSVC で、KSIP 自身のコード（`src-native/`、baresip のモジュール 4 つと、アプリが直接呼ぶ `app/` の `stdio.cpp`・`trust.cpp`。すべて C++）は自前の CMake プロジェクト（`src-native/CMakeLists.txt`）を WebRTC と同じ clang-cl で組みます。KSIP のコードを 1 つのコンパイラーに通し、その警告と検査を積み上げられるようにするためで、baresip と各ライブラリには手を入れません。モジュールは 1 つのアーカイブ `ksip_modules.lib`、`app/` は `ksip_app.lib` になり、baresip の側では `patch-baresip.py` が置くソース無しのスタブ（`modules/ksip*/CMakeLists.txt`）がモジュールの名前だけを静的なモジュール表に載せ、アプリがそのアーカイブを baresip と一緒にリンクします（`src-tauri/build.rs`）。アーカイブは MSVC の `lib.exe` で作り、`/Brepro` と `-ffile-prefix-map` で再現可能にします。
 `build/app.ps1` は `build/embed-notices.py` を呼んでから `release/` の `ksip.exe` と `ksip-v<version>.exe` を置き換えます。運用中のフォルダをそのままビルド先にできるよう、履歴や録音には触れません。配布物を作る場合は最後に `python -X utf8 scripts/build/package.py` を実行します。
@@ -495,6 +497,7 @@ SBOM は作るたびに別の文書として、作った日時と新しいシリ
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/rust.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/clang-tidy.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/aec.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/audio-module.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/webrtc-restart.ps1
@@ -508,6 +511,8 @@ python -X utf8 scripts/test/line-endings.py
 python -X utf8 scripts/test/admx.py
 python -X utf8 scripts/test/sbom.py
 ```
+
+`test/clang-tidy.ps1` は、KSIP 自身の C++（`src-native/`）を、ビルドと同じ clang-cl の clang-tidy（`deps/fetch-clang-tidy.py` が置くもの）で、`native.ps1` が書く compile commands（`temp/build/ksip/compile_commands.json`）のとおりの引数で検査します。検査の集合は `src-native/.clang-tidy` にあり、誤りを見つける検査（bugprone・cert・clang-analyzer・concurrency・performance、misc の未使用と紛らわしい宣言、Core Guidelines の未初期化と特別メンバー関数）を入れ、書き方の検査（readability・modernize、const と include の整理）と、このコードに合わない 4 つ（理由はそのファイルに書いてあります）を外しています。指摘が 1 つでもあれば失敗で、1 分ほどかかります。
 
 `test/aec.ps1` は通常、ABIとステレオサンプル数の契約に加え、80 ms遅延させた合成エコーを実製品と同じAPM経路へ入力し、抑圧量・ERL・ERLE・推定遅延をテストします。既定の通信スピーカーをADMで開くテストと、マイクを開いては閉じるのを400回くり返すテストは `KSIP_TEST_AUDIO_DEVICE=1`、短い確認音がWindowsの出力へ実際に到達するテストは `KSIP_TEST_AUDIO_SIGNAL=1` を設定して実行します。`test/webrtc-device.ps1` は `KSIP_TEST_AUDIO_DEVICE=1` を立てて `test/aec.ps1` を流すもので、`run.py --group device` で流れます（4分ほど）。
 

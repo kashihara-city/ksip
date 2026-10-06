@@ -7,6 +7,7 @@
 #include "ksip_io.h"
 #include "subscriptions.h"
 #include <cstring>
+#include <utility>
 
 namespace sip_account {
 namespace {
@@ -202,7 +203,7 @@ void on_event(bevent_ev ev, bevent *e) {
 void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *dst) {
     auto ids = ksip_text::request_ids(packet, length, "REGISTER");
     if (ids.call_id.empty() || !dst) return;
-    register_sent = ids;
+    register_sent = std::move(ids);
     register_dst = *dst;
     register_tp = tp;
 }

@@ -50,9 +50,9 @@ bool media_of(call *c, stream *&s, sdp_media *&m, struct rtp_sock *&rtp) {
 // peer's media addresses, so that what the peer sends there gets in. A peer
 // that gave no address (an old form of hold: 0.0.0.0, or port 0) is left alone.
 void open_way_in(call *c, const char *why) {
-    stream *s;
-    sdp_media *m;
-    struct rtp_sock *rtp;
+    stream *s = nullptr;
+    sdp_media *m = nullptr;
+    struct rtp_sock *rtp = nullptr;
     if (!media_of(c, s, m, rtp)) return;
     const sa *to = sdp_media_raddr(m);
     if (!to || !sa_isset(to, SA_ALL) || !sa_port(to)) return;
@@ -78,9 +78,9 @@ void look(void *) {
             // without an SDP, and a 180 can carry early media): by the peer
             // having given a media address, which open_way_in looks at.
             if (call_state(c) == CALL_STATE_TERMINATED) continue;
-            stream *s;
-            sdp_media *m;
-            struct rtp_sock *rtp;
+            stream *s = nullptr;
+            sdp_media *m = nullptr;
+            struct rtp_sock *rtp = nullptr;
             if (!media_of(c, s, m, rtp)) continue;
             const uint32_t tx = stream_metric_get_tx_n_packets(s);
             Quiet q{c, tx, now};
@@ -114,9 +114,9 @@ void close() {
 }
 void on_event(bevent_ev ev, call *c) {
     if (ev != BEVENT_CALL_REMOTE_SDP || !c) return;
-    stream *s;
-    sdp_media *m;
-    struct rtp_sock *rtp;
+    stream *s = nullptr;
+    sdp_media *m = nullptr;
+    struct rtp_sock *rtp = nullptr;
     if (!media_of(c, s, m, rtp)) return;
     // The direction as negotiated, from this side's point of view (libre
     // turns the peer's attribute round: its "sendonly" is "recvonly" here).

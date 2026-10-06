@@ -34,7 +34,7 @@ private:
         LibreClock *clock;
         Timer which;
     };
-    Slot slots[3];
+    Slot slots[3]{};
     Slot &slot(Timer which) { return slots[static_cast<int>(which)]; }
     static void fired(void *arg) {
         auto *s = static_cast<Slot *>(arg);
