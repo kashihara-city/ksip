@@ -45,9 +45,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// How often the engine is asked for its state while it runs.
 const POLL: Duration = Duration::from_millis(500);
-/// How often Windows' audio devices are looked at, and how long after the
-/// last change seen the engine is handed the saved devices again (tick).
-const DEVICES_LOOK: Duration = Duration::from_secs(1);
+/// How long after the last change seen in Windows' audio devices the engine
+/// is handed the saved devices again (tick): the notices of one device come
+/// several in a row, and WebRTC's own move off a device that went is over
+/// by then.
 const DEVICES_SETTLE: Duration = Duration::from_secs(1);
 /// How long an answer from the engine is waited for.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -363,9 +364,11 @@ struct Phone {
     /// report hands back (an engine to stop, a link to try again) goes
     /// straight onto it or into `lost`, in the same step.
     exclusive: Vec<u64>,
-    /// When the devices were last looked at (devices_look): once a second,
-    /// from the tick, on a worker, whether or not the window is shown.
-    devices_looked: Option<Instant>,
+    /// A worker is reading the audio devices (look_at_devices), and a notice
+    /// came while it was: the list is read once more when it reports. One
+    /// worker at a time, however many notices Windows sends.
+    devices_look_out: bool,
+    devices_look_owed: bool,
     /// When a look last found the devices changed; the engine is handed the
     /// saved devices again a second after the last change (FollowDevices),
     /// so that WebRTC's own move off a device that went, and a device still
@@ -399,6 +402,9 @@ struct Actor {
     /// resources; after it the app leaves and says so.
     shutdown_deadline: Option<Instant>,
     next_poll: Instant,
+    /// Windows' notices of audio device changes, held for as long as the
+    /// actor runs (run); none when the registration failed, said in the log.
+    devices_watch: Option<crate::audio::DeviceWatch>,
 }
 /// What an engine's state reports have been said about. A report repeats how
 /// things stand every 300 ms; each thing is said once for each engine, and a
@@ -477,7 +483,8 @@ impl Actor {
             probing: false,
             work_serial: 0,
             exclusive: Vec::new(),
-            devices_looked: None,
+            devices_look_out: false,
+            devices_look_owed: false,
             devices_changed_at: None,
             microphone_muted: None,
             mute_told: None,
@@ -494,9 +501,11 @@ impl Actor {
             shutdown: None,
             shutdown_deadline: None,
             next_poll: Instant::now() + POLL,
+            devices_watch: None,
         }
     }
     fn run(mut self) {
+        self.watch_devices();
         loop {
             let now = Instant::now();
             if now >= self.next_poll {
@@ -618,7 +627,23 @@ impl Actor {
             Command::Action { reply, .. } => reply.send(Err(why)),
             Command::CalibrateAec { reply, .. } => reply.send(Err(why)),
             Command::SetVolume { reply, .. } => reply.send(Err(why)),
-            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) | Command::MicrophoneMuted(_) => {}
+            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) | Command::DevicesChanged | Command::MicrophoneMuted(_) => {}
+        }
+    }
+    /// Asks Windows for its notices of audio device changes, each of which
+    /// has the list read again (Command::DevicesChanged). Without them (the
+    /// registration failed) the lists follow the refresh button only, and
+    /// the log says so once.
+    fn watch_devices(&mut self) {
+        let tx = self.shared.borrow().tx.clone();
+        match crate::audio::watch_devices(move || {
+            let _ = tx.send(Message::Command(Command::DevicesChanged));
+        }) {
+            Ok(watch) => self.devices_watch = Some(watch),
+            Err(e) => self.shared.borrow().services.log(
+                LOG_APP,
+                format!("ksip: Windows' notices of audio device changes could not be had ({e}); the device lists follow the refresh button only"),
+            ),
         }
     }
     /// What needs no flow is done here and now; the rest waits its turn.
@@ -633,6 +658,10 @@ impl Actor {
                 return;
             }
             Command::ShowError(error) => return self.shared.borrow_mut().show_error(error),
+            Command::DevicesChanged => {
+                self.shared.borrow_mut().look_at_devices();
+                return;
+            }
             Command::MicrophoneMuted(muted) => {
                 self.shared.borrow_mut().microphone_muted = Some(muted);
                 return;
@@ -720,19 +749,12 @@ impl Actor {
         if !self.shared.borrow().closing && !self.queue.iter().any(|(_, job)| matches!(job, Job::Poll)) {
             self.queue.push_back((Instant::now(), Job::Poll));
         }
-        // Windows' audio devices, looked at once a second on a worker (the
-        // report comes back as a stray Work::Devices); a second after a look
-        // found them changed, the engine follows; and the microphone's mute
-        // the window read goes to the engine once it differs from what it
-        // was told. The engine is asked from its own thread for none of
-        // these: asking Windows there stalled the calls' audio.
-        {
-            let mut p = self.shared.borrow_mut();
-            if !p.closing && p.devices_look_due(Instant::now()) {
-                p.devices_looked = Some(Instant::now());
-                p.work(|| Work::Devices(crate::audio::devices()));
-            }
-        }
+        // A second after Windows' audio devices were last seen changed
+        // (the notices, look_at_devices, stray), the engine follows; and the
+        // microphone's mute the window read goes to the engine once it
+        // differs from what it was told. The engine is asked from its own
+        // thread for none of these: asking Windows there stalled the calls'
+        // audio.
         let (follow, mute) = {
             let mut p = self.shared.borrow_mut();
             let due = Phone::follow_due(p.devices_changed_at, Instant::now());
@@ -966,22 +988,42 @@ impl Phone {
             }
             Work::Stopped(outcome) => self.finish_recovery(outcome),
             Work::Calibrated(_) => self.release_held_maintenance(),
-            // The tick's look at the devices: the lists follow, and a change
-            // starts the second after which the engine is told. A look that
-            // fails changes nothing.
-            Work::Devices(Ok(devices)) => {
-                if crate::audio::devices_differ(&self.view.devices, &devices) {
-                    self.devices_changed_at = Some(Instant::now());
+            // The look at the devices a notice asked for: the lists follow,
+            // and a change starts the second after which the engine is told.
+            // A look that fails changes nothing. A notice that came while
+            // the look was out has the list read once more.
+            Work::Devices(result) => {
+                self.devices_look_out = false;
+                if let Ok(devices) = result {
+                    if crate::audio::devices_differ(&self.view.devices, &devices) {
+                        self.devices_changed_at = Some(Instant::now());
+                    }
+                    self.take_devices(devices);
+                    self.publish();
                 }
-                self.take_devices(devices);
-                self.publish();
+                if self.devices_look_owed {
+                    self.devices_look_owed = false;
+                    self.look_at_devices();
+                }
             }
             _ => {}
         }
     }
-    /// The tick's look at the devices is due: a second after the last.
-    fn devices_look_due(&self, now: Instant) -> bool {
-        self.devices_looked.is_none_or(|at| now.duration_since(at) >= DEVICES_LOOK)
+    /// Windows said its devices changed (Command::DevicesChanged): the list
+    /// is read on a worker, whose report comes back as a stray
+    /// Work::Devices. One worker at a time: a notice while one is out is
+    /// remembered, and the list read once more when it reports, so that a
+    /// burst of notices (a USB headset makes a dozen) costs two looks.
+    fn look_at_devices(&mut self) {
+        if self.closing {
+            return;
+        }
+        if self.devices_look_out {
+            self.devices_look_owed = true;
+            return;
+        }
+        self.devices_look_out = true;
+        self.work(|| Work::Devices(crate::audio::devices()));
     }
     /// The engine is to follow the devices: a change was seen, and a second
     /// has passed since the last one.
@@ -1770,13 +1812,15 @@ async fn stop_engine(s: &Shared) {
         stop_and_wait(s, engine).await;
     }
 }
-/// The refresh button: reads the devices again for the lists (as the
-/// tick's own look does every second) and, when the engine runs and no
-/// call is going on, gives it the saved ones once more (a choice changed
-/// outside the window reaches it this way). A device unplugged and put
-/// back, or a new Windows default, needs none of this: the tick's look
-/// sees it, and the engine follows a second later (follow_devices). The
-/// engine is only restarted when it does not take the devices.
+/// The refresh button: reads the devices again for the lists (as a notice
+/// from Windows does, look_at_devices) and, when the engine runs, gives it
+/// the saved ones once more (a choice changed outside the window reaches it
+/// this way). A device unplugged and put back, or a new Windows default,
+/// needs none of this: Windows' notice has the engine follow a second later
+/// (follow_devices); the button is for a notice that did not come. During a
+/// call the devices are handed over as the notices' path does, with no
+/// maintenance; with no call, under maintenance, and the engine is
+/// restarted when it does not take them.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
     s.borrow_mut().work(|| Work::Devices(crate::audio::devices()));
     let devices = match await_work(s, DEVICES_TIMEOUT).await {
@@ -1788,8 +1832,13 @@ async fn refresh_devices(s: &Shared) -> Result<(), String> {
     if s.borrow().link.is_none() {
         return Ok(());
     }
-    let Ok(owner) = enter_maintenance(s).await else {
-        return Ok(());
+    let owner = match enter_maintenance(s).await {
+        Ok(owner) => owner,
+        Err(e) if e == message("CALL_IN_PROGRESS") => {
+            let settings = s.borrow().services.settings()?;
+            return apply_audio_endpoints(s, &settings).await;
+        }
+        Err(_) => return Ok(()),
     };
     let settings = s.borrow().services.settings();
     let taken = match settings {
@@ -3101,30 +3150,37 @@ mod tests {
         assert!(Phone::follow_due(Some(moved), moved + DEVICES_SETTLE), "due once it is");
         assert!(!Phone::follow_due(None, moved + DEVICES_SETTLE), "nothing changed, nothing due");
         // With no engine the change is let go: a start hands the engine the
-        // saved devices anyway. The tick's own look is not due (just done).
+        // saved devices anyway.
         p.devices_changed_at = Some(Instant::now() - DEVICES_SETTLE);
-        p.devices_looked = Some(Instant::now());
         drop(p);
         a.tick();
         assert!(a.shared.borrow().devices_changed_at.is_none());
         assert!(!a.queue.iter().any(|(_, job)| matches!(job, Job::FollowDevices)));
     }
-    /// The tick's look at the devices is once a second, from the first tick on.
+    /// Windows' notices of a change have the list read on one worker at a
+    /// time: a burst of notices is two looks, the second after the first
+    /// reports, whatever that report was.
     #[test]
-    fn the_devices_are_looked_at_once_a_second() {
-        let a = actor();
-        let now = Instant::now();
-        assert!(a.shared.borrow().devices_look_due(now), "never looked: due");
-        a.shared.borrow_mut().devices_looked = Some(now);
-        assert!(!a.shared.borrow().devices_look_due(now + DEVICES_LOOK / 2));
-        assert!(a.shared.borrow().devices_look_due(now + DEVICES_LOOK));
+    fn a_burst_of_notices_is_two_looks() {
+        let mut a = actor();
+        a.handle_command(Command::DevicesChanged);
+        a.handle_command(Command::DevicesChanged);
+        a.handle_command(Command::DevicesChanged);
+        assert!(a.shared.borrow().devices_look_out && a.shared.borrow().devices_look_owed, "one look out, one owed");
+        a.shared.borrow_mut().stray(Work::Devices(Err("no COM".into())));
+        assert!(a.shared.borrow().devices_look_out && !a.shared.borrow().devices_look_owed, "the owed look is out now");
+        a.shared.borrow_mut().stray(Work::Devices(Ok(vec![])));
+        assert!(!a.shared.borrow().devices_look_out, "nothing owed: no more looks");
+        // Closing: no look is started.
+        a.shared.borrow_mut().closing = true;
+        a.shared.borrow_mut().look_at_devices();
+        assert!(!a.shared.borrow().devices_look_out);
     }
     /// The microphone's mute the window read is kept for the engine, and
     /// told only while one runs and it differs from what that one was told.
     #[test]
     fn the_microphone_mute_waits_for_an_engine_to_tell() {
         let mut a = actor();
-        a.shared.borrow_mut().devices_looked = Some(Instant::now());
         a.handle_command(Command::MicrophoneMuted(true));
         assert_eq!(a.shared.borrow().microphone_muted, Some(true));
         a.tick();

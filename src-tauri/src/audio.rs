@@ -8,15 +8,17 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    core::{Interface, PCWSTR, PWSTR},
+    core::{implement, Interface, PCWSTR, PWSTR},
     Win32::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
+        Foundation::PROPERTYKEY,
         Media::Audio::{
-            eCapture, eCommunications, eRender, EDataFlow,
+            eCapture, eCommunications, eRender, EDataFlow, ERole,
             Endpoints::{IAudioEndpointVolume, IAudioMeterInformation},
             IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator,
-            IMMEndpoint, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_NOPERSIST, DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+            IMMEndpoint, IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator,
+            AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_NOPERSIST,
+            DEVICE_STATE, DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
         },
         Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE},
         Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT},
@@ -1071,6 +1073,105 @@ pub fn calibrate_aec(
         std::thread::sleep(Duration::from_millis(80));
     }
     aggregate_careful(runs, patterns.len(), &last_error)
+}
+
+/// Windows' word that its audio devices changed, as IMMNotificationClient
+/// gets it: a device added, removed or changed state, a default moved, or a
+/// property (a name) changed. `changed` is called on a COM thread for every
+/// notice, whichever it is, and decides nothing: the phone reads the list
+/// again and compares (phone_actor.rs, look_at_devices). There is no
+/// periodic look beside this; a notice missed is what the refresh button
+/// is for. The registration lives on a thread of its own, with COM
+/// initialised there, until the watch is dropped, which unregisters.
+pub struct DeviceWatch {
+    stop: mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for DeviceWatch {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+/// The COM object Windows calls; every notice is the same word.
+#[implement(IMMNotificationClient)]
+struct Changes {
+    changed: Box<dyn Fn() + Send + Sync>,
+}
+impl IMMNotificationClient_Impl for Changes_Impl {
+    fn OnDeviceStateChanged(&self, _: &PCWSTR, _: DEVICE_STATE) -> windows::core::Result<()> {
+        (self.changed)();
+        Ok(())
+    }
+    fn OnDeviceAdded(&self, _: &PCWSTR) -> windows::core::Result<()> {
+        (self.changed)();
+        Ok(())
+    }
+    fn OnDeviceRemoved(&self, _: &PCWSTR) -> windows::core::Result<()> {
+        (self.changed)();
+        Ok(())
+    }
+    fn OnDefaultDeviceChanged(&self, _: EDataFlow, _: ERole, _: &PCWSTR) -> windows::core::Result<()> {
+        (self.changed)();
+        Ok(())
+    }
+    fn OnPropertyValueChanged(&self, _: &PCWSTR, _: &PROPERTYKEY) -> windows::core::Result<()> {
+        (self.changed)();
+        Ok(())
+    }
+}
+/// Registers for Windows' notices of audio device changes; `changed` is
+/// called for each. Returns once the registration is made, or with why it
+/// could not be (COM, the enumerator, the registration itself).
+pub fn watch_devices(changed: impl Fn() + Send + Sync + 'static) -> Result<DeviceWatch, String> {
+    let (stop, stopped) = mpsc::channel::<()>();
+    let (report, reported) = mpsc::channel::<Result<(), String>>();
+    let changed: Box<dyn Fn() + Send + Sync> = Box::new(changed);
+    let thread = std::thread::Builder::new()
+        .name("audio-devices".into())
+        .spawn(move || {
+            let registered = (move || -> windows::core::Result<(Com, IMMDeviceEnumerator, IMMNotificationClient)> {
+                let com = Com::new()?;
+                // SAFETY: COM is initialised by `com` for the thread's whole
+                // life, and the enumerator and the client, made under it,
+                // are dropped before it (they are bound after it below).
+                // The client is this code's own COM object; Windows holds a
+                // reference while it is registered, released by Unregister.
+                unsafe {
+                    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+                    let client: IMMNotificationClient = Changes { changed }.into();
+                    enumerator.RegisterEndpointNotificationCallback(&client)?;
+                    Ok((com, enumerator, client))
+                }
+            })();
+            match registered {
+                Err(e) => {
+                    let _ = report.send(Err(e.to_string()));
+                }
+                Ok((_com, enumerator, client)) => {
+                    let _ = report.send(Ok(()));
+                    // Until the watch is dropped, or the whole thing is
+                    // leaked at the app's end: either way, no more notices.
+                    let _ = stopped.recv();
+                    // SAFETY: the registration made above is undone once,
+                    // on the thread that made it, before the objects go.
+                    unsafe {
+                        let _ = enumerator.UnregisterEndpointNotificationCallback(&client);
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    match reported.recv() {
+        Ok(Ok(())) => Ok(DeviceWatch { stop, thread: Some(thread) }),
+        Ok(Err(e)) => {
+            let _ = thread.join();
+            Err(e)
+        }
+        Err(_) => Err("the audio device watch ended before it was registered".into()),
+    }
 }
 
 #[cfg(test)]

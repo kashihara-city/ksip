@@ -56,6 +56,9 @@ pub enum Command {
         reply: Reply<()>,
     },
     RefreshDevices(Reply<()>),
+    /// Windows said its audio devices changed (audio.rs, watch_devices):
+    /// the list is read again on a worker, and what differs follows.
+    DevicesChanged,
     /// The window's look at the microphone's volume found Windows' mute of
     /// its endpoint so: the engine is told (ksip_audio_mute), so that the
     /// calls send silence while it is muted.
