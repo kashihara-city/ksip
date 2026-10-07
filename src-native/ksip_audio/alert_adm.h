@@ -84,7 +84,5 @@ struct RenderAdm final : playback_session::Adm {
     void stop_recording() override {}
     // The endpoint the stream is on; none once it ended on its own.
     std::string opened(bool playout) override { return playout && current && !render.ended() ? render.id : std::string(); }
-    bool listed(const char *device, bool) override { return hooks.usable(device); }
-    std::string default_endpoint(bool playout) override { return playout ? hooks.default_endpoint() : std::string(); }
 };
 } // namespace alert_player

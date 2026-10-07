@@ -56,10 +56,10 @@ pub enum Command {
         reply: Reply<()>,
     },
     RefreshDevices(Reply<()>),
-    /// The window looked at the audio devices along with the levels (once
-    /// a second) and found them not as published: these are the ones there
-    /// now. No answer; the next snapshot carries them.
-    DevicesSeen(Vec<Device>),
+    /// The window's look at the microphone's volume found Windows' mute of
+    /// its endpoint so: the engine is told (ksip_audio_mute), so that the
+    /// calls send silence while it is muted.
+    MicrophoneMuted(bool),
     CalibrateAec {
         microphone: String,
         speaker: String,

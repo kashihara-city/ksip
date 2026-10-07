@@ -1,7 +1,7 @@
 // The decisions of the audio session, with nothing real behind them: who
 // has the playout stream and the microphone, what happens when a player or
-// a source goes, when a start fails, when a device that was not there is
-// back, and when the streams are left idle. The device bridge, the timers
+// a source goes, when a start fails, when the devices chosen change under a
+// call, and when the streams are left idle. The device bridge, the timers
 // and the fallback thread are asked for through the interfaces below, so
 // that the module can put the WebRTC bridge and libre's timers behind them,
 // and a test can put fakes.
@@ -14,6 +14,16 @@
 // went away. And whether the stream is up at all (started) is a third thing:
 // a player or a source stays the owner of its side when its start failed, so
 // that a later try (another device chosen, the device back) can start it.
+//
+// Whether a device is there, is back, or the default moved is not looked at
+// here: the app watches Windows' devices (phone_actor.rs) and, on a change,
+// hands the devices chosen to the module again (ksip_audio_devices), which
+// comes to switch_devices; the bridge then takes a stream that still serves
+// its device as it is and opens the others anew. Asking Windows from
+// baresip's thread stalled the calls' audio on a machine with many devices.
+// What is looked at here, once a second, is only whether a stream the owner
+// started still runs (WebRTC's own restart of it after its device went may
+// have failed), which costs nothing to ask.
 //
 // Threads: the Core is not thread-safe; it is called on one thread (baresip's
 // main thread in the module, the test's thread in the tests), and the
@@ -46,20 +56,12 @@ struct Adm {
     // (the device asked for, the default in its place, the one WebRTC moved
     // to by itself); empty while no stream is open on the side.
     virtual std::string opened(bool playout) = 0;
-    // Whether the side could open the device now: it is among the endpoints
-    // listed for the side; "default" is while the side has any endpoint at all.
-    virtual bool listed(const char *device, bool playout) = 0;
-    // The endpoint the default stands for now (Windows' default
-    // communications endpoint of the side), by its id; empty while there is
-    // none, or while it cannot be read.
-    virtual std::string default_endpoint(bool playout) = 0;
 };
 enum class Timer { Linger, HandBack, Watch };
 // Where the current call's microphone comes from: no source, the device, or
 // the timed silence that stands in for a device that would not start.
 enum class Input { None, Device, Silence };
-// How one side came out of a switch of devices, or of a return to a device
-// that is back (switch_devices, watch_tick).
+// How one side came out of a switch of devices (switch_devices).
 enum class Outcome {
     NotUp,     // no stream of this module has the side
     Unchanged, // the stream serves the device asked for as it is
@@ -86,22 +88,10 @@ struct Clock {
 // call, and a call that ends hands its streams to the next one within this
 // time; after it the devices are closed, so nothing is held while idle.
 constexpr uint64_t kLingerMs = 3000;
-// How often a side with an owner looks whether its stream is still on the
-// device asked for and that device still there: once a second while every
-// side is, and every quarter second while one is not (the default stands in,
-// or nothing does), so that a device back is taken within half a second.
+// How often a side with an owner looks whether the stream its owner started
+// still runs (watch_tick). A stream found stopped at two looks in a row is
+// opened again: WebRTC's own restart, on its audio thread, is over by then.
 constexpr uint64_t kWatchMs = 1000;
-constexpr uint64_t kWatchFastMs = 250;
-// How long a device that is back has to have been there, over at least two
-// looks, before the stream is opened on it again: one that comes and goes
-// (a hub without power, a headset reconnecting) does not have the call go
-// back and forth.
-constexpr uint64_t kBackSettleMs = 250;
-// How long the endpoint a stream is up on has to have been gone before the
-// stream is opened again from here: WebRTC's own move to the default, on its
-// audio thread, is over by then, and so is the moment of a device change in
-// which Windows lists no endpoint at all.
-constexpr uint64_t kGoneSettleMs = 1000;
 
 // `Play` has `bool started`, `const char *device()` and `set_device(const
 // char *)`; `Source` has `bool started`. The module's auplay_st and ausrc_st
@@ -134,15 +124,13 @@ public:
             previous = active_playout;
             active_playout = nullptr;
         }
-        playout_watch = Watch{};
+        playout_stopped_seen = false;
         const bool running = adm.playout_running();
         Tried tried;
-        bool fell_back = false;
-        if (open_playout(fresh, fresh->device(), tried, fell_back)) {
+        if (open_playout(fresh, fresh->device(), tried)) {
             players.push_back(fresh);
             active_playout = fresh;
             hooks.log(running && adm.playout_running() ? "ksip_audio: WebRTC ADM playout taken over\n" : "ksip_audio: WebRTC ADM playout started\n");
-            note_opened(true, fresh->device(), fell_back);
             keep_watching();
             return 0;
         }
@@ -150,13 +138,11 @@ public:
             // The owner either way, so that a later try (another device
             // chosen, the device back) can start it.
             active_playout = previous;
-            if (open_playout(previous, previous->device(), tried, fell_back)) {
+            if (open_playout(previous, previous->device(), tried)) {
                 hooks.log("ksip_audio: WebRTC ADM playout handed back after a failed start\n");
-                note_opened(true, previous->device(), fell_back);
                 keep_watching();
                 return ENODEV;
             }
-            note_down(true, previous->device());
         }
         keep_warm();
         return ENODEV;
@@ -169,7 +155,7 @@ public:
         players.erase(std::remove(players.begin(), players.end(), gone), players.end());
         if (gone != active_playout) return;
         active_playout = nullptr;
-        playout_watch = Watch{};
+        playout_stopped_seen = false;
         if (gone->started) adm.detach_playout();
         clock.start(Timer::HandBack, 0);
     }
@@ -182,14 +168,11 @@ public:
             Play *previous = players.back();
             active_playout = previous;
             Tried tried;
-            bool fell_back = false;
-            if (open_playout(previous, previous->device(), tried, fell_back)) {
+            if (open_playout(previous, previous->device(), tried)) {
                 hooks.log("ksip_audio: WebRTC ADM playout handed back\n");
-                note_opened(true, previous->device(), fell_back);
                 keep_watching();
                 return;
             }
-            note_down(true, previous->device());
         }
         keep_warm();
         keep_watching();
@@ -218,19 +201,16 @@ public:
             hooks.stop_fallback(active_source);
             active_source = nullptr;
         }
-        source_watch = Watch{};
+        source_stopped_seen = false;
         source_device = device;
         const bool running = adm.recording_running();
         active_source = fresh;
         Tried tried;
-        bool fell_back = false;
-        if (open_source(fresh, source_device, tried, fell_back)) {
+        if (open_source(fresh, source_device, tried)) {
             hooks.log(running && adm.recording_running() ? "ksip_audio: WebRTC ADM recording taken over, APM running\n"
                                                         : "ksip_audio: WebRTC ADM recording and APM started\n");
-            note_opened(false, source_device, fell_back);
         } else {
             hooks.start_fallback(fresh);
-            note_down(false, source_device);
         }
         keep_watching();
         return 0;
@@ -240,24 +220,26 @@ public:
         if (gone != active_source) return;
         if (gone->started) adm.detach_recording();
         active_source = nullptr;
-        source_watch = Watch{};
+        source_stopped_seen = false;
         keep_warm();
         keep_watching();
     }
-    // The person chose devices while a call is up: each side with an owner
-    // has its stream opened on the device chosen, for the same player and
-    // source, so the call goes on through it; every player is moved to the
-    // new speaker, so that a stream handed back goes there too. A null device
-    // leaves that side alone (another module has it). What has no owner opens
-    // on the new devices when it next starts, the configuration having them.
-    // The same device chosen again is looked at afresh: a stream that serves
-    // it as it is costs nothing (the bridge takes it over), one on the default
-    // in its place while it was not there is opened on it now that it is
-    // back, and a side whose start had failed tries again. A device that will
-    // not start leaves the call on the one it had (the players go back to it,
-    // so that the device that failed is tried again at the next call, not at
-    // every hand-back), or on the default; a microphone that cannot be had at
-    // all is replaced by silence. What came of each side is returned.
+    // The devices chosen are handed over again (the person chose them, or
+    // the app saw Windows' devices change): each side with an owner has its
+    // stream opened on the device chosen, for the same player and source, so
+    // the call goes on through it; every player is moved to the new speaker,
+    // so that a stream handed back goes there too. A null device leaves that
+    // side alone (another module has it). What has no owner opens on the new
+    // devices when it next starts, the configuration having them. The same
+    // device chosen again is looked at afresh: a stream that serves it as it
+    // is costs nothing (the bridge takes it over), one on the default in its
+    // place while it was not there is opened on it now that it is back, one
+    // on an endpoint that is gone is opened again, and a side whose start had
+    // failed tries again. A device that will not start leaves the call on
+    // the one it had (the players go back to it, so that the device that
+    // failed is tried again at the next call, not at every hand-back), or on
+    // the default; a microphone that cannot be had at all is replaced by
+    // silence. What came of each side is returned.
     Switch switch_devices(const char *microphone_device, const char *speaker_device) {
         Switch outcome;
         if (speaker_device) {
@@ -273,31 +255,34 @@ public:
         keep_watching();
         return outcome;
     }
-    // Timer::Watch fired (kWatchMs or kWatchFastMs after the last look) while
-    // a side has an owner. A stream up on an endpoint that is gone (unplugged
-    // under the call, and WebRTC did not move it, which it cannot with no
-    // other device to move to; it then runs on, delivering nothing) is opened
-    // again: on the device asked for if it is there, on the default, or
-    // silence stands in. Only once the endpoint has been gone for
-    // kGoneSettleMs: WebRTC's own move to the default is not to be interfered
-    // with from here. A side whose stream is not on the device asked for (the
-    // default stands in: the device was not there, or went away, or would not
-    // start) looks whether the device is there now, every kWatchFastMs. On
-    // the device being back, there for kBackSettleMs over at least two looks,
-    // the stream is opened on it again, once: a return that fails leaves the
-    // stream where it was until the device has gone and come back again, so a
-    // device that is there but cannot be opened is not tried every look. For
-    // the default asked for, "back" is any device at all being there again
-    // (Adm::listed), and the stream not on what the default stands for now
-    // (Adm::default_endpoint; the person changed it, or the device set as it
-    // is back) is opened on that the same way: WebRTC follows a device that
-    // goes, not a default that moves.
+    // Timer::Watch fired (kWatchMs after the last look) while a side has an
+    // owner: a stream the owner started that is not running any more
+    // (WebRTC's own restart of it, after the device in use went, failed;
+    // nothing comes through it, and the owner does not know) is opened again
+    // once it has been found so at two looks in a row: on the device asked
+    // for if it is there, on the default, or silence stands in.
     void watch_tick() {
-        const uint64_t elapsed = watch_interval;
-        bool waiting = false;
-        if (active_playout) waiting |= watch(true, elapsed);
-        if (active_source) waiting |= watch(false, elapsed);
-        keep_watching(waiting);
+        if (active_playout) {
+            if (!stream_stopped(true)) {
+                playout_stopped_seen = false;
+            } else if (!playout_stopped_seen) {
+                playout_stopped_seen = true;
+            } else {
+                hooks.log("ksip_audio: the call's speaker stream stopped (WebRTC could not restart it), the stream is opened again\n");
+                reopen_playout(active_playout->device());
+            }
+        }
+        if (active_source) {
+            if (!stream_stopped(false)) {
+                source_stopped_seen = false;
+            } else if (!source_stopped_seen) {
+                source_stopped_seen = true;
+            } else {
+                hooks.log("ksip_audio: the call's microphone stream stopped (WebRTC could not restart it), the stream is opened again\n");
+                reopen_source(source_device);
+            }
+        }
+        keep_watching();
     }
     [[nodiscard]] Play *playout() const { return active_playout; }
     [[nodiscard]] Source *source() const { return active_source; }
@@ -378,26 +363,22 @@ private:
         return false;
     }
     // The player's stream on the device asked for, or on the default in its
-    // place when that would not start, which is said and `fell_back` tells.
-    bool open_playout(Play *p, const std::string &wanted, Tried &tried, bool &fell_back) {
-        fell_back = false;
+    // place when that would not start, which is said.
+    bool open_playout(Play *p, const std::string &wanted, Tried &tried) {
         if (start_playout_on(p, wanted, tried)) return true;
         for (const std::string &back : fallbacks(wanted, "")) {
             if (start_playout_on(p, back, tried)) {
                 hooks.log("ksip_audio: the speaker would not start, the default plays in its place\n");
-                fell_back = true;
                 return true;
             }
         }
         return false;
     }
-    bool open_source(Source *s, const std::string &wanted, Tried &tried, bool &fell_back) {
-        fell_back = false;
+    bool open_source(Source *s, const std::string &wanted, Tried &tried) {
         if (start_source_on(s, wanted, tried)) return true;
         for (const std::string &back : fallbacks(wanted, "")) {
             if (start_source_on(s, back, tried)) {
                 hooks.log("ksip_audio: the microphone would not start, the default records in its place\n");
-                fell_back = true;
                 return true;
             }
         }
@@ -412,11 +393,11 @@ private:
         const std::string wanted = p->device();
         const bool was_up = p->started;
         const std::string before = adm.opened(true);
+        playout_stopped_seen = false;
         Tried tried;
         if (start_playout_on(p, wanted, tried)) {
             const bool moved = !was_up || adm.opened(true) != before;
             if (moved) hooks.log("ksip_audio: the call's speaker switched\n");
-            note_opened(true, wanted, false);
             return moved ? Outcome::Moved : Outcome::Unchanged;
         }
         for (const std::string &back : fallbacks(wanted, was_up ? previous : "", before)) {
@@ -424,17 +405,13 @@ private:
             if (back == previous) {
                 for (Play *q : players) q->set_device(previous.c_str());
                 hooks.log("ksip_audio: the call stays on the speaker it had\n");
-                note_opened(true, previous, false);
             } else if (wanted == "default") {
                 hooks.log("ksip_audio: the default speaker now would not start, the call stays on the speaker it had\n");
-                note_opened(true, wanted, true);
             } else {
                 hooks.log("ksip_audio: the call's speaker is the default, in place of the one that would not start\n");
-                note_opened(true, wanted, true);
             }
             return Outcome::Kept;
         }
-        note_down(true, wanted);
         return Outcome::Down;
     }
     Outcome reopen_source(const std::string &previous) {
@@ -442,13 +419,13 @@ private:
         const std::string wanted = source_device;
         const bool was_up = s->started;
         const std::string before = adm.opened(false);
+        source_stopped_seen = false;
         // A source on silence tries the device again too.
         if (!was_up) hooks.stop_fallback(s);
         Tried tried;
         if (start_source_on(s, wanted, tried)) {
             const bool moved = !was_up || adm.opened(false) != before;
             if (moved) hooks.log("ksip_audio: the call's microphone switched\n");
-            note_opened(false, wanted, false);
             return moved ? Outcome::Moved : Outcome::Unchanged;
         }
         for (const std::string &back : fallbacks(wanted, was_up ? previous : "", before)) {
@@ -456,18 +433,14 @@ private:
             if (back == previous) {
                 source_device = previous;
                 hooks.log("ksip_audio: the call stays on the microphone it had\n");
-                note_opened(false, previous, false);
             } else if (wanted == "default") {
                 hooks.log("ksip_audio: the default microphone now would not start, the call stays on the microphone it had\n");
-                note_opened(false, wanted, true);
             } else {
                 hooks.log("ksip_audio: the call's microphone is the default, in place of the one that would not start\n");
-                note_opened(false, wanted, true);
             }
             return Outcome::Kept;
         }
         hooks.start_fallback(s);
-        note_down(false, wanted);
         return Outcome::Down;
     }
     // The device a side asks for: the owner's.
@@ -477,177 +450,13 @@ private:
     // restart of it (the device in use went) failed, and nothing comes
     // through it, though the endpoint it opened for that is still noted.
     bool stream_stopped(bool playout) { return up(playout) && !(playout ? adm.playout_running() : adm.recording_running()); }
-    // The side's stream is up on an endpoint that is gone (the bridge still
-    // counts it as running, and nothing comes through it), or stopped.
-    bool on_gone_endpoint(bool playout) {
-        if (!up(playout)) return false;
-        if (stream_stopped(playout)) return true;
-        const std::string on = adm.opened(playout);
-        return on.empty() || !adm.listed(on.c_str(), playout);
-    }
-    // The side's stream is up on the device asked for, and that is there;
-    // for the default asked for, up on the endpoint the default stands for
-    // now (a default Windows moved elsewhere, or that is back on a device
-    // that is back, is followed), or on any endpoint while that cannot be
-    // read.
-    bool on_wanted(bool playout) {
-        if (!up(playout) || on_gone_endpoint(playout)) return false;
-        const std::string wanted = asked(playout);
-        if (wanted != "default") return adm.opened(playout) == wanted;
-        const std::string now = adm.default_endpoint(playout);
-        return now.empty() || adm.opened(playout) == now;
-    }
-    // The watch on one side: whether its stream is on the device it asks
-    // for, and, while it is not, whether that device has gone and come back.
-    struct Watch {
-        bool active = false;        // the stream is not on the device asked for
-        bool armed = false;         // the device has been seen not there since; its coming back is to be acted on
-        bool seen = false;          // the device was there at the last look, once armed
-        uint64_t listed_ms = 0;     // how long it has been there since, over the looks after the first
-        bool gone_seen = false;     // the stream was up on an endpoint that is gone at the last look
-        uint64_t gone_ms = 0;       // how long that has been so since, over the looks after the first
-        // The default asked for: the endpoint it stood for when its start
-        // failed, the stream staying on what it had. Tried again once the
-        // default stands for another endpoint, or this one has gone and
-        // come back (as a device that would not start is); not every look.
-        std::string failed_default;
-    };
-    static Watch watching(bool armed) {
-        Watch watch;
-        watch.active = true;
-        watch.armed = armed;
-        return watch;
-    }
-    // A stream just opened for `wanted`: on it, or on another endpoint. The
-    // bridge opens the default in place of a device that is not there, and
-    // then the device coming back is to be acted on, even if it is back
-    // already. The default this core fell back on (`fell_back`) for a device
-    // that is there but would not start is another matter: that device is
-    // tried again once it has gone and come back, not while it stays.
-    void note_opened(bool playout, const std::string &wanted, bool fell_back) {
-        Watch &watch = playout ? playout_watch : source_watch;
-        if (on_wanted(playout)) {
-            watch = Watch{};
-            return;
-        }
-        watch = watching(!fell_back || !adm.listed(wanted.c_str(), playout));
-        if (wanted == "default" && fell_back) watch.failed_default = adm.default_endpoint(playout);
-    }
-    // A side whose stream is down: watched the same, armed when the device
-    // is not there (it coming back is what to act on; for the default, any
-    // device at all, or the default standing for another endpoint).
-    void note_down(bool playout, const std::string &wanted) {
-        Watch &watch = playout ? playout_watch : source_watch;
-        watch = watching(!adm.listed(wanted.c_str(), playout));
-        if (wanted == "default") watch.failed_default = adm.default_endpoint(playout);
-    }
-    // One look at one side, `elapsed` ms after the last; whether the side
-    // waits for a device (is not on the one asked for), which has the looks
-    // come fast.
-    bool watch(bool playout, uint64_t elapsed) {
-        Watch &watch = playout ? playout_watch : source_watch;
-        const std::string wanted = asked(playout);
-        if (on_wanted(playout)) {
-            watch = Watch{};
-            return false;
-        }
-        if (on_gone_endpoint(playout)) {
-            // Looked at again at the slow pace: WebRTC's own move is what is
-            // waited for, not a device.
-            if (!watch.gone_seen) {
-                watch.gone_seen = true;
-                watch.gone_ms = 0;
-                return false;
-            }
-            watch.gone_ms += elapsed;
-            if (watch.gone_ms < kGoneSettleMs) return false;
-            watch.gone_seen = false;
-            watch.gone_ms = 0;
-            if (stream_stopped(playout))
-                hooks.log(playout ? "ksip_audio: the call's speaker stream stopped (WebRTC could not restart it), the stream is opened again\n"
-                                  : "ksip_audio: the call's microphone stream stopped (WebRTC could not restart it), the stream is opened again\n");
-            else
-                hooks.log(playout ? "ksip_audio: the speaker in use is gone, the call's stream is opened again\n"
-                                  : "ksip_audio: the microphone in use is gone, the call's stream is opened again\n");
-            // On the device asked for if it is there (the bridge opens the
-            // default in place of one that is not), else the default, else
-            // nothing or silence; what came of it is noted for the looks to come.
-            if (playout) reopen_playout(wanted);
-            else reopen_source(wanted);
-            return !on_wanted(playout);
-        }
-        watch.gone_seen = false;
-        watch.gone_ms = 0;
-        // Not on its device and not noted so: WebRTC moved the stream by
-        // itself when the device went away, and it coming back is to be
-        // acted on, even if it is back already.
-        if (!watch.active) watch = watching(true);
-        // The default asked for whose endpoint would not start: the default
-        // standing for another endpoint now has that one tried, as a device
-        // back is, whether or not the one that would not start is still
-        // there (it may have gone, and the default moved on because of it).
-        if (wanted == "default" && !watch.failed_default.empty()) {
-            const std::string now = adm.default_endpoint(playout);
-            if (!now.empty() && now != watch.failed_default) {
-                watch.failed_default.clear();
-                watch.armed = true;
-                watch.seen = false;
-                watch.listed_ms = 0;
-            }
-        }
-        // The device waited for: the one asked for; for the default asked
-        // for whose endpoint would not start, that endpoint (its going and
-        // coming back is what to act on); for the default otherwise, any
-        // device at all.
-        const bool default_failed = wanted == "default" && !watch.failed_default.empty();
-        const bool listed = adm.listed(default_failed ? watch.failed_default.c_str() : wanted.c_str(), playout);
-        if (!listed) {
-            watch.armed = true;
-            watch.seen = false;
-            watch.listed_ms = 0;
-            return true;
-        }
-        if (!watch.armed) return true;
-        if (!watch.seen) {
-            watch.seen = true;
-            watch.listed_ms = 0;
-            return true;
-        }
-        watch.listed_ms += elapsed;
-        if (watch.listed_ms < kBackSettleMs) return true;
-        watch.armed = false;
-        watch.seen = false;
-        watch.listed_ms = 0;
-        // The default asked for and the stream not on what it stands for
-        // now: the default moved (the person changed it, or the device set
-        // as it is back), and the stream follows it.
-        const bool moved_default = wanted == "default";
-        if (moved_default)
-            hooks.log(playout ? "ksip_audio: the default speaker is another now, the call's stream is opened on it\n"
-                              : "ksip_audio: the default microphone is another now, the call's stream is opened on it\n");
-        else
-            hooks.log(playout ? "ksip_audio: the speaker chosen is back, the call's stream is opened on it again\n"
-                              : "ksip_audio: the microphone chosen is back, the call's stream is opened on it again\n");
-        const Outcome outcome = playout ? reopen_playout(wanted) : reopen_source(wanted);
-        if (outcome != Outcome::Moved)
-            hooks.log(moved_default ? "ksip_audio: the default now would not start, the call stays where it was\n"
-                                    : "ksip_audio: the device that is back would not start, the call stays where it was\n");
-        return !on_wanted(playout);
-    }
-    // The watch runs while a side has an owner: fast while a side waits for
-    // a device to come back, slow otherwise.
+    // The watch runs while a side has an owner.
     void keep_watching() {
-        const bool waiting = (active_playout && !on_wanted(true) && !on_gone_endpoint(true)) ||
-                             (active_source && !on_wanted(false) && !on_gone_endpoint(false));
-        keep_watching(waiting);
-    }
-    void keep_watching(bool waiting) {
         if (!active_playout && !active_source) {
             clock.cancel(Timer::Watch);
             return;
         }
-        watch_interval = waiting ? kWatchFastMs : kWatchMs;
-        clock.start(Timer::Watch, watch_interval);
+        clock.start(Timer::Watch, kWatchMs);
     }
     void keep_warm() { clock.start(Timer::Linger, kLingerMs); }
     // Every start that fails comes here, whichever path tried it: a new
@@ -675,9 +484,7 @@ private:
     // The microphone the current source asked for, so that a switch knows
     // whether it changes and where to go back to.
     std::string source_device;
-    Watch playout_watch, source_watch;
-    // How long after the last look the next comes (the timer's interval), so
-    // that a look knows how much time the device it waits for has been there.
-    uint64_t watch_interval = kWatchMs;
+    // The side's stream was found stopped at the last look (watch_tick).
+    bool playout_stopped_seen = false, source_stopped_seen = false;
 };
 } // namespace playback_session

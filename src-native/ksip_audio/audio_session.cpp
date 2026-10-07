@@ -57,12 +57,6 @@ struct BridgeAdm final : Adm {
         ksip_audio_opened_endpoint(g_audio, static_cast<int>(playout), id, sizeof id);
         return id;
     }
-    bool listed(const char *device, bool playout) override { return ksip_audio_endpoint_listed(g_audio, device, static_cast<int>(playout)) != 0; }
-    std::string default_endpoint(bool playout) override {
-        char id[KSIP_AUDIO_DEVICE_TEXT_SIZE] = {};
-        ksip_audio_default_endpoint(g_audio, static_cast<int>(playout), id, sizeof id);
-        return id;
-    }
 } g_adm;
 LibreClock g_clock;
 

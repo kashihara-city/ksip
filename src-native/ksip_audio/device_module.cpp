@@ -56,9 +56,19 @@ int SwitchCommand(re_printf *pf, void *) {
     mem_deref(od);
     return err;
 }
+// The app's word on the microphone's mute (microphone_mute.h): "on" or "off".
+int MuteCommand(re_printf *pf, void *arg) {
+    const auto *a = static_cast<const cmd_arg *>(arg);
+    if (!a || !str_isset(a->prm)) return EINVAL;
+    const bool on = str_cmp(a->prm, "on") == 0;
+    if (!on && str_cmp(a->prm, "off") != 0) return EINVAL;
+    microphone_mute::set(on);
+    return re_hprintf(pf, "Microphone %s\n", on ? "muted" : "unmuted");
+}
 const cmd commands[] = {
     {"ksip_audio_state", 0, 0, "The audio module's state as JSON (audio_state.h)", StateCommand},
     {"ksip_audio_switch", 0, 0, "Move the streams that are up onto the configured devices", SwitchCommand},
+    {"ksip_audio_mute", 0, CMD_PRM, "The microphone is muted (on) or not (off) on the device: calls send silence while it is", MuteCommand},
 };
 
 bool Valid(const struct auplay_prm *p) { return p->srate == playback_session::kRate && p->ch == playback_session::kChannels && p->fmt == AUFMT_S16LE; }
@@ -123,7 +133,7 @@ int module_init() {
     }
     g_ready = true;
     g_processing = enabled;
-    microphone_mute::start(g_audio);
+    microphone_mute::start();
     // For the log only: the app reads the module's state (audio_state.h).
     if (enabled)
         info("ksip_audio: Google WebRTC ADM + APM initialized (processing enabled:"

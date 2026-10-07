@@ -33,6 +33,11 @@ pub struct Device {
     pub id: String,
     pub name: String,
     pub kind: String,
+    /// Windows' default communications endpoint of its kind: what "default"
+    /// stands for now. In the list, so that the default moving counts as
+    /// the devices changing (devices_differ).
+    #[serde(default)]
+    pub default: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Volume {
@@ -503,10 +508,10 @@ fn microphone_peak(device_id: &str) -> Result<Peak, String> {
         .map_err(|_| message("AUDIO_MONITOR_STALLED"))?
 }
 /// Whether two device lists name different devices (by id, kind and name),
-/// whichever order they come in.
+/// or the default of a kind moved, whichever order they come in.
 pub fn devices_differ(a: &[Device], b: &[Device]) -> bool {
-    fn key(list: &[Device]) -> Vec<(&str, &str, &str)> {
-        let mut names: Vec<(&str, &str, &str)> = list.iter().map(|d| (d.id.as_str(), d.kind.as_str(), d.name.as_str())).collect();
+    fn key(list: &[Device]) -> Vec<(&str, &str, &str, bool)> {
+        let mut names: Vec<(&str, &str, &str, bool)> = list.iter().map(|d| (d.id.as_str(), d.kind.as_str(), d.name.as_str(), d.default)).collect();
         names.sort_unstable();
         names
     }
@@ -524,6 +529,13 @@ pub fn devices() -> Result<Vec<Device>, String> {
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
             let mut output = Vec::new();
             for (flow, kind) in [(eCapture, "microphone"), (eRender, "speaker")] {
+                // The default communications endpoint of the kind, by id;
+                // none while the kind has no endpoint at all.
+                let default_id = enumerator
+                    .GetDefaultAudioEndpoint(flow, eCommunications)
+                    .and_then(|device| device.GetId())
+                    .and_then(|id| take_string(id))
+                    .unwrap_or_default();
                 let devices = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
                 for i in 0..devices.GetCount()? {
                     // A stale or partially removed endpoint can remain in the
@@ -545,6 +557,7 @@ pub fn devices() -> Result<Vec<Device>, String> {
                     })()
                     .unwrap_or_else(|_| id.clone());
                     output.push(Device {
+                        default: id == default_id,
                         id,
                         name,
                         kind: kind.into(),

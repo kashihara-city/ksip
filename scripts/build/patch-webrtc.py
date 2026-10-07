@@ -139,6 +139,7 @@ rtc_static_library("ksip_webrtc_audio") {{
     "api/environment:environment_factory",
     "common_audio",
     "modules/audio_device:audio_device_module_from_input_and_output",
+    "modules/audio_device:windows_core_audio_utility",
     "modules/audio_processing",
     "rtc_base/win:scoped_com_initializer",
   ]
@@ -408,7 +409,7 @@ def main():
     bridge = source / "ksip_bridge"
     bridge.mkdir(exist_ok=True)
     for name in ["ksip_audio_bridge.h", "ksip_audio_bridge_internal.h",
-                 "bridge_state.h", "callback_gate.h",
+                 "bridge_state.h", "callback_gate.h", "serving.h",
                  "ksip_audio_bridge.cc", "apm.cc", "device_selection.cc",
                  "pcm_processing.cc"]:
         shutil.copy2(ROOT / "src-native/webrtc" / name, bridge / name)

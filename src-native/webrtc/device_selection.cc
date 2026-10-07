@@ -4,13 +4,31 @@
 // there); and the name and id of what was opened, for the app to show and
 // for the microphone mute to read.
 #include "bridge_state.h"
+#include "serving.h"
 
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
+#include "modules/audio_device/win/core_audio_utility_win.h"
 #include "rtc_base/logging.h"
 
 using ksip_audio_bridge::kRoleEntries;
+
+namespace {
+// Every endpoint WebRTC lists for the side, in the order its indexes go (the
+// two role entries first, with the id of the endpoint each stands for), read
+// in one pass. WebRTC's own PlayoutDeviceName(i) enumerates everything, with
+// each name read off the property store, afresh for every index: asked for
+// every endpoint, that stalled baresip's thread for hundreds of milliseconds
+// on a machine with several devices.
+bool ListAll(bool playout, webrtc::AudioDeviceNames &names) {
+  names.clear();
+  return playout ? webrtc::webrtc_win::core_audio_utility::GetOutputDeviceNames(&names)
+                 : webrtc::webrtc_win::core_audio_utility::GetInputDeviceNames(&names);
+}
+}  // namespace
 
 int ksip_audio::SelectDefault(bool playout) {
   const int result = playout
@@ -20,12 +38,11 @@ int ksip_audio::SelectDefault(bool playout) {
   // The name and id are those of the list's communications role entry
   // (kCommunicationsEntry: core_audio_utility_win.cc). Asked for at index -1
   // (the device type's value), the name was never there.
-  char name[webrtc::kAdmMaxDeviceNameSize] = {};
-  char guid[webrtc::kAdmMaxGuidSize] = {};
-  const int name_result = playout
-      ? adm->PlayoutDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid)
-      : adm->RecordingDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid);
-  if (!name_result) StoreDevice(playout, name, guid);
+  webrtc::AudioDeviceNames names;
+  if (ListAll(playout, names) && names.size() > ksip_audio_bridge::kCommunicationsEntry) {
+    const webrtc::AudioDeviceName &entry = names[ksip_audio_bridge::kCommunicationsEntry];
+    StoreDevice(playout, entry.device_name.c_str(), entry.unique_id.c_str());
+  }
   return 0;
 }
 
@@ -39,32 +56,24 @@ int ksip_audio::SetDevice(const char *id, bool playout) {
   // call failed with no device. The endpoints themselves are matched first,
   // so that a chosen device stays chosen when Windows moves its defaults;
   // a role entry only serves as a fallback.
-  const int count = playout ? adm->PlayoutDevices() : adm->RecordingDevices();
-  const int enumerated = count > 0 ? count + kRoleEntries : 0;
+  webrtc::AudioDeviceNames names;
+  ListAll(playout, names);
+  const int count = static_cast<int>(names.size()) - kRoleEntries;
   int role_index = -1;
   std::string listing;
-  for (int i = 0; i < enumerated; ++i) {
-    char name[webrtc::kAdmMaxDeviceNameSize] = {};
-    char guid[webrtc::kAdmMaxGuidSize] = {};
-    const int result = playout
-        ? adm->PlayoutDeviceName(static_cast<uint16_t>(i), name, guid)
-        : adm->RecordingDeviceName(static_cast<uint16_t>(i), name, guid);
-    if (result) continue;
-    listing += " [" + std::to_string(i) + "] " + name + " " + guid;
-    if (std::strcmp(id, guid) != 0) continue;
+  for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+    const webrtc::AudioDeviceName &entry = names[static_cast<size_t>(i)];
+    listing += " [" + std::to_string(i) + "] " + entry.device_name + " " + entry.unique_id;
+    if (entry.unique_id != id) continue;
     if (i < kRoleEntries) {
       if (role_index < 0) role_index = i;
       continue;
     }
-    return Select(playout, i, name, guid);
+    return Select(playout, i, entry.device_name.c_str(), entry.unique_id.c_str());
   }
   if (role_index >= 0) {
-    char name[webrtc::kAdmMaxDeviceNameSize] = {};
-    char guid[webrtc::kAdmMaxGuidSize] = {};
-    const int result = playout
-        ? adm->PlayoutDeviceName(static_cast<uint16_t>(role_index), name, guid)
-        : adm->RecordingDeviceName(static_cast<uint16_t>(role_index), name, guid);
-    if (!result) return Select(playout, role_index, name, guid);
+    const webrtc::AudioDeviceName &entry = names[static_cast<size_t>(role_index)];
+    return Select(playout, role_index, entry.device_name.c_str(), entry.unique_id.c_str());
   }
   // A chosen device that is not there (unplugged, its hub without power,
   // never on this machine): the call goes through the Windows default
@@ -83,62 +92,49 @@ int ksip_audio::SetDevice(const char *id, bool playout) {
 }
 
 bool ksip_audio::Listed(const char *id, bool playout) {
-  const int count = playout ? adm->PlayoutDevices() : adm->RecordingDevices();
-  const int enumerated = count > 0 ? count + kRoleEntries : 0;
-  for (int i = 0; i < enumerated; ++i) {
-    char name[webrtc::kAdmMaxDeviceNameSize] = {};
-    char guid[webrtc::kAdmMaxGuidSize] = {};
-    const int result = playout
-        ? adm->PlayoutDeviceName(static_cast<uint16_t>(i), name, guid)
-        : adm->RecordingDeviceName(static_cast<uint16_t>(i), name, guid);
-    if (!result && std::strcmp(id, guid) == 0) return true;
-  }
+  webrtc::AudioDeviceNames names;
+  if (!ListAll(playout, names)) return false;
+  for (const webrtc::AudioDeviceName &entry : names)
+    if (entry.unique_id == id) return true;
   return false;
 }
 
 // The endpoint the default stands for now: the id of the list's
 // communications role entry; empty while there is none.
 std::string ksip_audio::DefaultEndpoint(bool playout) {
-  char name[webrtc::kAdmMaxDeviceNameSize] = {};
-  char guid[webrtc::kAdmMaxGuidSize] = {};
-  const int result = playout
-      ? adm->PlayoutDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid)
-      : adm->RecordingDeviceName(ksip_audio_bridge::kCommunicationsEntry, name, guid);
-  return result ? std::string() : std::string(guid);
+  return playout ? webrtc::webrtc_win::core_audio_utility::GetCommunicationsOutputDeviceID()
+                 : webrtc::webrtc_win::core_audio_utility::GetCommunicationsInputDeviceID();
 }
 
-// Whether a stream running for `request` serves it as one opened for it now
-// would: on the endpoint asked for, or on the default because that one is
-// not there, whether the stream opened there in its place (SetDevice) or
-// WebRTC moved it there when the device in use went away (the endpoint
-// WebRTC says it opened tells which, OpenedEndpoint). A stream on an
-// endpoint that is gone serves nothing: WebRTC counts it as running still
-// when it could not move it (no other device to move to), and nothing comes
-// through it. "default" is served by the endpoint it stands for now: a
-// default Windows moved elsewhere (the person changed it, the device set as
-// it is back) is not followed by WebRTC, which restarts a stream only when
-// its device goes, so it is followed here. A stream on the default does not
-// serve a device that is back.
+// Whether a stream running for `request` serves it as one opened for it
+// now would (serving.h decides; the cases are described there). What
+// Windows lists is read once: every endpoint of the side, and the one the
+// default stands for (the list's communications role entry).
 bool ksip_audio::Serves(const std::string &request, bool playout) {
   const std::string opened = ksip_audio_bridge::OpenedEndpoint(playout);
-  // A running stream whose endpoint is not known (its opening never
-  // completed) is not trusted either.
-  if (opened.empty() || !Listed(opened.c_str(), playout)) {
-    RTC_LOG(LS_WARNING) << "ksip_audio: the " << (playout ? "playout" : "recording") << " endpoint in use, "
-                        << (opened.empty() ? std::string("unknown") : opened) << ", is gone; the stream is opened again";
-    return false;
+  webrtc::AudioDeviceNames names;
+  std::vector<std::string> listed;
+  std::string default_now;
+  if (ListAll(playout, names)) {
+    for (const webrtc::AudioDeviceName &entry : names) listed.push_back(entry.unique_id);
+    if (names.size() > ksip_audio_bridge::kCommunicationsEntry) default_now = names[ksip_audio_bridge::kCommunicationsEntry].unique_id;
   }
-  if (request == "default") {
-    const std::string now = DefaultEndpoint(playout);
-    if (now.empty() || opened == now) return true;
-    RTC_LOG(LS_WARNING) << "ksip_audio: the default " << (playout ? "playout" : "recording") << " device is " << now
-                        << " now, not " << opened << "; the stream is opened on it";
-    return false;
+  const char *side = playout ? "playout" : "recording";
+  switch (ksip_audio_bridge::serving(request, opened, listed, default_now)) {
+    case ksip_audio_bridge::Serving::kKept:
+      return true;
+    case ksip_audio_bridge::Serving::kEndpointGone:
+      RTC_LOG(LS_WARNING) << "ksip_audio: the " << side << " endpoint in use, "
+                          << (opened.empty() ? std::string("unknown") : opened) << ", is gone; the stream is opened again";
+      return false;
+    case ksip_audio_bridge::Serving::kDefaultMoved:
+      RTC_LOG(LS_WARNING) << "ksip_audio: the default " << side << " device is " << default_now << " now, not " << opened
+                          << "; the stream is opened on it";
+      return false;
+    case ksip_audio_bridge::Serving::kDeviceBack:
+      RTC_LOG(LS_WARNING) << "ksip_audio: " << side << " device " << request << " is back, the stream is opened on it again";
+      return false;
   }
-  if (opened == request) return true;
-  if (!Listed(request.c_str(), playout)) return true;
-  RTC_LOG(LS_WARNING) << "ksip_audio: " << (playout ? "playout" : "recording") << " device " << request
-                      << " is back, the stream is opened on it again";
   return false;
 }
 

@@ -45,6 +45,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// How often the engine is asked for its state while it runs.
 const POLL: Duration = Duration::from_millis(500);
+/// How often Windows' audio devices are looked at, and how long after the
+/// last change seen the engine is handed the saved devices again (tick).
+const DEVICES_LOOK: Duration = Duration::from_secs(1);
+const DEVICES_SETTLE: Duration = Duration::from_secs(1);
 /// How long an answer from the engine is waited for.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long an operation waits for its turn before it is dropped. A restart
@@ -225,6 +229,12 @@ enum Job {
         reply: Reply<()>,
     },
     RefreshDevices(Reply<()>),
+    /// Windows' devices changed a second ago: the saved devices are handed
+    /// to the engine again, which moves a call onto a device that is back,
+    /// off one that is gone, or after a default that moved.
+    FollowDevices,
+    /// The microphone's mute as the window read it is told to the engine.
+    TellMute,
     Calibrate {
         microphone: String,
         speaker: String,
@@ -258,12 +268,12 @@ impl Job {
             Job::Action { reply, .. } => reply.send(Err(why)),
             Job::Calibrate { reply, .. } => reply.send(Err(why)),
             Job::SetVolume { reply, .. } => reply.send(Err(why)),
-            Job::Poll | Job::Initialize | Job::Reconnect | Job::ApplySaved | Job::Recover | Job::MaintenanceOff | Job::Stop => {}
+            Job::Poll | Job::Initialize | Job::Reconnect | Job::ApplySaved | Job::Recover | Job::MaintenanceOff | Job::Stop | Job::FollowDevices | Job::TellMute => {}
         }
     }
     /// Whether the job may be dropped for waiting too long.
     fn expires(&self) -> bool {
-        !matches!(self, Job::Poll | Job::Stop | Job::Initialize | Job::Recover | Job::MaintenanceOff | Job::ApplySaved)
+        !matches!(self, Job::Poll | Job::Stop | Job::Initialize | Job::Recover | Job::MaintenanceOff | Job::ApplySaved | Job::FollowDevices | Job::TellMute)
     }
     /// Whether the job still has to run when the app is leaving.
     fn survives_closing(&self) -> bool {
@@ -353,6 +363,18 @@ struct Phone {
     /// report hands back (an engine to stop, a link to try again) goes
     /// straight onto it or into `lost`, in the same step.
     exclusive: Vec<u64>,
+    /// When the devices were last looked at (devices_look): once a second,
+    /// from the tick, on a worker, whether or not the window is shown.
+    devices_looked: Option<Instant>,
+    /// When a look last found the devices changed; the engine is handed the
+    /// saved devices again a second after the last change (FollowDevices),
+    /// so that WebRTC's own move off a device that went, and a device still
+    /// settling, are over by then.
+    devices_changed_at: Option<Instant>,
+    /// The microphone's mute as the window last read it off its endpoint
+    /// (Command::MicrophoneMuted), and what the current engine was told.
+    microphone_muted: Option<bool>,
+    mute_told: Option<bool>,
     /// The banner the polling raised, cleared once polling works again.
     polling_error: String,
     /// What the current engine's reports have been said about.
@@ -455,6 +477,10 @@ impl Actor {
             probing: false,
             work_serial: 0,
             exclusive: Vec::new(),
+            devices_looked: None,
+            devices_changed_at: None,
+            microphone_muted: None,
+            mute_told: None,
             polling_error: String::new(),
             closing: false,
             waiting: None,
@@ -592,7 +618,7 @@ impl Actor {
             Command::Action { reply, .. } => reply.send(Err(why)),
             Command::CalibrateAec { reply, .. } => reply.send(Err(why)),
             Command::SetVolume { reply, .. } => reply.send(Err(why)),
-            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) | Command::DevicesSeen(_) => {}
+            Command::Initialize | Command::WindowVisible(_) | Command::ShowError(_) | Command::ReportError(_) | Command::MicrophoneMuted(_) => {}
         }
     }
     /// What needs no flow is done here and now; the rest waits its turn.
@@ -607,12 +633,8 @@ impl Actor {
                 return;
             }
             Command::ShowError(error) => return self.shared.borrow_mut().show_error(error),
-            Command::DevicesSeen(devices) => {
-                // The window's look (commands.rs, watch_devices) found the
-                // devices changed: the lists follow, with the next snapshot.
-                let mut p = self.shared.borrow_mut();
-                p.take_devices(devices);
-                p.publish();
+            Command::MicrophoneMuted(muted) => {
+                self.shared.borrow_mut().microphone_muted = Some(muted);
                 return;
             }
             Command::ReportError(error) => return self.shared.borrow_mut().report_error(error),
@@ -698,6 +720,36 @@ impl Actor {
         if !self.shared.borrow().closing && !self.queue.iter().any(|(_, job)| matches!(job, Job::Poll)) {
             self.queue.push_back((Instant::now(), Job::Poll));
         }
+        // Windows' audio devices, looked at once a second on a worker (the
+        // report comes back as a stray Work::Devices); a second after a look
+        // found them changed, the engine follows; and the microphone's mute
+        // the window read goes to the engine once it differs from what it
+        // was told. The engine is asked from its own thread for none of
+        // these: asking Windows there stalled the calls' audio.
+        {
+            let mut p = self.shared.borrow_mut();
+            if !p.closing && p.devices_look_due(Instant::now()) {
+                p.devices_looked = Some(Instant::now());
+                p.work(|| Work::Devices(crate::audio::devices()));
+            }
+        }
+        let (follow, mute) = {
+            let mut p = self.shared.borrow_mut();
+            let due = Phone::follow_due(p.devices_changed_at, Instant::now());
+            if due && p.link.is_none() {
+                // No engine to follow; a start hands it the saved devices anyway.
+                p.devices_changed_at = None;
+            }
+            (due && p.link.is_some() && !p.phone.in_maintenance(),
+             p.link.is_some() && p.microphone_muted.is_some() && p.microphone_muted != p.mute_told)
+        };
+        if follow && !self.queue.iter().any(|(_, job)| matches!(job, Job::FollowDevices)) {
+            self.shared.borrow_mut().devices_changed_at = None;
+            self.queue.push_back((Instant::now(), Job::FollowDevices));
+        }
+        if mute && !self.queue.iter().any(|(_, job)| matches!(job, Job::TellMute)) {
+            self.queue.push_back((Instant::now(), Job::TellMute));
+        }
         let now = Instant::now();
         let mut kept = VecDeque::new();
         for (since, job) in self.queue.drain(..) {
@@ -759,6 +811,8 @@ impl Actor {
                 let result = refresh_devices(&s).await;
                 s.borrow().answer(reply, result);
             }),
+            Job::FollowDevices => Box::pin(async move { follow_devices(&s).await }),
+            Job::TellMute => Box::pin(async move { tell_mute(&s).await }),
             Job::Calibrate { microphone, speaker, careful, reply } => Box::pin(async move {
                 let result = calibrate_aec(&s, microphone, speaker, careful).await;
                 s.borrow().answer(reply, result);
@@ -797,8 +851,8 @@ impl Phone {
         self.published.set(&self.view);
     }
     /// The audio devices as Windows lists them now, for the window's lists:
-    /// from the refresh button's look (refresh_devices) and the window's own
-    /// (Command::DevicesSeen) alike.
+    /// from the tick's look (Work::Devices, in stray) and the refresh
+    /// button's (refresh_devices) alike.
     fn take_devices(&mut self, devices: Vec<crate::audio::Device>) {
         // A change is written down with the names, so that a log tells what
         // the machine had when (a headset gone in the night, a dock's hub).
@@ -912,8 +966,27 @@ impl Phone {
             }
             Work::Stopped(outcome) => self.finish_recovery(outcome),
             Work::Calibrated(_) => self.release_held_maintenance(),
+            // The tick's look at the devices: the lists follow, and a change
+            // starts the second after which the engine is told. A look that
+            // fails changes nothing.
+            Work::Devices(Ok(devices)) => {
+                if crate::audio::devices_differ(&self.view.devices, &devices) {
+                    self.devices_changed_at = Some(Instant::now());
+                }
+                self.take_devices(devices);
+                self.publish();
+            }
             _ => {}
         }
+    }
+    /// The tick's look at the devices is due: a second after the last.
+    fn devices_look_due(&self, now: Instant) -> bool {
+        self.devices_looked.is_none_or(|at| now.duration_since(at) >= DEVICES_LOOK)
+    }
+    /// The engine is to follow the devices: a change was seen, and a second
+    /// has passed since the last one.
+    fn follow_due(changed_at: Option<Instant>, now: Instant) -> bool {
+        changed_at.is_some_and(|at| now.duration_since(at) >= DEVICES_SETTLE)
     }
     /// An end of maintenance the engine has not taken yet is owed, and nobody
     /// holds the maintenance now: one that is held is its owner's to end.
@@ -1169,6 +1242,9 @@ impl Phone {
         self.bound = ready.address;
         self.link = Some(ready.link);
         self.view.running = true;
+        // The new engine has not been told the microphone's mute: the tick
+        // tells it what the window last read.
+        self.mute_told = None;
     }
     /// Takes the engine out of the phone: the calls still up get their rows
     /// (the engine takes them down with it), and the window shows the phone
@@ -1695,11 +1771,11 @@ async fn stop_engine(s: &Shared) {
     }
 }
 /// The refresh button: reads the devices again for the lists (as the
-/// window's own look does every second, commands.rs watch_devices) and, when
-/// the engine runs and no call is going on, gives it the saved ones once more
-/// (a choice changed outside the window reaches it this way). A device
-/// unplugged and put back, or a new Windows default, needs none of this:
-/// each stream picks its endpoint as it opens (resolve_audio_endpoints). The
+/// tick's own look does every second) and, when the engine runs and no
+/// call is going on, gives it the saved ones once more (a choice changed
+/// outside the window reaches it this way). A device unplugged and put
+/// back, or a new Windows default, needs none of this: the tick's look
+/// sees it, and the engine follows a second later (follow_devices). The
 /// engine is only restarted when it does not take the devices.
 async fn refresh_devices(s: &Shared) -> Result<(), String> {
     s.borrow_mut().work(|| Work::Devices(crate::audio::devices()));
@@ -1736,6 +1812,52 @@ async fn refresh_devices(s: &Shared) -> Result<(), String> {
         return connect(s).await;
     }
     Ok(())
+}
+/// Windows' devices changed a second ago (Job::FollowDevices): the saved
+/// devices go to the engine again, as a choice made in the window does. The
+/// engine takes a stream that still serves its device as it is, and opens
+/// the others anew: a call on the default in place of a device that is back
+/// goes back to it, one on a device that went goes to the default (or, with
+/// no device at all, the microphone to silence), and one asked to be on the
+/// default follows the default when that moved. Nothing of this is decided
+/// here, and no device is looked at from the engine's own thread.
+async fn follow_devices(s: &Shared) {
+    if s.borrow().link.is_none() {
+        return;
+    }
+    let settings = match s.borrow().services.settings() {
+        Ok(settings) => settings,
+        Err(e) => {
+            s.borrow().services.log(LOG_APP, format!("ksip: the devices changed, but the settings could not be read ({e})"));
+            return;
+        }
+    };
+    if let Err(e) = apply_audio_endpoints(s, &settings).await {
+        s.borrow().services.log(LOG_APP, format!("ksip: the devices changed, but the engine did not take them ({e})"));
+    }
+}
+/// The microphone's mute as the window last read it (Command::MicrophoneMuted)
+/// goes to the engine (Job::TellMute), which mutes the calls' audio while it
+/// is so. What was told is remembered for the engine it was told to, so that
+/// a change, or a new engine, is what has it told again.
+async fn tell_mute(s: &Shared) {
+    let Some(muted) = s.borrow().microphone_muted else {
+        return;
+    };
+    if s.borrow().link.is_none() {
+        return;
+    }
+    match request(s, "ksip_audio_mute", if muted { "on" } else { "off" }).await {
+        Ok(_) => s.borrow_mut().mute_told = Some(muted),
+        Err(e) => {
+            // Not asked again until the mute changes or the engine does:
+            // an engine that does not know the command would be asked
+            // every half second otherwise.
+            let mut p = s.borrow_mut();
+            p.mute_told = Some(muted);
+            p.services.log(LOG_APP, format!("ksip: the engine did not take the microphone's mute ({e})"));
+        }
+    }
 }
 /// The first thing after the window is up: the devices, then the saved account.
 async fn initialize(s: Shared) {
@@ -2953,5 +3075,64 @@ mod tests {
         let a = actor();
         assert_eq!(run_now(request(&a.shared, "ksip_state", "")), Err(RequestError::NotRunning));
         assert!(a.shared.borrow().waiting.is_none());
+    }
+    /// The tick's look at the devices: a change starts the second after
+    /// which the engine is handed the saved devices again; the same lists
+    /// seen again start nothing; and with no engine, the change is let go.
+    #[test]
+    fn a_change_in_the_devices_is_followed_a_second_later_while_an_engine_runs() {
+        let mut a = actor();
+        let d = |id: &str, name: &str, kind: &str, default: bool| crate::audio::Device { id: id.into(), name: name.into(), kind: kind.into(), default };
+        let mic = d("{m1}", "Mic", "microphone", true);
+        let spk = d("{s1}", "Speaker", "speaker", true);
+        let mut p = a.shared.borrow_mut();
+        p.stray(Work::Devices(Ok(vec![mic.clone(), spk.clone()])));
+        let first = p.devices_changed_at.expect("the first look differs from the empty lists");
+        assert_eq!(p.view.devices.len(), 2, "the lists follow");
+        p.stray(Work::Devices(Ok(vec![spk.clone(), mic.clone()])));
+        assert_eq!(p.devices_changed_at, Some(first), "the same devices in another order are no change");
+        p.stray(Work::Devices(Err("no COM".into())));
+        assert_eq!(p.view.devices.len(), 2, "a look that fails changes nothing");
+        // The default moved to another speaker: a change, as a device would be.
+        p.stray(Work::Devices(Ok(vec![mic.clone(), d("{s1}", "Speaker", "speaker", false), d("{s2}", "HDMI", "speaker", true)])));
+        let moved = p.devices_changed_at.unwrap();
+        assert!(moved >= first);
+        assert!(!Phone::follow_due(Some(moved), moved + DEVICES_SETTLE / 2), "not before the second is over");
+        assert!(Phone::follow_due(Some(moved), moved + DEVICES_SETTLE), "due once it is");
+        assert!(!Phone::follow_due(None, moved + DEVICES_SETTLE), "nothing changed, nothing due");
+        // With no engine the change is let go: a start hands the engine the
+        // saved devices anyway. The tick's own look is not due (just done).
+        p.devices_changed_at = Some(Instant::now() - DEVICES_SETTLE);
+        p.devices_looked = Some(Instant::now());
+        drop(p);
+        a.tick();
+        assert!(a.shared.borrow().devices_changed_at.is_none());
+        assert!(!a.queue.iter().any(|(_, job)| matches!(job, Job::FollowDevices)));
+    }
+    /// The tick's look at the devices is once a second, from the first tick on.
+    #[test]
+    fn the_devices_are_looked_at_once_a_second() {
+        let a = actor();
+        let now = Instant::now();
+        assert!(a.shared.borrow().devices_look_due(now), "never looked: due");
+        a.shared.borrow_mut().devices_looked = Some(now);
+        assert!(!a.shared.borrow().devices_look_due(now + DEVICES_LOOK / 2));
+        assert!(a.shared.borrow().devices_look_due(now + DEVICES_LOOK));
+    }
+    /// The microphone's mute the window read is kept for the engine, and
+    /// told only while one runs and it differs from what that one was told.
+    #[test]
+    fn the_microphone_mute_waits_for_an_engine_to_tell() {
+        let mut a = actor();
+        a.shared.borrow_mut().devices_looked = Some(Instant::now());
+        a.handle_command(Command::MicrophoneMuted(true));
+        assert_eq!(a.shared.borrow().microphone_muted, Some(true));
+        a.tick();
+        assert!(!a.queue.iter().any(|(_, job)| matches!(job, Job::TellMute)), "no engine: nobody to tell");
+        // Told (as the job would record), the same mute is not queued again.
+        a.shared.borrow_mut().mute_told = Some(true);
+        assert_eq!(a.shared.borrow().microphone_muted, a.shared.borrow().mute_told);
+        a.handle_command(Command::MicrophoneMuted(false));
+        assert_ne!(a.shared.borrow().microphone_muted, a.shared.borrow().mute_told, "a change is what has it told again");
     }
 }

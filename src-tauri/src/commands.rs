@@ -13,7 +13,6 @@ use crate::storage::Account;
 use crate::{desktop, native, shortcuts};
 use serde::Serialize;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
@@ -327,7 +326,7 @@ pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<boo
         return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
     }
     if level.is_none() && mute.is_none() {
-        return read_volume(state, kind).0;
+        return read_volume(state, kind);
     }
     let (kind_owned, expected) = (kind.to_string(), expected.map(str::to_string));
     let (result, target) = state.phone.call(|reply| Command::SetVolume { kind: kind_owned, level, mute, expected, reply })?;
@@ -335,18 +334,20 @@ pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<boo
     Ok(VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in })
 }
 /// Windows' level and mute of the endpoint in use for the kind, the saved
-/// gain laid over, and whose endpoint it is; and whether how the chosen
-/// device stands changed just now (said in the log), which the device lists
-/// are looked at again for at once.
-fn read_volume(state: &AppState, kind: &str) -> (Result<VolumeView, String>, bool) {
+/// gain laid over, and whose endpoint it is. How the chosen device stands is
+/// said in the log when it changed (note_presence), and the microphone's
+/// mute goes to the phone (tell_mute).
+fn read_volume(state: &AppState, kind: &str) -> Result<VolumeView, String> {
     let target = match target(state, kind, true) {
         Ok(target) => target,
         Err(e) => {
-            let changed = e == crate::audio::none_message(kind) && note_presence(state, kind, Presence::None, "");
-            return (Err(e), changed);
+            if e == crate::audio::none_message(kind) {
+                note_presence(state, kind, Presence::None, "");
+            }
+            return Err(e);
         }
     };
-    let changed = note_stand_in(state, kind, &target);
+    note_stand_in(state, kind, &target);
     let view = crate::audio::volume(kind, &target.id, None, None).map(|mut result| {
         let gain = state.audio_gain(kind);
         if gain > 100 {
@@ -354,7 +355,12 @@ fn read_volume(state: &AppState, kind: &str) -> (Result<VolumeView, String>, boo
         }
         VolumeView { id: result.id, level: result.level, muted: result.muted, origin: target.origin, stand_in: target.stand_in }
     });
-    (view, changed)
+    if kind == "microphone" {
+        if let Ok(view) = &view {
+            tell_mute(state, view.muted);
+        }
+    }
+    view
 }
 /// What the window shows for one kind of device: the volume (read_volume)
 /// and, when asked for, the meter's peak off the same endpoint. Each may
@@ -372,52 +378,38 @@ pub struct AudioLevels {
     pub microphone: AudioSide,
     pub speaker: AudioSide,
 }
-fn audio_side(state: &AppState, kind: &str, meters: bool) -> (AudioSide, bool) {
-    let (volume, changed) = read_volume(state, kind);
+fn audio_side(state: &AppState, kind: &str, meters: bool) -> AudioSide {
+    let volume = read_volume(state, kind);
     let peak = match (&volume, meters) {
         (_, false) => Ok(None),
         (Ok(view), true) => crate::audio::peak(kind, &view.id).map(|peak| Some(peak.peak)),
         (Err(e), true) => Err(e.clone()),
     };
-    let side = AudioSide {
+    AudioSide {
         volume: volume.as_ref().ok().cloned(),
         volume_error: volume.err(),
         peak: peak.as_ref().ok().copied().flatten(),
         peak_error: peak.err(),
-    };
-    (side, changed)
+    }
 }
 /// Both kinds in one look, which the window takes ten times a second while
 /// it is shown and once a second in the tray and behind the settings, where
 /// nobody sees the meters: they are not asked for then (`meters`), which
-/// lets the microphone's meter session close. The device lists are looked
-/// at again along the way (watch_devices).
+/// lets the microphone's meter session close.
 pub fn audio_levels_now(state: &AppState, meters: bool) -> AudioLevels {
-    let (microphone, microphone_changed) = audio_side(state, "microphone", meters);
-    let (speaker, speaker_changed) = audio_side(state, "speaker", meters);
-    watch_devices(state, microphone_changed || speaker_changed);
-    AudioLevels { microphone, speaker }
+    AudioLevels { microphone: audio_side(state, "microphone", meters), speaker: audio_side(state, "speaker", meters) }
 }
-/// The audio devices, looked at again once a second along with the levels,
-/// and at once when how a chosen device stands changed: a device plugged in
-/// or pulled shows in the window's lists within a second, with nothing to
-/// press. The lists are the phone's, published with the snapshot; what
-/// differs from them goes to the phone, and the window's next look brings
-/// it back. A look that fails changes nothing.
-fn watch_devices(state: &AppState, now: bool) {
-    static LOOKED: Mutex<Option<Instant>> = Mutex::new(None);
-    {
-        let mut looked = LOOKED.lock().unwrap();
-        if !now && looked.is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
-            return;
-        }
-        *looked = Some(Instant::now());
-    }
-    let Ok(devices) = crate::audio::devices() else {
-        return;
-    };
-    if crate::audio::devices_differ(&state.devices(), &devices) {
-        state.phone.send(Command::DevicesSeen(devices));
+/// Windows' mute of the microphone's endpoint, as the look just read it,
+/// goes to the phone when it changed: the engine mutes the calls' audio
+/// while it is so (ksip_audio_mute). The engine does not read it itself, so
+/// that no Windows call is made on its thread under a call; the devices are
+/// looked at by the phone's own tick (phone_actor.rs), the same way.
+fn tell_mute(state: &AppState, muted: bool) {
+    static TOLD: Mutex<Option<bool>> = Mutex::new(None);
+    let mut told = TOLD.lock().unwrap();
+    if *told != Some(muted) {
+        *told = Some(muted);
+        state.phone.send(Command::MicrophoneMuted(muted));
     }
 }
 #[tauri::command]
@@ -431,7 +423,7 @@ pub async fn audio_volume(
     let state = state.inner().clone();
     blocking(move || volume(&state, &kind, level, mute, expected.as_deref())).await
 }
-/// The window's look at both kinds of device (audio_levels_now).
+/// The window's look at the levels of both kinds of device (audio_levels_now).
 #[tauri::command]
 pub async fn audio_levels(meters: bool, state: State<'_, AppState>) -> Result<AudioLevels, String> {
     let state = state.inner().clone();
@@ -501,7 +493,7 @@ mod tests {
     #[test]
     fn device_lists_differ_by_what_they_name_not_by_order() {
         use crate::audio::{devices_differ, Device};
-        let d = |id: &str, name: &str, kind: &str| Device { id: id.into(), name: name.into(), kind: kind.into() };
+        let d = |id: &str, name: &str, kind: &str| Device { id: id.into(), name: name.into(), kind: kind.into(), default: false };
         let a = vec![d("{m1}", "Mic", "microphone"), d("{s1}", "Speaker", "speaker")];
         let b = vec![d("{s1}", "Speaker", "speaker"), d("{m1}", "Mic", "microphone")];
         assert!(!devices_differ(&a, &b), "the same devices in another order are the same lists");
