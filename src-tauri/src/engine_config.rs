@@ -46,6 +46,8 @@ pub struct AudioEndpoints {
 pub struct Prepared {
     pub plan: StartPlan,
     pub address: String,
+    /// The machine's IPv4 addresses at the start (phone_message.rs, Ready).
+    pub addresses: Vec<String>,
     pub notes: Vec<String>,
 }
 /// Which endpoints the engine got, by name and id, and when a saved one was
@@ -180,14 +182,12 @@ impl Services {
                 conn.keepalive_interval
             ));
         }
+        let adapters = crate::native::adapters();
         if !adapter.is_empty() {
-            let label = crate::native::adapters()
-                .into_iter()
-                .find(|a| a.name.eq_ignore_ascii_case(&adapter))
-                .map(|a| a.label)
-                .unwrap_or_default();
+            let label = adapters.iter().find(|a| a.name.eq_ignore_ascii_case(&adapter)).map(|a| a.label.clone()).unwrap_or_default();
             notes.push(format!("ksip: adapter {label} {adapter} {address}"));
         }
+        let addresses = crate::native::ipv4_addresses(adapters);
         let yes_no = |flag: bool| if flag { "yes" } else { "no" };
         // One line per setting, so that a value cannot land under the wrong name.
         let mut config = String::new();
@@ -323,6 +323,7 @@ impl Services {
                 control_secret: control_secret()?,
             },
             address,
+            addresses,
             notes,
         })
     }

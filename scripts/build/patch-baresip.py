@@ -14,7 +14,18 @@
 #   baresip/src/stream.c          the SDP says where RTCP is (a=rtcp, RFC
 #                                 3605) when it is not on the port next to
 #                                 RTP, which only the system-picked ports
-#                                 leave possible.
+#                                 leave possible. And, with net_interface
+#                                 set, the RTP socket is bound to that
+#                                 interface's address, not to every
+#                                 interface: the RTP then leaves from the
+#                                 address the SDP names (RFC 4961), not from
+#                                 whichever interface the routing table
+#                                 prefers.
+#   baresip/src/ua.c              an outgoing call with net_interface set,
+#                                 when the routing table prefers another
+#                                 interface, goes from the address the
+#                                 registration goes from (the interface's)
+#                                 instead of being refused ("no laddr").
 #
 # Building and embedding (no change to what goes on the wire):
 #   re/cmake/re-config.cmake      empty the OpenSSL cache variables when neither
@@ -170,7 +181,7 @@ text = text.replace(listen, '''\t\tif (!min_port && !max_port)
 rtp.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
-restore("baresip", baresip, ["src/main.c", "src/stream.c", "CMakeLists.txt"])
+restore("baresip", baresip, ["src/main.c", "src/stream.c", "src/ua.c", "CMakeLists.txt"])
 
 # Build: baresip's main() parses its options with getopt, which MSVC lacks.
 # The engine is only ever started by the app as "baresip -f <profile>", so
@@ -215,7 +226,58 @@ text = text.replace(anchor, """	/* KSIP: RFC 3605, when RTCP is not on the port 
 	}
 
 """ + anchor)
+# On the wire: with net_interface set, the SIP transports and the SDP's
+# address are the interface's, but the RTP socket listened on every
+# interface, and its packets left by whichever interface the routing table
+# preferred: another one, with another source address, when a wired and a
+# wireless interface share a LAN. A PBX that matches the source against the
+# SDP then hears nothing, and one that follows the source moves the audio
+# onto the interface not chosen. Bound to the interface's address, the RTP
+# leaves from the address the SDP names (RFC 4961). Without net_interface
+# nothing changes: every interface, as baresip has it.
+any_address = "\t/* we listen on all interfaces */\n\tsa_init(&laddr, af);\n"
+if text.count(any_address) != 1:
+    raise SystemExit("patch-baresip: stream_sock_alloc in stream.c has changed")
+text = text.replace(any_address, """\t/* we listen on all interfaces; or, with net_interface set, on that
+\t * interface's address alone, so that the RTP leaves from the address
+\t * the SDP names (KSIP) */
+\tsa_init(&laddr, af);
+\tif (str_isset(conf_config()->net.ifname)) {
+\t\tconst struct sa *ifaddr = net_laddr_af(baresip_network(), af);
+\t\tif (ifaddr && sa_isset(ifaddr, SA_ADDR))
+\t\t\tsa_cpy(&laddr, ifaddr);
+\t}
+""")
 stream.write_text(text)
+
+# On the wire: with net_interface set, an outgoing call is made from that
+# interface's address. baresip picks a call's local address by the routing
+# table's source address toward the peer and refuses the call ("no laddr")
+# when that address is not the interface's: a wired and a wireless interface
+# on one LAN, with Windows preferring the wireless one, made every call fail
+# while the registration (libre falls back to the transport it has) went
+# through. The address the registration goes from is taken instead, as an
+# older baresip (the one tSIP builds on) always did: the SIP, its SDP and the
+# RTP (bound above) then all leave by the chosen interface, which Windows'
+# strong host model sends them by. With the routing table agreeing, or no
+# net_interface, nothing changes.
+ua = baresip / "src/ua.c"
+text = ua.read_text()
+no_laddr = """\t\tladdr = net_laddr_for(net, &ua->dst);
+\t\tif (!sa_isset(laddr, SA_ADDR)) {
+\t\t\twarning("ua: no laddr for %j\\n", &ua->dst);
+"""
+if text.count(no_laddr) != 1:
+    raise SystemExit("patch-baresip: ua_call_alloc in ua.c has changed")
+text = text.replace(no_laddr, """\t\tladdr = net_laddr_for(net, &ua->dst);
+\t\t/* KSIP: with net_interface set and the routing table preferring
+\t\t * another interface, the address the registration goes from */
+\t\tif (!sa_isset(laddr, SA_ADDR) && ua->acc->regint)
+\t\t\tladdr = ua_regladdr(ua);
+\t\tif (!sa_isset(laddr, SA_ADDR)) {
+\t\t\twarning("ua: no laddr for %j\\n", &ua->dst);
+""")
+ua.write_text(text)
 
 # Embedding: the KSIP modules are built apart from baresip, with clang-cl,
 # into one archive (src-native/CMakeLists.txt, native.ps1). baresip gets a

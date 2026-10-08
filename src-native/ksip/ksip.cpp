@@ -142,6 +142,45 @@ int audio_devices(re_printf *pf, void *arg) {
     warning("ksip: the calls that are up could not be moved onto the devices (%m)\n", err);
     return re_hprintf(pf, "{}");
 }
+// The app's word that the machine's addresses changed while no adapter is
+// chosen (ksip_net_reset): the local addresses are read again, the SIP
+// transports bound on them anew and the registration redone, and a call
+// that is up is told the new address (a re-INVITE) when the route to its
+// peer leaves from another one now, as baresip's own rule has it. The RTP
+// sockets listen on every interface and stay as they are. The list is
+// rebuilt the way baresip builds it at its start (net.c, add_laddr_filter):
+// the filter keeps out the loopback, link-local and disabled families.
+// The command fails when the transports could not be bound (an address
+// still held by a transaction in flight, with fixed ports) or a call could
+// not be told (no way to its peer at the moment); baresip reports the two
+// as one, and the app tries again after its wait. A registration that
+// cannot be sent (the way to the registrar gone with the address, as when
+// a VPN drops) is the network's state, said in the log and shown by the
+// registration events, and not a failure of the command.
+bool add_local_address(const char *ifname, const struct sa *sa, void *arg) {
+    auto *net = static_cast<struct network *>(arg);
+    if (net_ifaddr_filter(net, ifname, sa)) net_add_address_ifname(net, sa, ifname);
+    return false;
+}
+int net_reset(re_printf *pf, void *) {
+    struct network *net = baresip_network();
+    if (!net) return ENOENT;
+    net_flush_addresses(net);
+    net_if_apply(add_local_address, net);
+    const int err = uag_reset_transp(false, true);
+    if (err) {
+        warning("ksip: binding the SIP transports anew, or telling a call its new address, failed (%m)\n", err);
+        return err;
+    }
+    info("ksip: the local addresses were read again and the SIP transports are bound anew\n");
+    for (const le *l = list_head(uag_list()); l; l = l->next) {
+        auto *ua = static_cast<struct ua *>(l->data);
+        if (!account_regint(ua_account(ua))) continue;
+        if (const int sent = ua_register(ua))
+            info("ksip: the registration could not be sent (%m); it is tried again when the addresses next change\n", sent);
+    }
+    return re_hprintf(pf, "Network reset\n");
+}
 const cmd commands[] = {
     {"ksip_login", 0, 0, "Load Windows SIP credential and register", sip_account::login},
     {"ksip_state", 0, 0, "Get account and per-call state", state},
@@ -150,6 +189,7 @@ const cmd commands[] = {
     {"ksip_shutdown", 0, 0, "Release KSIP subscriptions before quit", subscriptions::shutdown},
     {"ksip_audio_devices", 0, CMD_PRM, "Use these microphone and speaker endpoint ids, for the calls that are up too", audio_devices},
     {"ksip_detail_log", 0, CMD_PRM, "Turn the detail log on or off while running", detail_log},
+    {"ksip_net_reset", 0, 0, "Read the local addresses again, bind the SIP transports anew and register; a call that is up follows", net_reset},
 };
 int init() {
     sip_account::init();

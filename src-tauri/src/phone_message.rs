@@ -59,6 +59,10 @@ pub enum Command {
     /// Windows said its audio devices changed (audio.rs, watch_devices):
     /// the list is read again on a worker, and what differs follows.
     DevicesChanged,
+    /// Windows said an IPv4 address came or went (native.rs,
+    /// watch_addresses): the machine's addresses are read again on a
+    /// worker, and what differs is acted on (phone_actor.rs, network_seen).
+    NetworkChanged,
     /// The window's look at the microphone's volume found Windows' mute of
     /// its endpoint so: the engine is told (ksip_audio_mute), so that the
     /// calls send silence while it is muted.
@@ -115,6 +119,9 @@ pub enum LinkBody {
 pub struct Ready {
     pub link: EngineLink,
     pub address: String,
+    /// The machine's IPv4 addresses at the start, the engine's SIP
+    /// transports being bound on all of them when no adapter is chosen.
+    pub addresses: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -137,11 +144,13 @@ pub enum Work {
     Stopped(StopOutcome),
     /// The audio devices were read again.
     Devices(Result<Vec<Device>, String>),
-    /// The chosen adapter's address, as it is now; None when it has none.
+    /// The machine's IPv4 addresses as they are now: the chosen adapter's
+    /// (named as chosen, empty when none is) and every adapter's, sorted.
     /// Nobody waits for this one: the actor looks at it as it comes.
     Address {
         adapter: String,
-        address: Option<String>,
+        adapter_addresses: Vec<String>,
+        all: Vec<String>,
     },
     /// The echo calibration has finished.
     Calibrated(Result<Calibration, String>),

@@ -251,7 +251,11 @@ pub fn open_url(url: &str) -> Result<(), String> {
 pub struct Adapter {
     pub name: String,
     pub label: String,
+    /// The first ordinary IPv4 address, the one the engine binds; empty
+    /// while the adapter has none.
     pub address: String,
+    /// Every ordinary IPv4 address, best first as Windows lists them.
+    pub addresses: Vec<String>,
     pub up: bool,
 }
 
@@ -304,32 +308,31 @@ pub fn adapters() -> Vec<Adapter> {
                 if name.is_empty() {
                     continue;
                 }
+                // Every ordinary IPv4 the adapter holds, best first as Windows
+                // lists them; an automatic 169.254 address means the adapter
+                // never got one, and is left out. So is one Windows does not
+                // count as preferred: with the cable out, the DHCP address
+                // stays on the adapter as deprecated, and nothing can be
+                // sent from it until the link is back.
+                let mut addresses = Vec::new();
+                let mut unicast = adapter.FirstUnicastAddress;
+                while !unicast.is_null() {
+                    let socket = (*unicast).Address.lpSockaddr;
+                    let preferred = (*unicast).DadState == windows_sys::Win32::Networking::WinSock::IpDadStatePreferred;
+                    if preferred && !socket.is_null() && (*socket).sa_family == AF_INET {
+                        let inet = &*(socket as *const SOCKADDR_IN);
+                        let octets = inet.sin_addr.S_un.S_addr.to_ne_bytes();
+                        if octets[0..2] != [169, 254] {
+                            addresses.push(format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]));
+                        }
+                    }
+                    unicast = (*unicast).Next;
+                }
                 found.push(Adapter {
                     name,
                     label: crate::storage::read_wide(adapter.FriendlyName),
-                    address: {
-                        // The first ordinary IPv4 the adapter holds. Windows lists
-                        // them best first, and an automatic 169.254 address means
-                        // the adapter never got one.
-                        let mut unicast = adapter.FirstUnicastAddress;
-                        let mut address = String::new();
-                        while !unicast.is_null() {
-                            let socket = (*unicast).Address.lpSockaddr;
-                            if !socket.is_null() && (*socket).sa_family == AF_INET {
-                                let inet = &*(socket as *const SOCKADDR_IN);
-                                let octets = inet.sin_addr.S_un.S_addr.to_ne_bytes();
-                                if octets[0..2] != [169, 254] {
-                                    address = format!(
-                                        "{}.{}.{}.{}",
-                                        octets[0], octets[1], octets[2], octets[3]
-                                    );
-                                    break;
-                                }
-                            }
-                            unicast = (*unicast).Next;
-                        }
-                        address
-                    },
+                    address: addresses.first().cloned().unwrap_or_default(),
+                    addresses,
                     up: adapter.OperStatus == OPER_STATUS_UP,
                 });
             }
@@ -349,6 +352,99 @@ pub fn adapter_address(name: &str) -> Result<String, String> {
         return Err(message("ADAPTER_NO_ADDRESS"));
     }
     Ok(adapter.address)
+}
+/// Every ordinary IPv4 address the machine holds, on any adapter but the
+/// loopback, sorted: what the engine's SIP transports are bound to when no
+/// adapter is chosen, to tell a change by (phone_actor.rs, network_seen).
+pub fn ipv4_addresses(adapters: Vec<Adapter>) -> Vec<String> {
+    let mut all: Vec<String> = adapters.into_iter().flat_map(|a| a.addresses).collect();
+    all.sort();
+    all.dedup();
+    all
+}
+/// Windows' word that an IPv4 address came or went on any adapter, or
+/// that an interface changed (its link, with the address kept on it), as
+/// NotifyUnicastIpAddressChange and NotifyIpInterfaceChange give it on
+/// threads of Windows' own. `changed` is called for every notice and
+/// decides nothing: the phone reads the addresses again and compares
+/// (phone_actor.rs, look_at_network). Dropping the watch cancels the
+/// registrations, which return once no notice is in flight, and frees the
+/// closure after.
+pub struct AddressWatch {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    interface_handle: windows_sys::Win32::Foundation::HANDLE,
+    changed: *mut Box<dyn Fn() + Send + Sync>,
+}
+// SAFETY: the handle and the pointer are touched only by Drop, on whichever
+// thread drops the watch; Windows calls the closure from its own threads,
+// which the closure is Send + Sync for.
+unsafe impl Send for AddressWatch {}
+impl Drop for AddressWatch {
+    fn drop(&mut self) {
+        // SAFETY: the handle is the one the registration gave, cancelled
+        // once; the cancel returns only when no callback still runs, so the
+        // closure, which the registration was given, is freed after its
+        // last call.
+        unsafe {
+            windows_sys::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(self.handle);
+            windows_sys::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(self.interface_handle);
+            drop(Box::from_raw(self.changed));
+        }
+    }
+}
+unsafe extern "system" fn address_changed(
+    context: *const std::ffi::c_void,
+    _row: *const windows_sys::Win32::NetworkManagement::IpHelper::MIB_UNICASTIPADDRESS_ROW,
+    _kind: windows_sys::Win32::NetworkManagement::IpHelper::MIB_NOTIFICATION_TYPE,
+) {
+    // SAFETY: the context is the Box the registration was given, alive
+    // until the registration is cancelled (AddressWatch's drop).
+    let changed = unsafe { &*(context as *const Box<dyn Fn() + Send + Sync>) };
+    changed();
+}
+unsafe extern "system" fn interface_changed(
+    context: *const std::ffi::c_void,
+    _row: *const windows_sys::Win32::NetworkManagement::IpHelper::MIB_IPINTERFACE_ROW,
+    _kind: windows_sys::Win32::NetworkManagement::IpHelper::MIB_NOTIFICATION_TYPE,
+) {
+    // SAFETY: as for address_changed; the same Box serves both registrations.
+    let changed = unsafe { &*(context as *const Box<dyn Fn() + Send + Sync>) };
+    changed();
+}
+/// Registers for Windows' notices of IPv4 addresses coming and going and
+/// of interfaces changing; `changed` is called for each. Returns with why
+/// it could not be made.
+pub fn watch_addresses(changed: impl Fn() + Send + Sync + 'static) -> Result<AddressWatch, String> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{CancelMibChangeNotify2, NotifyIpInterfaceChange, NotifyUnicastIpAddressChange};
+    let changed: *mut Box<dyn Fn() + Send + Sync> = Box::into_raw(Box::new(Box::new(changed)));
+    let mut handle: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+    let mut interface_handle: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+    // SAFETY: the callbacks and their context outlive the registrations:
+    // the watch's drop cancels both before the context is freed, and a
+    // registration that failed is cancelled here before the Box goes.
+    let result = unsafe {
+        let family = windows_sys::Win32::Networking::WinSock::AF_INET;
+        let addresses = NotifyUnicastIpAddressChange(family, Some(address_changed), changed.cast(), false, &mut handle);
+        if addresses != 0 {
+            Err(format!("NotifyUnicastIpAddressChange failed ({addresses})"))
+        } else {
+            let interfaces = NotifyIpInterfaceChange(family, Some(interface_changed), changed.cast(), false, &mut interface_handle);
+            if interfaces != 0 {
+                CancelMibChangeNotify2(handle);
+                Err(format!("NotifyIpInterfaceChange failed ({interfaces})"))
+            } else {
+                Ok(())
+            }
+        }
+    };
+    if let Err(e) = result {
+        // SAFETY: nothing is registered any more; the Box is this function's to free.
+        unsafe {
+            drop(Box::from_raw(changed));
+        }
+        return Err(e);
+    }
+    Ok(AddressWatch { handle, interface_handle, changed })
 }
 
 /// A null-terminated 8-bit string, as text; empty for a null pointer.

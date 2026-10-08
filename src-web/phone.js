@@ -17,6 +17,10 @@ import {kinds, volumes} from './audio.js';
 // The outcome is told apart by its count as well as its words, so the same
 // outcome set again (back to the held call, twice) shows again.
 const NOTICE_MS=5000;
+// The two notices that describe a state still going on (an address lost or
+// changed, waited for or acted on): shown until the phone answers them with
+// another notice, instead of for NOTICE_MS.
+const STANDING=['NETWORK_ADDRESS_LOST','NETWORK_ADDRESSES_CHANGED'];
 let noticeKey='',noticeSince=0,bannerText='',bannerSince=0;
 
 // The caller's name, when the call came with one, in front of the number.
@@ -110,7 +114,7 @@ export function render({clearNotices=false}={}){
   renderFooter();
   const banner=t(error)||t(state.error)||'';
   if(banner!==bannerText){bannerText=banner;bannerSince=Date.now();}
-  const showBanner=!!banner&&Date.now()-bannerSince<NOTICE_MS;
+  const showBanner=!!banner&&(STANDING.includes(state.error)||Date.now()-bannerSince<NOTICE_MS);
   $('error').textContent=showBanner?banner:'';$('error').hidden=!showBanner;
   $('call-history').hidden=activePanel!=='history';$('logs').hidden=activePanel!=='logs';
   $('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');
