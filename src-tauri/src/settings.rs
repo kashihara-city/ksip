@@ -235,9 +235,12 @@ impl Default for Settings {
             sound_busy: String::new(),
             sound_notfound: String::new(),
             sound_error: String::new(),
-            transport: String::new(),
+            // Encrypted unless someone chooses otherwise: TLS for the
+            // signalling and SRTP with the keys in it (SDES), which every PBX
+            // that offers encryption takes. A plain PBX needs both set by hand.
+            transport: "tls".into(),
             ca_file: String::new(),
-            media_encryption: String::new(),
+            media_encryption: "sdes".into(),
             codecs: String::new(),
             dtmf_mode: "rtp".into(),
         }
@@ -429,10 +432,10 @@ impl Settings {
         r.number("microphone_gain", &mut s.microphone_gain);
         r.number("speaker_gain", &mut s.speaker_gain);
         r.flag("auto_record", &mut s.auto_record);
-        r.text("transport", &mut s.transport);
+        r.text_kept("transport", &mut s.transport);
         s.transport = s.transport.to_ascii_lowercase();
         r.text("ca_file", &mut s.ca_file);
-        r.text("media_encryption", &mut s.media_encryption);
+        r.text_kept("media_encryption", &mut s.media_encryption);
         s.media_encryption = s.media_encryption.to_ascii_lowercase();
         r.text("codecs", &mut s.codecs);
         r.text("dtmf_mode", &mut s.dtmf_mode);
@@ -926,6 +929,17 @@ impl<F: Fn(&str) -> Result<Option<StoredValue>, String>> StoredReader<F> {
             None => {}
         }
     }
+    /// A text whose emptiness is a choice of its own (no media encryption,
+    /// the historic UDP): a stored empty text is taken as it is, and only a
+    /// value that is not there leaves the default, which is encrypted.
+    fn text_kept(&mut self, name: &str, into: &mut String) {
+        match (self.read)(name) {
+            Ok(Some(StoredValue::Text(text))) => *into = text.trim().to_string(),
+            Ok(Some(StoredValue::Number(number))) => *into = number.to_string(),
+            Ok(None) => {}
+            Err(_) => self.unreadable.push(name.to_string()),
+        }
+    }
     fn number(&mut self, name: &str, into: &mut u16) {
         let read = match self.value(name) {
             Some(StoredValue::Number(number)) => u16::try_from(number).ok(),
@@ -1358,6 +1372,18 @@ mod tests {
         assert!(validate(&Settings::default()).is_ok());
     }
     #[test]
+    fn a_stored_empty_transport_or_encryption_is_that_choice_and_none_stored_is_encrypted() {
+        let read = |values: &[(&str, StoredValue)]| {
+            let values: Vec<(String, StoredValue)> = values.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+            Settings::read_stored(move |key| Ok(values.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))).0
+        };
+        let s = read(&[]);
+        assert_eq!((s.transport.as_str(), s.media_encryption.as_str()), ("tls", "sdes"), "nothing stored: encrypted");
+        let s = read(&[("transport", StoredValue::Text(String::new())), ("media_encryption", StoredValue::Text(" ".into()))]);
+        assert_eq!((s.transport.as_str(), s.media_encryption.as_str()), ("", ""), "stored empty: the historic UDP and no encryption, as before");
+        assert_eq!((s.transport(), s.media_encryption()), (Transport::Udp, MediaEncryption::None));
+    }
+    #[test]
     fn transports_and_encryptions_are_read_from_the_settings_text() {
         assert_eq!(Transport::parse(""), Some(Transport::Udp));
         assert_eq!(Transport::parse(" TLS "), Some(Transport::Tls));
@@ -1545,7 +1571,7 @@ mod tests {
             s
         };
         for (what, changed) in [
-            ("transport", with(&|s| s.transport = "tls".into())),
+            ("transport", with(&|s| s.transport = "udp".into())),
             ("codecs", with(&|s| s.codecs = "PCMU".into())),
             ("sip_port", with(&|s| s.sip_port = 5070)),
             ("aec", with(&|s| s.aec = false)),
@@ -1668,7 +1694,7 @@ mod tests {
             }
             app.store = guard.store();
             let back = app.settings()?;
-            assert!(!back.aec && back.transport.is_empty() && back.language == "ja");
+            assert!(!back.aec && back.transport == Settings::default().transport && back.language == "ja");
             assert_eq!((back.buttons[0].kind.as_str(), back.buttons[0].title.as_str()), ("", "mine"));
             assert!(app.store.policy.fixed().is_empty());
             Ok(())
@@ -1686,14 +1712,14 @@ mod tests {
         let result = (|| -> Result<(), String> {
             let person = guard.store();
             person.set_test_policy("server", Some(&Text("pbx.example".into())));
-            person.set_test_policy("port", Some(&Number(5061)));
+            person.set_test_policy("port", Some(&Number(5062)));
             app.store = guard.store();
-            let account = Account { server: "pbx.example".into(), port: 5061, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
+            let account = Account { server: "pbx.example".into(), port: 5062, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
             app.persist_configuration(&app.settings()?, &account)?;
             assert_eq!(app.store.read_value("server")?, None, "the policy's server is not copied into the person's values");
             assert_eq!(app.store.read_value("port")?, None);
             assert_eq!(app.store.read_text("extension"), "1001");
-            assert_eq!(app.store.read_account()?.expect("account").port, 5061, "a connect uses the policy's");
+            assert_eq!(app.store.read_account()?.expect("account").port, 5062, "a connect uses the policy's");
             let elsewhere = Account { server: "192.0.2.10".into(), ..account.clone() };
             let e = app.persist_configuration(&app.settings()?, &elsewhere).unwrap_err();
             assert!(e.contains("SETTINGS_MANAGED") && e.contains("server") && !e.contains("port"), "{e}");

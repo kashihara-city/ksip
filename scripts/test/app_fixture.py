@@ -23,6 +23,9 @@ if sys.argv[1]=='setup':
     if secure:
         policy+=[('transport','tls'),('media_encryption','sdes'),
                  ('ca_file',str(ca_certificate()))]
+    else:
+        # KSIP's default is TLS with SDES; the plain profile says so.
+        policy+=[('transport','udp'),('media_encryption','')]
     # 'setup buttons' defines custom buttons: a speed dial to the peer, the lab's
     # first park slot, transfers to the playback number, a link, a panel button,
     # do not disturb and voicemail; the numbers come from lab.json.

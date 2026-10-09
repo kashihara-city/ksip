@@ -28,7 +28,7 @@
 
 値は HKCU\Software\Policies\KashiharaCity\ksip の同名の値に書きます。KSIP は起動時にこの値を読むため、変更は KSIP を起動し直すと反映されます。</string>
       <string id="port">SIPサーバーのポート</string>
-      <string id="port_Help">SIPサーバーのポート。1〜65535。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 5060）
+      <string id="port_Help">SIPサーバーのポート。1〜65535。無効にすると値を消し、未構成と同じく利用者の値に戻ります。（既定: 5061）
 
 ポリシーで決めた設定は、KSIP の設定画面やボタン編集で変えられず、「管理者が設定」と示されます。未構成にすると、利用者が自分で保存した値に戻ります。
 
@@ -1008,13 +1008,13 @@
         </textBox>
       </presentation>
       <presentation id="port">
-        <decimalTextBox refId="port" defaultValue="5060" spinStep="1">ポート</decimalTextBox>
+        <decimalTextBox refId="port" defaultValue="5061" spinStep="1">ポート</decimalTextBox>
       </presentation>
       <presentation id="transport">
-        <dropdownList refId="transport" noSort="true" defaultItem="0">SIPの信号の運び方</dropdownList>
+        <dropdownList refId="transport" noSort="true" defaultItem="2">SIPの信号の運び方</dropdownList>
       </presentation>
       <presentation id="media_encryption">
-        <dropdownList refId="media_encryption" noSort="true" defaultItem="0">音声の暗号化</dropdownList>
+        <dropdownList refId="media_encryption" noSort="true" defaultItem="1">音声の暗号化</dropdownList>
       </presentation>
       <presentation id="ca_file">
         <textBox refId="ca_file">

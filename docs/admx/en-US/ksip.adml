@@ -28,7 +28,7 @@ A setting a policy decides cannot be changed in the KSIP settings dialog or the 
 
 The value is written to the value of the same name under HKCU\Software\Policies\KashiharaCity\ksip. KSIP reads it when it starts, so a change takes effect when KSIP starts again.</string>
       <string id="port">SIP server port</string>
-      <string id="port_Help">Port of the SIP server, 1 to 65535. Disabled deletes the value and, as not configured, returns to the user's own. (default: 5060)
+      <string id="port_Help">Port of the SIP server, 1 to 65535. Disabled deletes the value and, as not configured, returns to the user's own. (default: 5061)
 
 A setting a policy decides cannot be changed in the KSIP settings dialog or the button editing, and is shown as set by the administrator. Not configured returns to what the user saved.
 
@@ -1008,13 +1008,13 @@ The value is written to the value of the same name under HKCU\Software\Policies\
         </textBox>
       </presentation>
       <presentation id="port">
-        <decimalTextBox refId="port" defaultValue="5060" spinStep="1">Port</decimalTextBox>
+        <decimalTextBox refId="port" defaultValue="5061" spinStep="1">Port</decimalTextBox>
       </presentation>
       <presentation id="transport">
-        <dropdownList refId="transport" noSort="true" defaultItem="0">SIP transport</dropdownList>
+        <dropdownList refId="transport" noSort="true" defaultItem="2">SIP transport</dropdownList>
       </presentation>
       <presentation id="media_encryption">
-        <dropdownList refId="media_encryption" noSort="true" defaultItem="0">Media encryption</dropdownList>
+        <dropdownList refId="media_encryption" noSort="true" defaultItem="1">Media encryption</dropdownList>
       </presentation>
       <presentation id="ca_file">
         <textBox refId="ca_file">

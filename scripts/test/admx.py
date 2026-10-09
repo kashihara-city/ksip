@@ -20,8 +20,6 @@ DEFAULT_EXCEPTIONS = {
     # fixes a port of KSIP's own, and the dialog offers the usual one to start.
     'sip_port', 'rtp_port',
 }
-# Values the template writes that mean the same as KSIP's default.
-SAME_MEANING = {('transport', 'udp'): ''}
 
 
 def problems(templates, defaults):
@@ -57,7 +55,7 @@ def problems(templates, defaults):
         elif v['kind'] == 'enum' and known:
             shown = v['items'][v['default']]
             here = setting(defaults, name)
-            check(SAME_MEANING.get((name, shown), shown) == here, f"{name}: the dialog starts at '{shown}', KSIP's default is '{here}'")
+            check(shown == here, f"{name}: the dialog starts at '{shown}', KSIP's default is '{here}'")
         if v['kind'] == 'decimal':
             check(v['min'] <= v['max'], f"{name}: the range {v['min']}..{v['max']} is a range")
     return out

@@ -15,7 +15,9 @@ NUMBER_FOR_KIND = {'': '', 'transfer': '9001', 'dial': '1001', 'speed': '06-1234
                    'open': 'https://pbx.example/extensions', 'dnd': '', 'mwi': '*97'}
 # Choices that KSIP takes only together with another value: SDES and OSRTP
 # carry their keys in the signalling, which has to be TLS then.
-NEEDS = {('media_encryption', 'sdes'): {'transport': 'tls'}, ('media_encryption', 'osrtp'): {'transport': 'tls'}}
+# KSIP's default encryption is SDES, so a plain transport needs no encryption named.
+NEEDS = {('media_encryption', 'sdes'): {'transport': 'tls'}, ('media_encryption', 'osrtp'): {'transport': 'tls'},
+         ('transport', 'udp'): {'media_encryption': ''}, ('transport', 'tcp'): {'media_encryption': ''}}
 
 
 def sample(name, n=None):

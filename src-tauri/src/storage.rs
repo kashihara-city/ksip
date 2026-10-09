@@ -24,7 +24,7 @@ pub struct RawValue(winreg::RegValue<'static>);
 pub const ACCOUNT_VALUES: [&str; 3] = ["server", "port", "extension"];
 
 pub const DEFAULT_SERVER: &str = "127.0.0.1";
-pub const DEFAULT_PORT: u16 = 5060;
+pub const DEFAULT_PORT: u16 = 5061;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
