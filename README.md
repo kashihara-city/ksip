@@ -446,6 +446,7 @@ temp/w/・temp/d/     パス長を抑えたGoogle WebRTC・depot_tools
 - Rust/Cargo
 - Python 3.13
 - cargo-audit（`cargo install cargo-audit --locked`）
+- api.osv.devとapi.github.comへの到達性（`cargo audit` がRustSecのデータベースをGitHubから取ります。）
 
 ### ビルド手順
 
@@ -540,7 +541,7 @@ python -X utf8 scripts/test/sbom.py
 
 `test/settings-dialog.py` は、設定画面の実物の `src-web/settings.js` をページごと headless の Microsoft Edge（Windows 11 に入っているもの）で動かし、Tauri の呼び出しだけをテストが答えて、読み込んだファイルの値や保存済みの値が画面にそのとおり出て、保存用の値として別の値に変わらないことを確かめます。SDES・OSRTP と UDP・TCP の組み合わせになるファイルを断って画面を元のまま残すこと、一覧に無い選択肢を空にせず残すこと、小文字のコーデック名を画面の表記で入れること、コーデックを1つも選ばない保存をしないこと、などです。本体のビルドも対向も要らず、数秒で終わります。
 
-`test/supply-chain.py` はRustクレートの公開日とチェックサム、ネイティブ原本のハッシュとrevision、npm依存が無いことを検証し、続けて `cargo audit` で `Cargo.lock` のRustSec勧告を照会します。脆弱性が1件でもあれば失敗し、結果は `temp/reports/cargo-audit.json` に残します。unmaintained・unsoundの警告は記録だけして通します。
+`test/supply-chain.py` はRustクレートの公開日とチェックサム、ネイティブ原本のハッシュとrevision、npm依存が無いことを検証し、続けて `cargo audit` で `Cargo.lock` のRustSec勧告を照会します。脆弱性が1件でもあれば失敗し、結果は `temp/reports/cargo-audit.json` に残します。unmaintained・unsoundの警告は記録だけして通します。続けて、ネイティブ原本の固定コミットをOSVに照会し、tauri-appsの各リポジトリがGitHubに公開している勧告を `Cargo.lock` のcrate名と版で照合します（TauriはRustSecに勧告を出さないため）。該当があるか、勧告の版の範囲が機械的に読めなければ失敗し、結果は `temp/reports/repo-advisories.json` に残します。
 
 ### 開発用SIPサーバーが要るテスト
 

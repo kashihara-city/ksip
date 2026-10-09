@@ -171,6 +171,11 @@ jobs:
       - name: Check the sources before building
         shell: pwsh
         working-directory: ${{ env.KSIP_ROOT }}
+        env:
+          # supply-chain.py asks api.github.com for the tauri-apps repository advisories.
+          # The job token (the Actions app, not the pusher) lifts the unauthenticated
+          # limit the runners' shared addresses exhaust (60 an hour) to 1,000 per repository.
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           foreach ($script in "supply-chain", "no-secrets", "i18n", "line-endings") {
