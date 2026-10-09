@@ -950,16 +950,14 @@ impl Actor {
             }),
             Job::Reconnect => Box::pin(async move {
                 // Queued when the adapter lost the address the engine bound,
-                // or has one again after a start failed for its lack; by
-                // its turn the person may have unregistered, or the adapter
-                // may no longer be chosen. Then it is not done. A call that
-                // is up is not waited for: its sockets went with the
-                // address, and it cannot be saved.
+                // or has one again after a start failed for its lack; it
+                // waits its turn behind the flow under way, and by then the
+                // reason may be gone (reconnect_still_decided). Then it is
+                // not done. A call that is up is not waited for: its
+                // sockets went with the address, and it cannot be saved.
                 let still_wanted = {
                     let p = s.borrow();
-                    let adapter_failure = p.view.error == message("ADAPTER_NO_ADDRESS") || p.view.error == message("ADAPTER_NOT_FOUND");
-                    !p.closing && !p.view.unregistered_by_choice && (p.link.is_some() || adapter_failure)
-                        && !p.view.settings.network_adapter.trim().is_empty()
+                    p.reconnect_still_decided() && (p.link.is_some() || p.adapter_start_failed())
                 };
                 if !still_wanted {
                     return;
@@ -1621,7 +1619,33 @@ impl Phone {
             && !adapter.is_empty()
             && adapter == self.view.settings.network_adapter.trim()
             && !adapter_addresses.is_empty()
-            && (self.view.error == message("ADAPTER_NO_ADDRESS") || self.view.error == message("ADAPTER_NOT_FOUND"))
+            && self.adapter_start_failed()
+    }
+    /// The last start failed for the chosen adapter having no address, or
+    /// not being there.
+    fn adapter_start_failed(&self) -> bool {
+        self.view.error == message("ADAPTER_NO_ADDRESS") || self.view.error == message("ADAPTER_NOT_FOUND")
+    }
+    /// Whether a NetReset decided on (network_seen) is still to be made by
+    /// its turn: nobody unregistered on purpose since (the engine bound anew
+    /// registers again), no adapter is chosen now (its address is followed
+    /// by a restart instead), and the decision stands: a connect since read
+    /// the addresses afresh and dropped it, the engine being another one.
+    fn net_reset_still_decided(&self) -> bool {
+        !self.closing && !self.view.unregistered_by_choice && self.view.settings.network_adapter.trim().is_empty() && self.net_addresses_seen.is_some()
+    }
+    /// Whether a Reconnect decided on is still to be made by its turn:
+    /// nobody unregistered on purpose since, the adapter is chosen still,
+    /// and the reason holds: a start to make again for the adapter having
+    /// an address now, or the address the engine bound lost still. The
+    /// address back since (said so in the window) ends that reason, as does
+    /// a connect since, which bound anew; a wait begun since (lost again)
+    /// decides afresh when it ends.
+    fn reconnect_still_decided(&self) -> bool {
+        !self.closing
+            && !self.view.unregistered_by_choice
+            && !self.view.settings.network_adapter.trim().is_empty()
+            && (self.adapter_start_failed() || (self.address_lost && self.network_pending.is_none()))
     }
     /// How an address that went or changed was answered (it is back, the
     /// engine was restarted, the transports bound anew), said in the window
@@ -2125,7 +2149,9 @@ async fn tell_mute(s: &Shared) {
 /// after a settle, up to NETWORK_RETRIES times, and then restarted when no
 /// call is up (a restart would be refused for one).
 async fn net_reset(s: &Shared) {
-    if s.borrow().link.is_none() {
+    // Decided on earlier; by its turn the reason may be gone
+    // (net_reset_still_decided). Then it is not done.
+    if s.borrow().link.is_none() || !s.borrow().net_reset_still_decided() {
         return;
     }
     match request(s, "ksip_net_reset", "").await {
@@ -2165,6 +2191,10 @@ async fn net_reset(s: &Shared) {
             };
             s.borrow().services.log(LOG_APP, format!("ksip: the engine did not take the network reset ({e}){then}"));
             if again || in_call {
+                return;
+            }
+            // Not against an unregister made while the engine was asked.
+            if s.borrow().closing || s.borrow().view.unregistered_by_choice {
                 return;
             }
             if let Err(e) = connect(s).await {
@@ -3514,6 +3544,50 @@ mod tests {
         // Not taken: asked again after the settle, which finds them changed still.
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(p.network_seen("", &[], s(&["192.0.2.7", "198.51.100.2"])), NetworkAction::Reset, "asked again");
+    }
+    /// A reset or restart decided on waits its turn behind the flow under
+    /// way; by then its reason may be gone, and it is not made: the person
+    /// unregistered, an adapter was chosen, the address is back (said so),
+    /// or a connect since bound anew.
+    #[test]
+    fn a_reset_or_restart_decided_on_is_not_made_once_its_reason_is_gone() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // No adapter chosen: a reset decided on.
+        p.net_addresses = Some(s(&["192.0.2.5"]));
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset);
+        assert!(p.net_reset_still_decided(), "decided, nothing since");
+        p.view.unregistered_by_choice = true;
+        assert!(!p.net_reset_still_decided(), "unregistered since: bound anew, the engine would register again");
+        p.view.unregistered_by_choice = false;
+        p.view.settings.network_adapter = "{nic}".into();
+        assert!(!p.net_reset_still_decided(), "an adapter chosen since: its address is followed, not the machine's");
+        p.view.settings.network_adapter.clear();
+        p.net_addresses_seen = None;
+        assert!(!p.net_reset_still_decided(), "a connect since read the addresses afresh: the decision went with the old engine");
+        // An adapter chosen: a restart decided on, then the address is back.
+        p.view.settings.network_adapter = "{nic}".into();
+        p.bound = "192.0.2.5".into();
+        p.address_lost = true;
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Restart);
+        assert!(p.reconnect_still_decided(), "decided, nothing since");
+        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.5"]), vec![]), NetworkAction::Nothing, "the address back before the restart's turn");
+        assert_eq!(p.view.error, message("NETWORK_ADDRESS_BACK"));
+        assert!(!p.reconnect_still_decided(), "back: a call on it goes on, the engine is not restarted");
+        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Nothing, "lost again: a new wait");
+        assert!(!p.reconnect_still_decided(), "the wait decides afresh when it ends");
+        p.network_pending = None;
+        assert!(p.reconnect_still_decided());
+        p.view.unregistered_by_choice = true;
+        assert!(!p.reconnect_still_decided(), "unregistered since");
+        p.view.unregistered_by_choice = false;
+        p.address_lost = false;
+        assert!(!p.reconnect_still_decided(), "a connect since bound anew");
+        p.view.error = message("ADAPTER_NO_ADDRESS");
+        assert!(p.reconnect_still_decided(), "a start to make again stands on its own");
     }
     /// The microphone's mute the window read is kept for the engine, and
     /// told only while one runs and it differs from what that one was told.
