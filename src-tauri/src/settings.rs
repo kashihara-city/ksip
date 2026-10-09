@@ -1995,7 +1995,7 @@ mod tests {
         let mut app = Services::open().0;
         app.store = guard.store();
         let account = Account { server: "192.0.2.10".into(), port: 5060, extension: "1001".into(), auth_user: "1001".into(), password: "local-test-only".into() };
-        let binary = || RegValue { bytes: vec![1, 2, 3], vtype: REG_BINARY };
+        let binary = || RegValue { bytes: vec![1, 2, 3].into(), vtype: REG_BINARY };
         let put_binary = |store: &Store| {
             let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(&store.key).unwrap();
             key.set_raw_value("aec", &binary()).unwrap();
@@ -2092,7 +2092,7 @@ mod tests {
             {
                 use winreg::{enums::*, RegKey, RegValue};
                 let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(&store.key).unwrap();
-                key.set_raw_value("server", &RegValue { bytes: vec![1, 2], vtype: REG_BINARY }).unwrap();
+                key.set_raw_value("server", &RegValue { bytes: vec![1, 2].into(), vtype: REG_BINARY }).unwrap();
             }
             store.write_value("port", &StoredValue::Number(5060))?;
             let binary = export_settings(&store);

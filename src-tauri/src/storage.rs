@@ -19,7 +19,7 @@ pub enum StoredValue {
 /// A value exactly as the registry holds it, whatever its type (one the
 /// settings cannot read included): what a save backs up and a rollback puts
 /// back, byte for byte.
-pub struct RawValue(winreg::RegValue);
+pub struct RawValue(winreg::RegValue<'static>);
 /// The account's values in the registry; the credential holds the rest.
 pub const ACCOUNT_VALUES: [&str; 3] = ["server", "port", "extension"];
 

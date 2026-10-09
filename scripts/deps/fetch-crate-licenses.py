@@ -26,12 +26,12 @@ def main():
         repo=meta['repository'].rstrip('/').removesuffix('.git').removeprefix('https://github.com/')
         assert re.fullmatch(r'[\w.-]+/[\w.-]+',repo) and re.fullmatch('[a-f0-9]{40}',sha)
         ref=(repo,sha)
-        if key=='selectors-0.36.1':
+        if key=='selectors-0.38.0':
             # selectors contains MPL notices in source headers, but no copy of
             # the standard license text. Use the identical standard MPL-2.0
             # text from our locked cssparser dependency and ship full source.
-            data=(cache/'cssparser-0.36.0/LICENSE').read_bytes()
-            memo[ref]=[('LICENSE-MPL-2.0','crate://cssparser/0.36.0/LICENSE',data)]
+            data=(cache/'cssparser-0.37.0/LICENSE').read_bytes()
+            memo[ref]=[('LICENSE-MPL-2.0','crate://cssparser/0.37.0/LICENSE',data)]
         if ref not in memo:
             entries=json.loads(read(f'https://api.github.com/repos/{repo}/contents/?ref={sha}'))
             memo[ref]=[(e['name'],e['download_url'],read(e['download_url'])) for e in entries if e['type']=='file' and is_notice(e['name'])]

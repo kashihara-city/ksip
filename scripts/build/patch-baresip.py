@@ -28,8 +28,6 @@
 #                                 instead of being refused ("no laddr").
 #
 # Building and embedding (no change to what goes on the wire):
-#   re/cmake/re-config.cmake      empty the OpenSSL cache variables when neither
-#                                 OpenSSL nor mbedTLS is used (LibreSSL is).
 #   baresip/src/main.c            take only "-f PROFILE_DIRECTORY" on the
 #                                 command line, since MSVC has no getopt.
 #   baresip/CMakeLists.txt        append the embedded entry point (baresip's
@@ -61,23 +59,7 @@ def restore(archive_name: str, base: Path, relative_paths: list[str]):
 
 
 re_base = ROOT / "temp/vendor/re"
-restore("re", re_base, ["cmake/re-config.cmake", "src/sipevent/subscribe.c", "src/rtp/rtp.c"])
-
-# Build: libre's CMake leaves the OpenSSL variables unset when TLS comes from
-# LibreSSL, and a later reference to them then fails.
-config = re_base / "cmake/re-config.cmake"
-text = config.read_text()
-anchor = "option(USE_UNIXSOCK"
-index = text.index(anchor)
-text = text[:index] + '''# KSIP: avoid unresolved optional TLS cache values.
-if(NOT USE_OPENSSL AND NOT USE_MBEDTLS)
-  set(OPENSSL_INCLUDE_DIR "")
-  set(OPENSSL_LIBRARIES "")
-  set(LIB_EAY_LIBRARY "")
-  set(SSL_EAY_LIBRARY "")
-endif()
-''' + text[index:]
-config.write_text(text)
+restore("re", re_base, ["src/sipevent/subscribe.c", "src/rtp/rtp.c"])
 
 # After an un-SUBSCRIBE is answered 2xx, libre keeps the subscription, and with
 # it a reference to the SIP stack, for up to ten seconds waiting for the

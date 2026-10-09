@@ -2,5 +2,5 @@
 # stable brings new Clippy lints and a different binary; a change here is a
 # deliberate upgrade, verified like any other dependency.
 [toolchain]
-channel = "1.97.1"
+channel = "1.99.0"
 components = ["clippy"]

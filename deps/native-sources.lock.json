@@ -1,21 +1,19 @@
 {
   "re": {
     "repository": "baresip/re",
-    "version": "v4.11.0",
-    "commit": "ceefe9ff499aa1bcfb6255aff1737434dd385322",
-    "source_date": "2026-08-24T11:03:29Z",
-    "published_at": "2026-08-25T07:27:53Z",
-    "url": "https://codeload.github.com/baresip/re/tar.gz/ceefe9ff499aa1bcfb6255aff1737434dd385322",
-    "sha256": "a74a96cddb0284261dcdb6ca7728dd1609549e576075fa192f289e1abf523faa"
+    "version": "v4.12.0",
+    "commit": "65555dad439de9d6a81b3ee6092b9c096585249b",
+    "source_date": "2026-09-30T17:40:28Z",
+    "url": "https://codeload.github.com/baresip/re/tar.gz/65555dad439de9d6a81b3ee6092b9c096585249b",
+    "sha256": "9498dbb559d9153440ab1e12e19f58ecff3df56a10155b9b3a9bbcc0476cf9da"
   },
   "baresip": {
     "repository": "baresip/baresip",
-    "version": "v4.11.0",
-    "commit": "3d30821f099925d24167f8a99e93ba4d1be98599",
-    "source_date": "2026-08-24T11:09:33Z",
-    "published_at": "2026-08-25T07:28:36Z",
-    "url": "https://codeload.github.com/baresip/baresip/tar.gz/3d30821f099925d24167f8a99e93ba4d1be98599",
-    "sha256": "148d0c743a71af19a436dba17c5d33a881e1c5e250ab100cf6b4729f0c7aa82c"
+    "version": "v4.12.0",
+    "commit": "9cfab81550acc4bd38d6580d79b45cc6eea65cd6",
+    "source_date": "2026-09-30T17:40:56Z",
+    "url": "https://codeload.github.com/baresip/baresip/tar.gz/9cfab81550acc4bd38d6580d79b45cc6eea65cd6",
+    "sha256": "b213c4bf3fe7085a044bcd36dd2f6cd5b7a5eafd75bd2ddefdea9564a8fe132c"
   },
   "opus": {
     "repository": "xiph/opus",

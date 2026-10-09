@@ -4,8 +4,8 @@ import datetime, hashlib, io, json, pathlib, tarfile, urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Nothing published in the last seven days is accepted, whenever this runs.
 CUTOFF = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
-SOURCES = [('re', 'baresip/re', 'v4.11.0'),
-           ('baresip', 'baresip/baresip', 'v4.11.0'),
+SOURCES = [('re', 'baresip/re', 'v4.12.0'),
+           ('baresip', 'baresip/baresip', 'v4.12.0'),
            # Audio codecs for baresip's opus and libg722 modules.
            ('opus', 'xiph/opus', 'v1.5.2'),
            ('libg722', 'sippy/libg722', 'v1.2.8')]
