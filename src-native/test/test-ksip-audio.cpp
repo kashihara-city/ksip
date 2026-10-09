@@ -791,15 +791,24 @@ void a_gap_in_the_far_end_leaves_this_side_in_place() {
     {
         auto rp = std::make_unique<recording_session::Recorder>(path.string(), 8000);
         std::vector<int16_t> far1(8000, 1000), near1(8000, -500), near2(8000, -600), far3(8000, 2000), near3(8000, -700);
+        // A second goes in as the engine gives it: 20 ms at a time, the far
+        // end's frame first. Pushed whole, the far end would be a slack
+        // ahead of this side between the two pushes, and the writer, which
+        // then goes on with silence for the side that is behind, could run
+        // in that moment and place this side late.
+        auto second = [&](const std::vector<int16_t> *far, const std::vector<int16_t> *near) {
+            for (size_t at = 0; at < 8000; at += 160) {
+                if (far) rp->push_far(far->data() + at, 160, 8000);
+                if (near) rp->push_near(near->data() + at, 160, 8000);
+            }
+        };
         // Second one: both sides. Second two: the far end stops, this side
         // goes on. Second three: both again.
-        rp->push_far(far1.data(), far1.size(), 8000);
-        rp->push_near(near1.data(), near1.size(), 8000);
+        second(&far1, &near1);
         settle();
-        rp->push_near(near2.data(), near2.size(), 8000);
+        second(nullptr, &near2);
         settle();
-        rp->push_far(far3.data(), far3.size(), 8000);
-        rp->push_near(near3.data(), near3.size(), 8000);
+        second(&far3, &near3);
         auto summary = rp->finish();
         check(!summary.failed && summary.dropped == 0 && summary.bytes == 24000 * 4, "three seconds of file, nothing dropped");
     }
