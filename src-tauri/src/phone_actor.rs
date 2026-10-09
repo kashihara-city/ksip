@@ -1560,6 +1560,15 @@ impl Phone {
             return NetworkAction::Nothing;
         }
         let changed = if chosen.is_empty() {
+            // A reset decided on (net_addresses_seen) is for the addresses
+            // it was decided on. Read otherwise before its turn (the old
+            // ones back, or others again), the decision is void: the
+            // engine binds whatever the machine has when asked, and the
+            // baseline must not become addresses it never had. The look
+            // that follows decides afresh.
+            if self.net_addresses_seen.as_ref().is_some_and(|seen| *seen != all) {
+                self.net_addresses_seen = None;
+            }
             !all.is_empty() && self.net_addresses.as_ref().is_some_and(|were| *were != all)
         } else {
             !adapter_addresses.contains(&self.bound)
@@ -3567,6 +3576,27 @@ mod tests {
         p.view.settings.network_adapter.clear();
         p.net_addresses_seen = None;
         assert!(!p.net_reset_still_decided(), "a connect since read the addresses afresh: the decision went with the old engine");
+        // The old addresses back before the reset's turn: the decision is
+        // void, the baseline stays, and the next change is followed anew.
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Nothing, "changed: the wait starts");
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset);
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.5"])), NetworkAction::Nothing, "back before the reset's turn");
+        assert!(p.view.error == message("NETWORK_ADDRESS_BACK") && !p.net_reset_still_decided() && p.net_addresses_seen.is_none(), "the reset is void");
+        assert_eq!(p.net_addresses.as_deref(), Some(&s(&["192.0.2.5"])[..]), "the baseline is what the engine has");
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Nothing, "changed again: a new wait, not the old decision");
+        assert!(p.network_pending.is_some() && !p.net_reset_still_decided());
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset, "decided afresh when the wait ends");
+        assert_eq!(p.net_addresses_seen.as_deref(), Some(&s(&["192.0.2.7"])[..]));
+        // Other addresses again before the turn: void as well; the wait
+        // that starts decides on them.
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.8"])), NetworkAction::Nothing, "others again: a new wait");
+        assert!(p.net_addresses_seen.is_none() && p.network_pending.is_some());
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_seen("", &[], s(&["192.0.2.8"])), NetworkAction::Reset);
+        assert_eq!(p.net_addresses_seen.as_deref(), Some(&s(&["192.0.2.8"])[..]), "decided on what is there now");
+        p.net_addresses_seen = None;
         // An adapter chosen: a restart decided on, then the address is back.
         p.view.settings.network_adapter = "{nic}".into();
         p.bound = "192.0.2.5".into();
