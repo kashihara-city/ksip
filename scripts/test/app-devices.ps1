@@ -55,6 +55,25 @@ try {
     while(((Get-FallbackNotice) -match '既定のデバイスを使用中') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 300}
     if((Get-FallbackNotice) -match '既定のデバイスを使用中'){throw 'The fallback notice stayed after the refresh'}
     'PASS: 設定し直したマイクは「音声デバイスを更新」で、起動し直さずにエンジンへ渡る'
+    # In a call the same button is the way back when a device notice was
+    # missed: it must be enabled, the engine is handed the devices without a
+    # restart, and the call goes on.
+    $playback=(Get-KsipLab).numbers.playback
+    (Value-Id 'target').SetValue($playback)
+    Click-Id 'dial';Wait-Class 'line-1' 'call-established'
+    $before=@(Get-Content $appLog -ErrorAction SilentlyContinue).Count
+    Click-Id 'refresh-devices'
+    $end=[DateTime]::UtcNow.AddSeconds(25)
+    do {
+        Start-Sleep -Milliseconds 300
+        $since=@(Get-Content $appLog -ErrorAction SilentlyContinue | Select-Object -Skip $before)
+        $taken=$since | Where-Object { $_ -match 'ksip: microphone ' -and $_ -match [regex]::Escape($real.id) }
+    } while(!$taken -and [DateTime]::UtcNow -lt $end)
+    if(!$taken){throw 'Refresh in a call did not hand the saved microphone to the engine'}
+    if($since | Where-Object { $_ -match 'ua: stop all' }){throw 'Refresh in a call restarted the engine'}
+    Wait-Class 'line-1' 'call-established'
+    Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
+    'PASS: 通話中でも「音声デバイスを更新」が押せ、エンジンを起動し直さずに機器を渡し、通話は続く'
     @{version=$version;fallbackWithoutOverwrite=$true;refreshRestoresSavedDevice=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-devices-v$version.json"
     'PASS: real KSIP audio device fallback and refresh'

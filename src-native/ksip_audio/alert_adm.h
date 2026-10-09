@@ -72,7 +72,10 @@ struct RenderAdm final : playback_session::Adm {
     }
     // The sound's handler is the render's own: letting go of it is stopping it.
     void detach_playout() override { stop_playout(); }
-    bool playout_running() override { return current != nullptr; }
+    // Running while the stream is up: one that ended on its own (the audio
+    // service restarted, a render call failed) is stopped, whoever holds it,
+    // so that the core's watch opens it again.
+    bool playout_running() override { return current != nullptr && !render.ended(); }
     void stop_playout() override {
         if (current) render.close();
         current = nullptr;

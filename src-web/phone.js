@@ -121,7 +121,9 @@ export function render({clearNotices=false}={}){
   $('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));
   renderLogs();
   for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind+'-mute').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||!state.account.has_password;}
-  $('refresh-devices').disabled=busy||state.calls.length>0;
+  // The refresh is the way back when a device notice was missed, in a call
+  // too: the engine is then handed the devices without a restart.
+  $('refresh-devices').disabled=busy;
   $('save-settings').disabled=busy;$('close-settings').disabled=busy;for(const id of ['calibrate-aec','calibrate-aec-careful'])$(id).disabled=busy||state.calls.length>0;
 }
 // The footer names every part of the audio processing and whether it is on;

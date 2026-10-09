@@ -556,6 +556,19 @@ void an_alert_start_that_fails_is_counted_and_the_default_tried() {
     check(f.core.take_playout(&again) == ENODEV && !f.core.playing() && f.core.endpoint(true).empty(), "neither starting, nothing plays");
     check(f.core.speaker_failures().count == 3, "both counted");
 }
+// The alert's stream ended on its own with the speaker still there (the
+// audio service restarted, a render call failed): found stopped at two
+// looks in a row, it is opened again on the same speaker.
+void an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again() {
+    AlertFixture f;
+    Player ring{"speaker-b"};
+    f.core.take_playout(&ring);
+    f.adm.render.ended_ = true;
+    f.core.watch_tick();
+    check(FakeRender::opens == 1, "the first look leaves it alone");
+    f.core.watch_tick();
+    check(FakeRender::opens == 2 && f.core.endpoint(true) == "speaker-b" && f.logged("speaker stream stopped"), "the second opens it again");
+}
 // The last speaker gone under the alert: nothing plays, no start is tried
 // ---- the callback gate
 using Callback = int (*)(void *, int);
@@ -1089,6 +1102,7 @@ int main(int argc, char **argv) {
     a_stream_webrtc_could_not_restart_is_opened_again();
     the_same_device_chosen_again_takes_the_call_back_from_the_default_at_once();
     an_alert_start_that_fails_is_counted_and_the_default_tried();
+    an_alert_stream_that_ended_on_a_speaker_still_there_is_opened_again();
     clearing_a_callback_waits_for_the_call_in_flight();
     clearing_from_inside_the_callback_does_not_wait_on_itself();
     a_late_set_after_the_clear_is_seen_by_the_next_call();
