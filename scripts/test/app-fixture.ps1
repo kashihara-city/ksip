@@ -76,7 +76,27 @@ function Use-KsipBuild([string]$folder, [bool]$staged) {
     New-Item -ItemType Directory -Force $folder | Out-Null
     Copy-Item $source (Join-Path $folder 'ksip.exe') -Force
 }
+# A toast KSIP raised (an incoming call) stays on the screen while nobody is at
+# the keyboard, and holds the foreground, so that no window or dialog can be
+# brought to the front. Each test removes KSIP's toasts once it has stopped the
+# app, after looking at them if it does; the start removes what a test that
+# broke off left. Windows PowerShell reaches the WinRT call that removes this
+# app's own toasts (pwsh cannot load the type); a failure here is not the test's.
+function Clear-KsipToasts {
+    $clear = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null; " +
+             "[Windows.UI.Notifications.ToastNotificationManager]::History.Clear('local.ksip.client')"
+    & powershell.exe -NoProfile -NonInteractive -Command $clear 2>&1 | Out-Null
+}
+# The toasts Windows holds for KSIP right now, each as its XML (the text nodes
+# carry the title and the body): what a test reads to see that a toast was
+# shown, not only handed over.
+function Get-KsipToasts {
+    $query = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null; " +
+             "@([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('local.ksip.client')) | ForEach-Object { `$_.Content.GetXml() }"
+    @(& powershell.exe -NoProfile -NonInteractive -Command $query 2>$null)
+}
 function Start-KsipApp([string]$path, [string]$elementDump = '') {
+    Clear-KsipToasts
     $app = Start-Process $path -WindowStyle Hidden -PassThru
     Set-KsipWindow $app $elementDump
     $app
@@ -93,4 +113,5 @@ function Stop-KsipApp($app) {
         Stop-KsipEngine
         Stop-Process -Id $app.Id -Force
     }
+    Clear-KsipToasts
 }

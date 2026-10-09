@@ -564,7 +564,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 
 開発には Asterisk 22.11.0（codec_opus 1.3.0、`res_pjsip_rfc3326` を読み込む）、FreeSWITCH 1.11.3、3CX 20.0.9を使いました。
 
-`pbx-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。どちらも接続先と内線を `test-pbx/<フォルダー>/lab.json` から読みます。フォルダーは環境変数 `KSIP_TEST_PBX` で選び、既定は `local-asterisk` です（`test-pbx/` はGit管理外なので、公開されるのは手順だけです）。同じテストをAsteriskとFreeSWITCHの両方に対して流せるように、PBXごとの約束事（番号や証明書）はすべて `lab.json` に書きます。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
+`pbx-*.py` は実際のSIPサーバーへ登録して発着信し、`app-*.ps1` はビルド済みの `release/ksip.exe` をUIAutomationで操作します。各テストはアプリを止めたあとに KSIP が出した通知（トースト）を消します（起動前にも、途中で止まったテストの残りを消します）。着信で出たトーストは、誰もキーボードに触れていない間は消えずに前面を握り、次のテストが窓やダイアログを前面に出せなくなるためです。どちらも接続先と内線を `test-pbx/<フォルダー>/lab.json` から読みます。フォルダーは環境変数 `KSIP_TEST_PBX` で選び、既定は `local-asterisk` です（`test-pbx/` はGit管理外なので、公開されるのは手順だけです）。同じテストをAsteriskとFreeSWITCHの両方に対して流せるように、PBXごとの約束事（番号や証明書）はすべて `lab.json` に書きます。テスト実行時にパラメータが足りなければ、何が足りないかを言って止まります。
 
 ```json
 {

@@ -66,6 +66,12 @@ try {
     Wait-KsipLog 'app' 'NOTIFY_INCOMING_SHOWN' | Out-Null
     if(Test-Visible $window){throw 'The window came out although the setting says notify'}
     'PASS: タスクトレイにいるときの着信は通知だけで、窓は出てこない'
+    # Windows holds the toast, with the caller in it: shown, not only handed over.
+    $extension=(Get-Content "$root/temp/build/ksip-ui/peer-extension.txt" -Raw).Trim()
+    $end=[DateTime]::UtcNow.AddSeconds(5);$toasts=@()
+    do { Start-Sleep -Milliseconds 300; $toasts=@(Get-KsipToasts | Where-Object { $_ -match [regex]::Escape($extension) }) } while(!$toasts -and [DateTime]::UtcNow -lt $end)
+    if(!$toasts){throw "Windows holds no KSIP toast naming $extension"}
+    'PASS: Windows が着信のトーストを保持している（相手の番号入り）'
 
     # One key answers while it rings, and hangs up afterwards. Answering brings
     # the window back, because the call is now the thing being used.
