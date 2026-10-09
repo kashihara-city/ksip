@@ -9,7 +9,7 @@ Tauri/Rustで画面と状態管理、baresipでSIP/RTP処理、Google WebRTCでA
 
 - Tauri 2.12.1
 - baresip/re 4.12.0
-- WebRTC 2026/9/12版
+- WebRTC 2026/10/2版
 - LibreSSL 4.3.2
 
 ![KSIPの構成とコンポーネント間の接続](docs/ksip-components.svg)

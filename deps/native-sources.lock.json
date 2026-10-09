@@ -40,21 +40,21 @@
   },
   "depot-tools": {
     "repository": "chromium/tools/depot_tools",
-    "version": "2026-09-11",
-    "commit": "36a8df4ad006eaa0572fb446edb8145fe5403592",
-    "source_date": "2026-09-11T14:38:15-07:00",
+    "version": "2026-10-01",
+    "commit": "08f34739d842dbef086f2a4459bd29d29c0dfd4e",
+    "source_date": "2026-10-01T22:01:54-07:00",
     "url": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
     "source_type": "git"
   },
   "google-webrtc": {
     "repository": "webrtc/src",
-    "version": "2026-09-12",
-    "commit": "790155fa32c371bd19d9339b8200d447cef44be9",
-    "source_date": "2026-09-12T13:50:48-07:00",
+    "version": "2026-10-02",
+    "commit": "a4a13a6690591c017b5ad2ae6649fa2437ba8bff",
+    "source_date": "2026-10-02T05:10:16-07:00",
     "url": "https://webrtc.googlesource.com/src.git",
     "source_type": "git",
-    "deps_sha256": "241b96de98883d82180b0db89bea3465e13a7c98778f99d6fea682ba66db7eb6",
-    "build_commit": "e6aa79b579ec7536ac9cbb92b47c1d3c2ecec984",
-    "build_source_date": "2026-09-11T23:56:39-07:00"
+    "deps_sha256": "6160e907bae3619b44c7bf828504580863bed36a5dc32cdc6a208b7b3da59369",
+    "build_commit": "8f4d213ca23327067940282e2e896084844aa7a8",
+    "build_source_date": "2026-09-24T08:15:30-07:00"
   }
 }
