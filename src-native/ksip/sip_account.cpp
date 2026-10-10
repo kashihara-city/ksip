@@ -63,6 +63,24 @@ int keepalive_failure = 0;
 ksip_text::TransactionIds register_sent;
 sa register_dst{};
 enum sip_transp register_tp = SIP_TRANSP_NONE;
+// The address the REGISTER last sent went from, and the registrar it went
+// to, as the state reports them: the app judges by these whether the
+// registration is on the address it should be (phone_actor.rs). Empty
+// until a REGISTER has gone out, and again after the transports are bound
+// anew, a login or an unregister, so that the app does not judge by a
+// REGISTER of before.
+std::string local_address_, registrar_address_;
+void forget_addresses() {
+    local_address_.clear();
+    registrar_address_.clear();
+}
+// Room for an address as text (an IPv6 one is 45 characters at most).
+constexpr size_t ADDRESS_TEXT = 64;
+std::string address_text(const sa *address) {
+    char text[ADDRESS_TEXT];
+    if (!address || !sa_isset(address, SA_ADDR) || re_snprintf(text, sizeof text, "%j", address) < 0) return {};
+    return text;
+}
 } // namespace
 
 ua *user_agent() { return account_ua; }
@@ -169,6 +187,7 @@ int login(re_printf *pf, void *) {
             if (!err) {
                 account_ua = created;
                 registration_ = "REGISTERING";
+                forget_addresses();
                 err = ua_register(created);
             }
             if (err) {
@@ -192,8 +211,10 @@ int unregister() {
     ua_unregister(account_ua);
     registration_ = "UNREGISTERED";
     transport_.clear();
+    forget_addresses();
     return 0;
 }
+void note_reset() { forget_addresses(); }
 void on_event(bevent_ev ev, const bevent *e) {
     if (bevent_get_ua(e) != account_ua) return;
     if (ev == BEVENT_REGISTER_OK && !unregistered) {
@@ -211,14 +232,17 @@ void on_event(bevent_ev ev, const bevent *e) {
     if (ev == BEVENT_UNREGISTERING) {
         registration_ = "UNREGISTERING";
         transport_.clear();
+        forget_addresses();
     }
 }
-void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *dst) {
+void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src, const sa *dst) {
     auto ids = ksip_text::request_ids(packet, length, "REGISTER");
     if (ids.call_id.empty() || !dst) return;
     register_sent = std::move(ids);
     register_dst = *dst;
     register_tp = tp;
+    local_address_ = address_text(src);
+    registrar_address_ = address_text(dst);
 }
 void on_answer(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src) {
     // The trace sees every packet before libre matches it to a transaction,
@@ -241,6 +265,8 @@ void write_state(odict *od) {
     odict_entry_add(od, "registration", ODICT_STRING, registration_.c_str());
     odict_entry_add(od, "transport", ODICT_STRING, transport_.c_str());
     odict_entry_add(od, "media_encryption", ODICT_STRING, media_encryption_.c_str());
+    odict_entry_add(od, "local_address", ODICT_STRING, local_address_.c_str());
+    odict_entry_add(od, "registrar_address", ODICT_STRING, registrar_address_.c_str());
 }
 void init() {
     uint32_t interval = register_interval;

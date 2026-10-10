@@ -32,6 +32,13 @@ fn err(e: impl std::fmt::Display) -> String {
 #[derive(Deserialize)]
 pub struct EngineReport {
     pub registration: String,
+    /// Where the registration's last REGISTER went from and to, as the
+    /// engine's trace saw it (sip_account.cpp): empty until one went out,
+    /// and again right after the transports are bound anew or a login.
+    #[serde(default)]
+    pub local_address: String,
+    #[serde(default)]
+    pub registrar_address: String,
     #[serde(default)]
     pub dnd: bool,
     #[serde(default)]

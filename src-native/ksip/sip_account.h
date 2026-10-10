@@ -37,8 +37,12 @@ int unregister();
 // The register events of the user agent.
 void on_event(bevent_ev ev, const bevent *e);
 // A REGISTER going out (from the SIP trace): what identifies its
-// transaction and where it goes, so that only its answer is taken.
-void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *dst);
+// transaction, where it goes, so that only its answer is taken, and the
+// address it goes from, which the state reports as the one in use.
+void on_sent(const uint8_t *packet, size_t length, enum sip_transp tp, const sa *src, const sa *dst);
+// The SIP transports are being bound anew (ksip_net_reset): the address in
+// use is unknown until the next REGISTER goes out.
+void note_reset();
 // A SIP answer received: when it is the 2xx to the REGISTER sent, the
 // transport that carried the registration, and the registrar the keepalives
 // go to (where that REGISTER went), are taken from it, since the register

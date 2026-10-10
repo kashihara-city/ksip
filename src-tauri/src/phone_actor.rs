@@ -122,14 +122,44 @@ type Shared = Rc<RefCell<Phone>>;
 /// An operation in progress, resumed by the actor when what it awaits arrives.
 type Flow = Pin<Box<dyn Future<Output = ()>>>;
 
-/// What a look at the machine's addresses calls for (network_seen).
+/// What a judgment of the registration against the machine's addresses
+/// calls for (network_judge).
 #[derive(Debug, PartialEq)]
 enum NetworkAction {
     Nothing,
-    /// An adapter is chosen and lost the address the engine bound.
+    /// An adapter is chosen and the registration is off its addresses, or
+    /// a start failed for the adapter having none and it has one again.
     Restart,
-    /// No adapter is chosen and the addresses changed.
+    /// No adapter is chosen and the registration does not go from the
+    /// address Windows sends to the registrar from.
     Reset,
+}
+/// How the registration stands against the machine's addresses
+/// (network_standing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Standing {
+    /// Nothing to judge by yet.
+    Unjudged,
+    /// On the address it should be.
+    Acceptable,
+    /// Off it, with nothing to restart on (the adapter has no address).
+    Lost,
+    /// Off it, with another address of the adapter to restart on.
+    Restart,
+    /// Off the address Windows sends to the registrar from.
+    Reset,
+}
+/// The machine's addresses as last read (look_at_network): the chosen
+/// adapter's (named as chosen, empty when none is), every adapter's, and
+/// the address Windows would send to the registrar from (for the registrar
+/// the engine had reported when the read was made).
+#[derive(Clone, Debug, PartialEq)]
+struct NetObserved {
+    adapter: String,
+    adapter_addresses: Vec<String>,
+    all: Vec<String>,
+    registrar: String,
+    route_source: Option<String>,
 }
 /// What the running flow waits for.
 enum Waiting {
@@ -368,29 +398,39 @@ struct Phone {
     /// is remembered, so that an answer that never came does not revive a
     /// recording of an engine that has since ended.
     recording_pending: Option<PendingStart>,
-    /// The address the engine bound, to notice when the adapter moves.
-    bound: String,
-    /// The machine's IPv4 addresses the engine was started among, while no
-    /// adapter is chosen: a change in them has the engine's SIP transports
-    /// bound anew (NetReset). None while no engine runs.
-    net_addresses: Option<Vec<String>>,
+    /// The machine's addresses as last read (look_at_network): the chosen
+    /// adapter's, every adapter's, and the address Windows would send to
+    /// the registrar from. What the registration is judged against
+    /// (network_standing). None until read.
+    net_observed: Option<NetObserved>,
+    /// What the engine's last report said its registration goes from and
+    /// to (sip_account's local_address and registrar_address): empty until
+    /// a REGISTER went out, and again right after the transports are bound
+    /// anew or a login, when there is nothing to judge yet.
+    reported_local: String,
+    reported_registrar: String,
     /// A worker is reading the machine's addresses (look_at_network), and a
     /// notice came while it was. One worker at a time.
     network_look_out: bool,
     network_look_owed: bool,
-    /// Until when the phone waits before acting on an address that went or
-    /// changed (NETWORK_SETTLE): the look at the deadline decides.
+    /// Until when the phone waits before acting on a registration found
+    /// off the address it should be (NETWORK_SETTLE): the look at the
+    /// deadline judges again.
     network_pending: Option<Instant>,
-    /// The addresses a NetReset was decided on, to become `net_addresses`
-    /// once the engine has taken them; and how many times in a row the
-    /// engine did not, each tried again after the settle, up to
-    /// NETWORK_RETRIES.
-    net_addresses_seen: Option<Vec<String>>,
+    /// How many orders in a row (the transports bound anew, the engine
+    /// restarted) left the registration off its address, up to
+    /// NETWORK_RETRIES; what to say once it is on it, when an order was
+    /// made for that (as against the address merely back); the addresses
+    /// given up on after the retries, not asked about again while they
+    /// stand; and a restart owed in place of the transports given up on.
     network_retries: u8,
-    /// The chosen adapter has lost the address the engine bound, or the
-    /// machine's addresses changed, and the window was told (the notice
-    /// stands until another): what makes the address coming back something
-    /// to say (network_settled), rather than every notice with it present.
+    net_order: Option<String>,
+    net_given_up: Option<(String, Option<NetObserved>)>,
+    network_restart_owed: bool,
+    /// The registration was found off the address it should be, and the
+    /// window was told (the notice stands until another): what makes it
+    /// acceptable again something to say (network_settled), rather than
+    /// every report with it so.
     address_lost: bool,
     /// The number of the last work started; each report carries its own.
     work_serial: u64,
@@ -520,13 +560,16 @@ impl Actor {
             recover_after: Instant::now(),
             maintenance_held: None,
             recording_pending: None,
-            bound: String::new(),
-            net_addresses: None,
+            net_observed: None,
+            reported_local: String::new(),
+            reported_registrar: String::new(),
             network_look_out: false,
             network_look_owed: false,
             network_pending: None,
-            net_addresses_seen: None,
             network_retries: 0,
+            net_order: None,
+            net_given_up: None,
+            network_restart_owed: false,
             address_lost: false,
             work_serial: 0,
             exclusive: Vec::new(),
@@ -578,6 +621,18 @@ impl Actor {
         }
         while let Ok(Message::Command(command)) = self.rx.try_recv() {
             Self::refuse(command, message("APP_CLOSING"));
+        }
+    }
+    /// Queues what a judgment of the registration against the addresses
+    /// asks for, once.
+    fn queue_network(&mut self, action: NetworkAction) {
+        let job = match action {
+            NetworkAction::Nothing => return,
+            NetworkAction::Restart => Job::Reconnect,
+            NetworkAction::Reset => Job::NetReset,
+        };
+        if !self.queue.iter().any(|(_, queued)| std::mem::discriminant(queued) == std::mem::discriminant(&job)) {
+            self.queue.push_back((Instant::now(), job));
         }
     }
     /// Runs the flow in progress as far as it gets, and starts the next
@@ -641,7 +696,7 @@ impl Actor {
                     self.queue.push_front((Instant::now(), Job::Recover));
                 }
             }
-            Message::Work(_, Work::Address { adapter, adapter_addresses, all }) => {
+            Message::Work(_, Work::Address { adapter, adapter_addresses, all, registrar, route_source }) => {
                 let action = {
                     let mut p = self.shared.borrow_mut();
                     p.network_look_out = false;
@@ -654,28 +709,22 @@ impl Actor {
                     // anew. One exception: a start that failed for the
                     // chosen adapter having no address is made again once
                     // it has one.
+                    let start_again = p.adapter_back(&adapter, &adapter_addresses);
+                    p.net_observed = Some(NetObserved { adapter, adapter_addresses, all, registrar, route_source });
                     if p.link.is_none() || p.closing || p.view.unregistered_by_choice {
                         p.network_pending = None;
-                        if p.adapter_back(&adapter, &adapter_addresses) {
-                            p.services.log(LOG_APP, format!("ksip: the adapter has {} now, connecting again", adapter_addresses.join(", ")));
+                        if start_again {
+                            let obs = p.net_observed.as_ref().expect("just read");
+                            p.services.log(LOG_APP, format!("ksip: the adapter has {} now, connecting again", obs.adapter_addresses.join(", ")));
                             NetworkAction::Restart
                         } else {
                             NetworkAction::Nothing
                         }
                     } else {
-                        p.network_seen(&adapter, &adapter_addresses, all)
+                        p.network_judge()
                     }
                 };
-                let job = match action {
-                    NetworkAction::Nothing => None,
-                    NetworkAction::Restart => Some(Job::Reconnect),
-                    NetworkAction::Reset => Some(Job::NetReset),
-                };
-                if let Some(job) = job {
-                    if !self.queue.iter().any(|(_, queued)| std::mem::discriminant(queued) == std::mem::discriminant(&job)) {
-                        self.queue.push_back((Instant::now(), job));
-                    }
-                }
+                self.queue_network(action);
             }
             Message::Work(serial, work) => {
                 let mut p = self.shared.borrow_mut();
@@ -949,15 +998,26 @@ impl Actor {
                 s.borrow().answer(reply, result);
             }),
             Job::Reconnect => Box::pin(async move {
-                // Queued when the adapter lost the address the engine bound,
-                // or has one again after a start failed for its lack; it
-                // waits its turn behind the flow under way, and by then the
-                // reason may be gone (reconnect_still_decided). Then it is
-                // not done. A call that is up is not waited for: its
-                // sockets went with the address, and it cannot be saved.
+                // Queued when the registration was found off the chosen
+                // adapter's addresses with another to restart on, when the
+                // transports could not be bound anew and no call is up, or
+                // when a start failed for the adapter having no address
+                // and it has one again. It waits its turn behind the flow
+                // under way, and is judged again by then: not made unless
+                // still asked for (the person unregistered, the address
+                // back, another engine since). A call that is up is not
+                // waited for: its sockets went with the address, and it
+                // cannot be saved.
                 let still_wanted = {
-                    let p = s.borrow();
-                    p.reconnect_still_decided() && (p.link.is_some() || p.adapter_start_failed())
+                    let mut p = s.borrow_mut();
+                    let owed = std::mem::take(&mut p.network_restart_owed);
+                    let start_again = p.link.is_none()
+                        && p.net_observed.as_ref().is_some_and(|obs| {
+                            let (adapter, addresses) = (obs.adapter.clone(), obs.adapter_addresses.clone());
+                            p.adapter_back(&adapter, &addresses)
+                        });
+                    start_again
+                        || (p.link.is_some() && !p.closing && !p.view.unregistered_by_choice && (owed || p.network_standing() == Standing::Restart))
                 };
                 if !still_wanted {
                     return;
@@ -1260,6 +1320,29 @@ impl Phone {
         let Some(applied) = self.phone.apply_report(generation, seq, report.calls, report.dnd, auto_answer, now_secs()) else {
             return Vec::new();
         };
+        // The registration's addresses, as the engine says them: a change
+        // (a REGISTER from another address, the engine's own doing or an
+        // order's) has the machine's addresses read again, and the
+        // registration judged against them (Work::Address, network_judge).
+        if self.reported_local != report.local_address || self.reported_registrar != report.registrar_address {
+            if !report.local_address.is_empty() {
+                // Said with what brought it about: an order of the phone's,
+                // the engine's start (or a login), or the engine's own
+                // choice of transport at a REGISTER (libre sends from the
+                // address on the route to the registrar).
+                let how = if self.net_order.is_some() {
+                    "as ordered"
+                } else if self.reported_local.is_empty() {
+                    "at its start"
+                } else {
+                    "on its own"
+                };
+                self.services.log(LOG_APP, format!("ksip: the registration goes from {} to {} now ({how})", report.local_address, report.registrar_address));
+            }
+            self.reported_local = report.local_address;
+            self.reported_registrar = report.registrar_address;
+            self.look_at_network();
+        }
         let v = &mut self.view;
         v.transport = report.transport;
         v.media_encryption = report.media_encryption;
@@ -1399,11 +1482,15 @@ impl Phone {
         // as a whole; nothing is owed to it.
         self.maintenance_off_owed = false;
         self.live_owed = None;
-        self.bound = ready.address;
-        self.net_addresses = Some(ready.addresses);
-        self.net_addresses_seen = None;
+        // A new engine: nothing of its registration is reported yet, and
+        // nothing is owed from the one before.
+        self.reported_local.clear();
+        self.reported_registrar.clear();
         self.network_retries = 0;
         self.network_pending = None;
+        self.net_order = None;
+        self.net_given_up = None;
+        self.network_restart_owed = false;
         self.address_lost = false;
         self.link = Some(ready.link);
         self.view.running = true;
@@ -1518,105 +1605,19 @@ impl Phone {
         }
         self.network_look_out = true;
         let chosen = self.view.settings.network_adapter.trim().to_string();
+        let registrar = self.reported_registrar.clone();
         self.work(move || {
             let adapters = crate::native::adapters();
             let adapter_addresses =
                 adapters.iter().find(|a| a.name.eq_ignore_ascii_case(&chosen)).map(|a| a.addresses.clone()).unwrap_or_default();
-            Work::Address { adapter: chosen, adapter_addresses, all: crate::native::ipv4_addresses(adapters) }
+            let route_source = registrar.parse().ok().and_then(crate::native::route_source);
+            Work::Address { adapter: chosen, adapter_addresses, all: crate::native::ipv4_addresses(adapters), registrar, route_source }
         });
     }
-    /// What the addresses read say (Work::Address), and what to do about
-    /// it. With an adapter chosen, the engine's SIP and RTP are bound to
-    /// the address it had (`bound`). While that is still among the
-    /// adapter's: nothing. Gone, the window and the log say so; then, with
-    /// another address on the adapter in its place, the engine is
-    /// restarted on that once NETWORK_SETTLE has passed with it still so,
-    /// a call or not (a call on the address that went cannot be saved: its
-    /// sockets went with it); with no address on the adapter at all,
-    /// nothing is done, there being nothing to bind to: the sockets wait,
-    /// alive again should the same address come back, and the next notice
-    /// decides again. With no adapter chosen, the engine's SIP transports
-    /// are on every address the machine had at its start: once the
-    /// addresses differ from those (and there are some) and the settle has
-    /// passed, the engine binds them anew (NetReset), moving a call that is
-    /// up along. An address back within the settle ends the wait, said in
-    /// the log.
-    fn network_seen(&mut self, adapter: &str, adapter_addresses: &[String], all: Vec<String>) -> NetworkAction {
-        let chosen = self.view.settings.network_adapter.trim().to_string();
-        if adapter != chosen {
-            // Read for an adapter no longer chosen: the next notice reads
-            // for the right one.
-            return NetworkAction::Nothing;
-        }
-        let now = Instant::now();
-        if !chosen.is_empty() && !adapter_addresses.contains(&self.bound) && adapter_addresses.is_empty() {
-            // Nothing to bind to: said once, and waited for.
-            self.network_pending = None;
-            if !self.address_lost {
-                self.address_lost = true;
-                self.show_error(message("NETWORK_ADDRESS_LOST"));
-                self.services.log(LOG_APP, format!("ksip: the adapter has no address; its sockets wait for {} to come back, or another address to restart on", self.bound));
-            }
-            return NetworkAction::Nothing;
-        }
-        let changed = if chosen.is_empty() {
-            // A reset decided on (net_addresses_seen) is for the addresses
-            // it was decided on. Read otherwise before its turn (the old
-            // ones back, or others again), the decision is void: the
-            // engine binds whatever the machine has when asked, and the
-            // baseline must not become addresses it never had. The look
-            // that follows decides afresh.
-            if self.net_addresses_seen.as_ref().is_some_and(|seen| *seen != all) {
-                self.net_addresses_seen = None;
-            }
-            !all.is_empty() && self.net_addresses.as_ref().is_some_and(|were| *were != all)
-        } else {
-            !adapter_addresses.contains(&self.bound)
-        };
-        match (changed, self.network_pending) {
-            (false, None) => {
-                // Back, or never gone; a notice up from the wait for an
-                // address is answered.
-                if self.address_lost {
-                    self.network_settled(message("NETWORK_ADDRESS_BACK"));
-                }
-                NetworkAction::Nothing
-            }
-            (false, Some(_)) => {
-                self.network_pending = None;
-                self.network_settled(message("NETWORK_ADDRESS_BACK"));
-                NetworkAction::Nothing
-            }
-            (true, None) => {
-                self.network_pending = Some(now + NETWORK_SETTLE);
-                // Shown, not reported: a reported banner goes with the next
-                // look at the engine, which goes on answering (its link is
-                // local); this one stands until the wait ends or is acted on.
-                if !self.address_lost {
-                    self.address_lost = true;
-                    self.show_error(if chosen.is_empty() { message("NETWORK_ADDRESSES_CHANGED") } else { message("NETWORK_ADDRESS_LOST") });
-                }
-                NetworkAction::Nothing
-            }
-            (true, Some(deadline)) if now >= deadline => {
-                self.network_pending = None;
-                if chosen.is_empty() {
-                    self.services.log(
-                        LOG_APP,
-                        format!("ksip: the machine's addresses are [{}] now, the engine binds its SIP transports anew", all.join(", ")),
-                    );
-                    self.net_addresses_seen = Some(all);
-                    NetworkAction::Reset
-                } else {
-                    self.services.log(
-                        LOG_APP,
-                        format!("ksip: the adapter has {} in place of {}, the engine is restarted on it", adapter_addresses.join(", "), self.bound),
-                    );
-                    NetworkAction::Restart
-                }
-            }
-            (true, Some(_)) => NetworkAction::Nothing,
-        }
+    /// The last start failed for the chosen adapter having no address, or
+    /// not being there.
+    fn adapter_start_failed(&self) -> bool {
+        self.view.error == message("ADAPTER_NO_ADDRESS") || self.view.error == message("ADAPTER_NOT_FOUND")
     }
     /// No engine runs because the start failed for the chosen adapter
     /// having no address (or not being there), and the addresses read say
@@ -1630,37 +1631,145 @@ impl Phone {
             && !adapter_addresses.is_empty()
             && self.adapter_start_failed()
     }
-    /// The last start failed for the chosen adapter having no address, or
-    /// not being there.
-    fn adapter_start_failed(&self) -> bool {
-        self.view.error == message("ADAPTER_NO_ADDRESS") || self.view.error == message("ADAPTER_NOT_FOUND")
+    /// How the registration stands against the machine's addresses: judged
+    /// by the address the engine last reported its REGISTER going from
+    /// (reported_local) and the addresses last read (net_observed), and
+    /// nothing else, so that it comes out the same whenever it is asked:
+    /// at a report, at a read, and before an order is made. With an
+    /// adapter chosen, the registration should be on an address of the
+    /// adapter; off it, the engine is restarted on another the adapter has
+    /// (Restart), or waits for one (Lost). With none chosen, it should go
+    /// from the address Windows would send to the registrar from now; off
+    /// it, the transports are bound anew (Reset). There is nothing to
+    /// judge (Unjudged) until a REGISTER went out, when the read was made
+    /// for another adapter or registrar than the engine's, and when Windows
+    /// has no route to the registrar (the registration fails and says so).
+    /// Whether anyone is there to act (an engine, the person not
+    /// unregistered on purpose) is the caller's to see.
+    fn network_standing(&self) -> Standing {
+        let chosen = self.view.settings.network_adapter.trim();
+        let Some(obs) = self.net_observed.as_ref().filter(|obs| obs.adapter == chosen) else {
+            return Standing::Unjudged;
+        };
+        let local = self.reported_local.as_str();
+        if local.is_empty() {
+            return Standing::Unjudged;
+        }
+        if chosen.is_empty() {
+            return match &obs.route_source {
+                Some(source) if obs.registrar == self.reported_registrar => {
+                    if source == local { Standing::Acceptable } else { Standing::Reset }
+                }
+                _ => Standing::Unjudged,
+            };
+        }
+        if obs.adapter_addresses.iter().any(|a| a == local) {
+            Standing::Acceptable
+        } else if obs.adapter_addresses.is_empty() {
+            Standing::Lost
+        } else {
+            Standing::Restart
+        }
     }
-    /// Whether a NetReset decided on (network_seen) is still to be made by
-    /// its turn: nobody unregistered on purpose since (the engine bound anew
-    /// registers again), no adapter is chosen now (its address is followed
-    /// by a restart instead), and the decision stands: a connect since read
-    /// the addresses afresh and dropped it, the engine being another one.
-    fn net_reset_still_decided(&self) -> bool {
-        !self.closing && !self.view.unregistered_by_choice && self.view.settings.network_adapter.trim().is_empty() && self.net_addresses_seen.is_some()
+    /// What to do about how the registration stands (network_standing),
+    /// settle and notices included: an order (a restart, the transports
+    /// bound anew) once the standing has held for NETWORK_SETTLE, the
+    /// window told at the start of the wait; acceptable, the wait ends and
+    /// a notice up is answered (the address back, or what the order was);
+    /// nothing to restart on, said once and waited for. An order made
+    /// NETWORK_RETRIES times in a row without the registration becoming
+    /// acceptable is given up on, said so, and not made again for the same
+    /// addresses; a restart stands in for the transports when no call is
+    /// up. Called whenever a report or a read came, and by the look at the
+    /// deadline.
+    fn network_judge(&mut self) -> NetworkAction {
+        let now = Instant::now();
+        let standing = self.network_standing();
+        if standing != Standing::Acceptable && standing != Standing::Unjudged {
+            let inputs = (self.reported_local.clone(), self.net_observed.clone());
+            if self.net_given_up.as_ref() == Some(&inputs) {
+                return NetworkAction::Nothing;
+            }
+        }
+        match standing {
+            Standing::Unjudged => {
+                // Nothing to judge by: no wait is kept up over it, the next
+                // report or read judges afresh.
+                self.network_pending = None;
+                NetworkAction::Nothing
+            }
+            Standing::Acceptable => {
+                self.network_pending = None;
+                self.network_retries = 0;
+                self.net_given_up = None;
+                let order = self.net_order.take();
+                if self.address_lost {
+                    self.network_settled(order.unwrap_or_else(|| message("NETWORK_ADDRESS_BACK")));
+                }
+                NetworkAction::Nothing
+            }
+            Standing::Lost => {
+                self.network_pending = None;
+                self.notice_lost(message("NETWORK_ADDRESS_LOST"));
+                NetworkAction::Nothing
+            }
+            Standing::Restart | Standing::Reset => {
+                match self.network_pending {
+                    None => {
+                        // Said the same way whichever the order will be: the
+                        // person sees a reconnect to the PBX either way.
+                        self.network_pending = Some(now + NETWORK_SETTLE);
+                        self.notice_lost(message("NETWORK_ADDRESSES_CHANGED"));
+                        NetworkAction::Nothing
+                    }
+                    Some(deadline) if now >= deadline => {
+                        self.network_pending = None;
+                        if self.network_retries >= NETWORK_RETRIES {
+                            self.network_retries = 0;
+                            self.net_order = None;
+                            self.net_given_up = Some((self.reported_local.clone(), self.net_observed.clone()));
+                            self.network_restart_owed = standing == Standing::Reset && self.phone.calls().is_empty();
+                            self.services.log(LOG_APP, "ksip: the engine was asked that often without its registration going from the address it should; given up on until the addresses change".into());
+                            self.network_settled(message("NETWORK_RESET_FAILED"));
+                            return if self.network_restart_owed { NetworkAction::Restart } else { NetworkAction::Nothing };
+                        }
+                        self.network_retries += 1;
+                        let (registrar, source, addresses) = {
+                            let obs = self.net_observed.as_ref().expect("judged on a read");
+                            (obs.registrar.clone(), obs.route_source.clone().unwrap_or_default(), obs.adapter_addresses.join(", "))
+                        };
+                        if standing == Standing::Reset {
+                            self.net_order = Some(message("NETWORK_RESET_DONE"));
+                            self.services.log(LOG_APP, format!(
+                                "ksip: the registration goes from {} but Windows sends to {registrar} from {source} now; the engine binds its SIP transports anew",
+                                self.reported_local
+                            ));
+                            NetworkAction::Reset
+                        } else {
+                            self.net_order = Some(message("NETWORK_ENGINE_RESTARTED"));
+                            self.services.log(LOG_APP, format!("ksip: the adapter has {addresses} in place of {}, the engine is restarted on it", self.reported_local));
+                            NetworkAction::Restart
+                        }
+                    }
+                    Some(_) => NetworkAction::Nothing,
+                }
+            }
+        }
     }
-    /// Whether a Reconnect decided on is still to be made by its turn:
-    /// nobody unregistered on purpose since, the adapter is chosen still,
-    /// and the reason holds: a start to make again for the adapter having
-    /// an address now, or the address the engine bound lost still. The
-    /// address back since (said so in the window) ends that reason, as does
-    /// a connect since, which bound anew; a wait begun since (lost again)
-    /// decides afresh when it ends.
-    fn reconnect_still_decided(&self) -> bool {
-        !self.closing
-            && !self.view.unregistered_by_choice
-            && !self.view.settings.network_adapter.trim().is_empty()
-            && (self.adapter_start_failed() || (self.address_lost && self.network_pending.is_none()))
+    /// The window is told once that the registration is off the address
+    /// it should be; the notice stands (phone.js, STANDING) until
+    /// network_settled answers it.
+    fn notice_lost(&mut self, notice: String) {
+        if !self.address_lost {
+            self.address_lost = true;
+            self.show_error(notice);
+        }
     }
-    /// How an address that went or changed was answered (it is back, the
-    /// engine was restarted, the transports bound anew), said in the window
-    /// and the log. The notices of the change stand in the window until
-    /// this (phone.js, STANDING); this one goes by itself after a moment,
-    /// as any other.
+    /// How a registration off its address was answered (it is back, the
+    /// engine was restarted, the transports bound anew, or given up on),
+    /// said in the window and the log. The notices stand in the window
+    /// until this (phone.js, STANDING); this one goes by itself after a
+    /// moment, as any other.
     fn network_settled(&mut self, outcome: String) {
         self.address_lost = false;
         self.show_error(outcome);
@@ -1982,8 +2091,6 @@ async fn start_engine(s: &Shared) -> Result<(), String> {
                 EngineLink::start(prepared.plan, generation, tx).map(|link| {
                     Box::new(Ready {
                         link,
-                        address: prepared.address,
-                        addresses: prepared.addresses,
                         notes: prepared.notes,
                     })
                 })
@@ -2149,68 +2256,32 @@ async fn tell_mute(s: &Shared) {
         }
     }
 }
-/// No adapter chosen and the machine's addresses changed (Job::NetReset):
-/// the engine reads its local addresses again, binds its SIP transports on
+/// No adapter chosen and the registration found going from another
+/// address than Windows sends to the registrar from (Job::NetReset): the
+/// engine reads its local addresses again, binds its SIP transports on
 /// them and registers again, and tells a call that is up the new address
-    /// (a re-INVITE) when the route to its peer leaves from another one now.
-/// An engine that does not take it (an address still held by a request in
-/// flight, with fixed ports; no way to a call's peer yet) is asked again
-/// after a settle, up to NETWORK_RETRIES times, and then restarted when no
-/// call is up (a restart would be refused for one).
+/// (a re-INVITE) when the route to its peer leaves from another one now.
+/// Judged again by its turn (the flow under way may have taken a while):
+/// not made unless still asked for. What the engine makes of it is not
+/// decided on here: its next reports say which address the registration
+/// goes from, and that is judged like any other (network_judge); one that
+/// does not become acceptable (an address still held by a request in
+/// flight, with fixed ports) is asked again after the settle, up to
+/// NETWORK_RETRIES times, then given up on until the addresses change.
 async fn net_reset(s: &Shared) {
-    // Decided on earlier; by its turn the reason may be gone
-    // (net_reset_still_decided). Then it is not done.
-    if s.borrow().link.is_none() || !s.borrow().net_reset_still_decided() {
+    let wanted = {
+        let p = s.borrow();
+        p.link.is_some() && !p.closing && !p.view.unregistered_by_choice && p.network_standing() == Standing::Reset
+    };
+    if !wanted {
         return;
     }
-    match request(s, "ksip_net_reset", "").await {
-        Ok(_) => {
-            let mut p = s.borrow_mut();
-            if let Some(taken) = p.net_addresses_seen.take() {
-                p.net_addresses = Some(taken);
-            }
-            p.network_retries = 0;
-            p.network_settled(message("NETWORK_RESET_DONE"));
-        }
-        Err(e) => {
-            let again = {
-                let mut p = s.borrow_mut();
-                p.network_retries += 1;
-                if p.network_retries < NETWORK_RETRIES {
-                    // The addresses it was decided on stay unmet: the look
-                    // after the settle finds them changed still and asks again.
-                    p.network_pending = Some(Instant::now() + NETWORK_SETTLE);
-                    true
-                } else {
-                    p.network_retries = 0;
-                    if let Some(given_up) = p.net_addresses_seen.take() {
-                        p.net_addresses = Some(given_up);
-                    }
-                    // The standing notice is answered: the window would show
-                    // it until the next change otherwise.
-                    p.network_settled(message("NETWORK_RESET_FAILED"));
-                    false
-                }
-            };
-            let in_call = !s.borrow().phone.calls().is_empty();
-            let then = match (again, in_call) {
-                (true, _) => "; asked again after the wait",
-                (false, true) => "; left as it is, the next change asks again",
-                (false, false) => ", restarting it",
-            };
-            s.borrow().services.log(LOG_APP, format!("ksip: the engine did not take the network reset ({e}){then}"));
-            if again || in_call {
-                return;
-            }
-            // Not against an unregister made while the engine was asked.
-            if s.borrow().closing || s.borrow().view.unregistered_by_choice {
-                return;
-            }
-            if let Err(e) = connect(s).await {
-                s.borrow_mut().show_error(e);
-            }
-        }
+    if let Err(e) = request(s, "ksip_net_reset", "").await {
+        s.borrow().services.log(LOG_APP, format!("ksip: the engine did not take the network reset ({e})"));
     }
+    // Its registration's address comes with its reports; the look at the
+    // deadline judges it, should no report have by then.
+    s.borrow_mut().network_pending = Some(Instant::now() + NETWORK_SETTLE);
 }
 /// The first thing after the window is up: the devices, then the saved account.
 async fn initialize(s: Shared) {
@@ -3480,40 +3551,61 @@ mod tests {
         a.shared.borrow_mut().look_at_devices();
         assert!(!a.shared.borrow().devices_look_out);
     }
-    /// With an adapter chosen, the engine is restarted only once another
-    /// address has stood in for the one it bound for the settle; the bound
-    /// one back within it ends the wait with the notice. Another address
-    /// beside it is no change, and no address at all is waited for with
-    /// the notice up, there being nothing to restart on.
+    /// With an adapter chosen, the registration is judged by whether the
+    /// address it goes from (as the engine reports it) is on the adapter:
+    /// restarted on another once that has stood for the settle (said as
+    /// a change, like the transports bound anew), the address back within
+    /// it ends the wait with the notice, and no address at all is waited
+    /// for with the notice of the loss up, there being nothing to restart
+    /// on. Nothing is judged until a REGISTER went out.
     #[test]
-    fn an_adapter_that_lost_the_bound_address_for_another_restarts_the_engine_on_it() {
+    fn with_an_adapter_the_registration_off_its_address_has_the_engine_restarted_after_the_settle() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
         p.view.settings.network_adapter = "{nic}".into();
-        p.bound = "192.0.2.5".into();
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.5", "192.0.2.6"]), vec![]), NetworkAction::Nothing, "still there, with another");
-        assert_eq!(p.network_seen("{other}", &s(&[]), vec![]), NetworkAction::Nothing, "read for another adapter: ignored");
+        let seen = |p: &mut Phone, on: &[&str]| {
+            p.net_observed = Some(NetObserved { adapter: "{nic}".into(), adapter_addresses: s(on), all: s(on), registrar: "198.51.100.2".into(), route_source: None });
+        };
+        seen(&mut p, &["192.0.2.5"]);
+        assert_eq!(p.network_standing(), Standing::Unjudged, "no REGISTER out yet: nothing to judge");
+        p.reported_local = "192.0.2.5".into();
+        p.reported_registrar = "198.51.100.2".into();
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "on the adapter");
+        seen(&mut p, &["192.0.2.5", "192.0.2.6"]);
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "still there, with another");
+        p.net_observed.as_mut().unwrap().adapter = "{other}".into();
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Unjudged, NetworkAction::Nothing), "read for another adapter: not judged");
         // No address at all: the notice, and a wait with no deadline.
-        assert_eq!(p.network_seen("{nic}", &s(&[]), vec![]), NetworkAction::Nothing, "no address: nothing to restart on");
-        assert!(p.network_pending.is_none() && p.view.error == message("NETWORK_ADDRESS_LOST"));
-        assert_eq!(p.network_seen("{nic}", &s(&[]), vec![]), NetworkAction::Nothing, "still none: nothing more");
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.5"]), vec![]), NetworkAction::Nothing, "the same address back: carried on");
-        assert_eq!(p.view.error, message("NETWORK_ADDRESS_BACK"), "the notice is answered");
+        seen(&mut p, &[]);
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Lost, NetworkAction::Nothing), "no address: nothing to restart on");
+        assert!(p.network_pending.is_none() && p.address_lost && p.view.error == message("NETWORK_ADDRESS_LOST"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "still none: nothing more");
+        seen(&mut p, &["192.0.2.5"]);
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "the same address back: carried on");
+        assert!(!p.address_lost && p.view.error == message("NETWORK_ADDRESS_BACK"), "the notice is answered");
         // Another address in its place: the wait, then the restart.
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Nothing, "another address: the wait starts");
-        assert!(p.network_pending.is_some() && p.view.error == message("NETWORK_ADDRESS_LOST"));
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Nothing, "the wait not over");
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.5"]), vec![]), NetworkAction::Nothing, "back within the wait");
+        seen(&mut p, &["192.0.2.6"]);
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Restart, NetworkAction::Nothing), "another address: the wait starts");
+        assert!(p.network_pending.is_some() && p.view.error == message("NETWORK_ADDRESSES_CHANGED"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "the wait not over");
+        seen(&mut p, &["192.0.2.5"]);
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "back within the wait");
         assert!(p.network_pending.is_none() && p.view.error == message("NETWORK_ADDRESS_BACK"), "the wait ends and the notice is answered");
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Nothing);
+        seen(&mut p, &["192.0.2.6"]);
+        assert_eq!(p.network_judge(), NetworkAction::Nothing);
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Restart, "another address for the settle: restarted");
-        assert!(p.network_pending.is_none());
+        assert_eq!(p.network_judge(), NetworkAction::Restart, "another address for the settle: restarted");
+        assert!(p.network_pending.is_none() && p.network_retries == 1 && p.net_order == Some(message("NETWORK_ENGINE_RESTARTED")));
+        // The new engine's registration on the new address: acceptable, and
+        // what to say is what was ordered.
+        p.reported_local = "192.0.2.6".into();
+        assert_eq!(p.network_judge(), NetworkAction::Nothing);
+        assert!(!p.address_lost && p.network_retries == 0 && p.net_order.is_none() && p.view.error == message("NETWORK_ENGINE_RESTARTED"));
     }
     /// A start that failed for the chosen adapter having no address is made
     /// again once the adapter has one; not for other failures, nor for
-    /// another adapter.
+    /// another adapter, nor without an address still.
     #[test]
     fn an_adapter_with_an_address_again_has_the_start_made_again() {
         let a = actor();
@@ -3530,94 +3622,92 @@ mod tests {
         p.view.error = message("REGISTER_FAILED");
         assert!(!p.adapter_back("{nic}", &one), "another failure is not mended by an address");
     }
-    /// With no adapter chosen, the engine binds its transports anew once the
-    /// machine's addresses have differed from those at its start for the
-    /// settle; the same set again, in any order, is no change.
+    /// With no adapter chosen, the registration is judged by whether the
+    /// address it goes from is the one Windows would send to the registrar
+    /// from now: the engine binds its transports anew once another has
+    /// stood for the settle. Nothing is judged without a route, without a
+    /// REGISTER out, or by a read made for another registrar; the
+    /// registration moved by the engine itself to the route's source is
+    /// acceptable as any other.
     #[test]
-    fn a_change_in_the_machines_addresses_for_the_settle_resets_the_transports() {
+    fn without_an_adapter_the_registration_off_the_routes_source_has_the_transports_bound_anew() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
-        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.5"])), NetworkAction::Nothing, "no engine started yet: no baseline");
-        p.net_addresses = Some(s(&["192.0.2.5", "198.51.100.2"]));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.5", "198.51.100.2"])), NetworkAction::Nothing, "the same");
-        assert_eq!(p.network_seen("", &[], s(&[])), NetworkAction::Nothing, "no address at all: nothing to bind to, waited for");
-        assert!(p.network_pending.is_none());
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7", "198.51.100.2"])), NetworkAction::Nothing, "changed: the wait starts");
-        assert!(p.network_pending.is_some() && p.view.error == message("NETWORK_ADDRESSES_CHANGED"));
+        let seen = |p: &mut Phone, registrar: &str, source: Option<&str>| {
+            p.net_observed = Some(NetObserved { adapter: String::new(), adapter_addresses: vec![], all: vec!["192.0.2.5".into(), "192.0.2.7".into()], registrar: registrar.into(), route_source: source.map(str::to_string) });
+        };
+        seen(&mut p, "198.51.100.2", Some("192.0.2.5"));
+        assert_eq!(p.network_standing(), Standing::Unjudged, "no REGISTER out yet");
+        p.reported_local = "192.0.2.5".into();
+        p.reported_registrar = "198.51.100.2".into();
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "from the route's source");
+        seen(&mut p, "198.51.100.2", None);
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Unjudged, NetworkAction::Nothing), "no route to the registrar: nothing to act on");
+        seen(&mut p, "198.51.100.9", Some("192.0.2.7"));
+        assert_eq!(p.network_standing(), Standing::Unjudged, "read for another registrar: read again first");
+        seen(&mut p, "198.51.100.2", Some("192.0.2.7"));
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Reset, NetworkAction::Nothing), "another source: the wait starts");
+        assert!(p.network_pending.is_some() && p.address_lost && p.view.error == message("NETWORK_ADDRESSES_CHANGED"));
+        seen(&mut p, "198.51.100.2", Some("192.0.2.5"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "the source back within the wait");
+        assert!(p.network_pending.is_none() && !p.address_lost && p.view.error == message("NETWORK_ADDRESS_BACK"));
+        seen(&mut p, "198.51.100.2", Some("192.0.2.7"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing);
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7", "198.51.100.2"])), NetworkAction::Reset, "changed for the settle: reset");
-        assert_eq!(p.net_addresses_seen.as_deref(), Some(&s(&["192.0.2.7", "198.51.100.2"])[..]), "the new addresses wait to become the baseline");
-        assert_eq!(p.net_addresses.as_deref(), Some(&s(&["192.0.2.5", "198.51.100.2"])[..]), "until the engine has taken them");
-        assert!(p.network_pending.is_none());
-        // Not taken: asked again after the settle, which finds them changed still.
-        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7", "198.51.100.2"])), NetworkAction::Reset, "asked again");
+        assert_eq!(p.network_judge(), NetworkAction::Reset, "another source for the settle: bound anew");
+        assert!(p.network_retries == 1 && p.net_order == Some(message("NETWORK_RESET_DONE")));
+        // The engine's next REGISTER goes from the route's source: done.
+        p.reported_local.clear();
+        assert_eq!((p.network_standing(), p.network_judge()), (Standing::Unjudged, NetworkAction::Nothing), "bound anew, no REGISTER out yet");
+        p.reported_local = "192.0.2.7".into();
+        assert_eq!(p.network_judge(), NetworkAction::Nothing);
+        assert!(!p.address_lost && p.network_retries == 0 && p.view.error == message("NETWORK_RESET_DONE"));
+        // Moved by the engine itself (a REGISTER sent from the route's new
+        // source): as acceptable as any other.
+        seen(&mut p, "198.51.100.2", Some("192.0.2.5"));
+        p.reported_local = "192.0.2.5".into();
+        assert_eq!(p.network_judge(), NetworkAction::Nothing);
+        assert!(p.view.error == message("NETWORK_RESET_DONE"), "nothing new to say");
     }
-    /// A reset or restart decided on waits its turn behind the flow under
-    /// way; by then its reason may be gone, and it is not made: the person
-    /// unregistered, an adapter was chosen, the address is back (said so),
-    /// or a connect since bound anew.
+    /// An order decided on waits its turn behind the flow under way, and is
+    /// judged again by then: the registration back on an address it should
+    /// be, or the person unregistered, and it is not made. Asked
+    /// NETWORK_RETRIES times without the registration becoming acceptable,
+    /// the phone says so and asks no more for the same addresses; another
+    /// address, or the registration acceptable, starts afresh.
     #[test]
-    fn a_reset_or_restart_decided_on_is_not_made_once_its_reason_is_gone() {
+    fn an_order_is_judged_again_by_its_turn_and_given_up_on_after_the_retries() {
         let a = actor();
         let mut p = a.shared.borrow_mut();
-        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        // No adapter chosen: a reset decided on.
-        p.net_addresses = Some(s(&["192.0.2.5"]));
+        let seen = |p: &mut Phone, source: &str| {
+            p.net_observed = Some(NetObserved { adapter: String::new(), adapter_addresses: vec![], all: vec![], registrar: "198.51.100.2".into(), route_source: Some(source.into()) });
+        };
+        p.reported_local = "192.0.2.5".into();
+        p.reported_registrar = "198.51.100.2".into();
+        seen(&mut p, "192.0.2.7");
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset);
-        assert!(p.net_reset_still_decided(), "decided, nothing since");
+        assert_eq!(p.network_judge(), NetworkAction::Reset);
+        assert_eq!(p.network_standing(), Standing::Reset, "by its turn: still asked for");
+        seen(&mut p, "192.0.2.5");
+        assert_eq!(p.network_standing(), Standing::Acceptable, "the source back before its turn: not made");
+        seen(&mut p, "192.0.2.7");
         p.view.unregistered_by_choice = true;
-        assert!(!p.net_reset_still_decided(), "unregistered since: bound anew, the engine would register again");
+        assert_eq!(p.network_standing(), Standing::Reset, "the standing is the addresses' alone; the person unregistered is the caller's to see");
         p.view.unregistered_by_choice = false;
-        p.view.settings.network_adapter = "{nic}".into();
-        assert!(!p.net_reset_still_decided(), "an adapter chosen since: its address is followed, not the machine's");
-        p.view.settings.network_adapter.clear();
-        p.net_addresses_seen = None;
-        assert!(!p.net_reset_still_decided(), "a connect since read the addresses afresh: the decision went with the old engine");
-        // The old addresses back before the reset's turn: the decision is
-        // void, the baseline stays, and the next change is followed anew.
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Nothing, "changed: the wait starts");
+        // Asked again after each settle, then given up on.
+        for n in 2..=NETWORK_RETRIES {
+            p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+            assert_eq!(p.network_judge(), NetworkAction::Reset, "asked again ({n})");
+            assert_eq!(p.network_retries, n);
+        }
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset);
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.5"])), NetworkAction::Nothing, "back before the reset's turn");
-        assert!(p.view.error == message("NETWORK_ADDRESS_BACK") && !p.net_reset_still_decided() && p.net_addresses_seen.is_none(), "the reset is void");
-        assert_eq!(p.net_addresses.as_deref(), Some(&s(&["192.0.2.5"])[..]), "the baseline is what the engine has");
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Nothing, "changed again: a new wait, not the old decision");
-        assert!(p.network_pending.is_some() && !p.net_reset_still_decided());
-        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.7"])), NetworkAction::Reset, "decided afresh when the wait ends");
-        assert_eq!(p.net_addresses_seen.as_deref(), Some(&s(&["192.0.2.7"])[..]));
-        // Other addresses again before the turn: void as well; the wait
-        // that starts decides on them.
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.8"])), NetworkAction::Nothing, "others again: a new wait");
-        assert!(p.net_addresses_seen.is_none() && p.network_pending.is_some());
-        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("", &[], s(&["192.0.2.8"])), NetworkAction::Reset);
-        assert_eq!(p.net_addresses_seen.as_deref(), Some(&s(&["192.0.2.8"])[..]), "decided on what is there now");
-        p.net_addresses_seen = None;
-        // An adapter chosen: a restart decided on, then the address is back.
-        p.view.settings.network_adapter = "{nic}".into();
-        p.bound = "192.0.2.5".into();
-        p.address_lost = true;
-        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Restart);
-        assert!(p.reconnect_still_decided(), "decided, nothing since");
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.5"]), vec![]), NetworkAction::Nothing, "the address back before the restart's turn");
-        assert_eq!(p.view.error, message("NETWORK_ADDRESS_BACK"));
-        assert!(!p.reconnect_still_decided(), "back: a call on it goes on, the engine is not restarted");
-        assert_eq!(p.network_seen("{nic}", &s(&["192.0.2.6"]), vec![]), NetworkAction::Nothing, "lost again: a new wait");
-        assert!(!p.reconnect_still_decided(), "the wait decides afresh when it ends");
-        p.network_pending = None;
-        assert!(p.reconnect_still_decided());
-        p.view.unregistered_by_choice = true;
-        assert!(!p.reconnect_still_decided(), "unregistered since");
-        p.view.unregistered_by_choice = false;
-        p.address_lost = false;
-        assert!(!p.reconnect_still_decided(), "a connect since bound anew");
-        p.view.error = message("ADAPTER_NO_ADDRESS");
-        assert!(p.reconnect_still_decided(), "a start to make again stands on its own");
+        assert_eq!(p.network_judge(), NetworkAction::Restart, "given up on: a restart stands in, no call being up");
+        assert!(p.network_retries == 0 && p.network_restart_owed && !p.address_lost && p.view.error == message("NETWORK_RESET_FAILED"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "the same addresses: not asked again");
+        assert!(p.network_pending.is_none());
+        seen(&mut p, "192.0.2.8");
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "another source: judged afresh, the wait starts");
+        assert!(p.network_pending.is_some());
     }
     /// The microphone's mute the window read is kept for the engine, and
     /// told only while one runs and it differs from what that one was told.

@@ -373,6 +373,7 @@ pub fn ipv4_addresses(adapters: Vec<Adapter>) -> Vec<String> {
 pub struct AddressWatch {
     handle: windows_sys::Win32::Foundation::HANDLE,
     interface_handle: windows_sys::Win32::Foundation::HANDLE,
+    route_handle: windows_sys::Win32::Foundation::HANDLE,
     changed: *mut Box<dyn Fn() + Send + Sync>,
 }
 // SAFETY: the handle and the pointer are touched only by Drop, on whichever
@@ -388,6 +389,7 @@ impl Drop for AddressWatch {
         unsafe {
             windows_sys::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(self.handle);
             windows_sys::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(self.interface_handle);
+            windows_sys::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(self.route_handle);
             drop(Box::from_raw(self.changed));
         }
     }
@@ -411,14 +413,46 @@ unsafe extern "system" fn interface_changed(
     let changed = unsafe { &*(context as *const Box<dyn Fn() + Send + Sync>) };
     changed();
 }
-/// Registers for Windows' notices of IPv4 addresses coming and going and
-/// of interfaces changing; `changed` is called for each. Returns with why
-/// it could not be made.
+unsafe extern "system" fn route_changed(
+    context: *const std::ffi::c_void,
+    _row: *const windows_sys::Win32::NetworkManagement::IpHelper::MIB_IPFORWARD_ROW2,
+    _kind: windows_sys::Win32::NetworkManagement::IpHelper::MIB_NOTIFICATION_TYPE,
+) {
+    // SAFETY: as for address_changed; the same Box serves the three registrations.
+    let changed = unsafe { &*(context as *const Box<dyn Fn() + Send + Sync>) };
+    changed();
+}
+/// The address Windows would send to `destination` from now (the best
+/// route's source), or None when it has no route there: what the
+/// registration's address is judged against with no adapter chosen
+/// (phone_actor.rs, network_standing).
+pub fn route_source(destination: std::net::Ipv4Addr) -> Option<String> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2};
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, SOCKADDR_INET};
+    // SAFETY: plain structures, zeroed; GetBestRoute2 reads the destination
+    // and fills the route and the source, which are read only on success.
+    unsafe {
+        let mut dest: SOCKADDR_INET = std::mem::zeroed();
+        dest.Ipv4.sin_family = AF_INET;
+        dest.Ipv4.sin_addr.S_un.S_addr = u32::from(destination).to_be();
+        let mut route: MIB_IPFORWARD_ROW2 = std::mem::zeroed();
+        let mut source: SOCKADDR_INET = std::mem::zeroed();
+        if GetBestRoute2(std::ptr::null(), 0, std::ptr::null(), &dest, 0, &mut route, &mut source) != 0 || source.si_family != AF_INET {
+            return None;
+        }
+        Some(std::net::Ipv4Addr::from(source.Ipv4.sin_addr.S_un.S_addr.to_ne_bytes()).to_string())
+    }
+}
+/// Registers for Windows' notices of IPv4 addresses coming and going, of
+/// interfaces changing and of routes changing (the source to the registrar
+/// may move with no address coming or going); `changed` is called for
+/// each. Returns with why it could not be made.
 pub fn watch_addresses(changed: impl Fn() + Send + Sync + 'static) -> Result<AddressWatch, String> {
-    use windows_sys::Win32::NetworkManagement::IpHelper::{CancelMibChangeNotify2, NotifyIpInterfaceChange, NotifyUnicastIpAddressChange};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{CancelMibChangeNotify2, NotifyIpInterfaceChange, NotifyRouteChange2, NotifyUnicastIpAddressChange};
     let changed: *mut Box<dyn Fn() + Send + Sync> = Box::into_raw(Box::new(Box::new(changed)));
     let mut handle: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
     let mut interface_handle: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+    let mut route_handle: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
     // SAFETY: the callbacks and their context outlive the registrations:
     // the watch's drop cancels both before the context is freed, and a
     // registration that failed is cancelled here before the Box goes.
@@ -433,7 +467,14 @@ pub fn watch_addresses(changed: impl Fn() + Send + Sync + 'static) -> Result<Add
                 CancelMibChangeNotify2(handle);
                 Err(format!("NotifyIpInterfaceChange failed ({interfaces})"))
             } else {
-                Ok(())
+                let routes = NotifyRouteChange2(family, Some(route_changed), changed.cast(), false, &mut route_handle);
+                if routes != 0 {
+                    CancelMibChangeNotify2(handle);
+                    CancelMibChangeNotify2(interface_handle);
+                    Err(format!("NotifyRouteChange2 failed ({routes})"))
+                } else {
+                    Ok(())
+                }
             }
         }
     };
@@ -444,7 +485,7 @@ pub fn watch_addresses(changed: impl Fn() + Send + Sync + 'static) -> Result<Add
         }
         return Err(e);
     }
-    Ok(AddressWatch { handle, interface_handle, changed })
+    Ok(AddressWatch { handle, interface_handle, route_handle, changed })
 }
 
 /// A null-terminated 8-bit string, as text; empty for a null pointer.

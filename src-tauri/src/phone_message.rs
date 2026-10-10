@@ -118,10 +118,6 @@ pub enum LinkBody {
 /// A started engine, with what its start decided.
 pub struct Ready {
     pub link: EngineLink,
-    pub address: String,
-    /// The machine's IPv4 addresses at the start, the engine's SIP
-    /// transports being bound on all of them when no adapter is chosen.
-    pub addresses: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -145,12 +141,16 @@ pub enum Work {
     /// The audio devices were read again.
     Devices(Result<Vec<Device>, String>),
     /// The machine's IPv4 addresses as they are now: the chosen adapter's
-    /// (named as chosen, empty when none is) and every adapter's, sorted.
-    /// Nobody waits for this one: the actor looks at it as it comes.
+    /// (named as chosen, empty when none is) and every adapter's, sorted;
+    /// and the address Windows would send to the registrar from (the one
+    /// the engine had reported, named), when it has a route there. Nobody
+    /// waits for this one: the actor looks at it as it comes.
     Address {
         adapter: String,
         adapter_addresses: Vec<String>,
         all: Vec<String>,
+        registrar: String,
+        route_source: Option<String>,
     },
     /// The echo calibration has finished.
     Calibrated(Result<Calibration, String>),

@@ -33,7 +33,7 @@ void sip_trace(bool tx, enum sip_transp tp, const sa *src, const sa *dst, const 
     // A keepalive (a blank line) is no SIP message; sip_account logs its own.
     const bool blank = (packet != nullptr) && (length != 0u) && std::all_of(packet, packet + length, [](uint8_t c) { return c == '\r' || c == '\n'; });
     if (sip_message_log && packet && length && !blank) ksip_io::log_sip_message(tx, packet, length);
-    if (tx && packet) sip_account::on_sent(packet, length, tp, dst);
+    if (tx && packet) sip_account::on_sent(packet, length, tp, src, dst);
     if (packet && length) transfer::on_sip(tx, packet, length);
     if (tx || !packet || length < UPDATE_LINE.size()) return;
     sip_account::on_answer(packet, length, tp, src);
@@ -173,6 +173,7 @@ int net_reset(re_printf *pf, void *) {
         return err;
     }
     info("ksip: the local addresses were read again and the SIP transports are bound anew\n");
+    sip_account::note_reset();
     for (const le *l = list_head(uag_list()); l; l = l->next) {
         auto *ua = static_cast<struct ua *>(l->data);
         if (!account_regint(ua_account(ua))) continue;
