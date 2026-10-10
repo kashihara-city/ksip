@@ -6,7 +6,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
     callHeld:'保留中',callIdle:'待機',
     registration:{REGISTER_OK:'已註冊',REGISTERING:'註冊中…',REGISTER_FAIL:'註冊失敗 — 請檢查設定',
       CONNECTING:'連線中…',DISCONNECTED:'未連線',UNREGISTERING:'取消註冊中',UNREGISTERED:'已解除註冊 — 不會有來電'},
-    registrationUnconfigured:'請先設定帳號',registrationPreparing:'準備連線中…',registrationStarting:'啟動中…',registrationFailed:'註冊失敗 — {0}',
+    registrationUnconfigured:'請先設定帳號',registrationPreparing:'準備連線中…',registrationStarting:'啟動中…',
     park:{IDLE:'空閒',INUSE:'使用中',UNKNOWN:'狀態不明'},
     messages:{
       ACCOUNT_EXTENSION_INVALID:'分機與帳號只能使用半形英數字與 _ . + -',

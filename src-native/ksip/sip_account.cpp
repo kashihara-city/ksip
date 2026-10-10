@@ -70,20 +70,12 @@ enum sip_transp register_tp = SIP_TRANSP_NONE;
 // anew, a login or an unregister, so that the app does not judge by a
 // REGISTER of before.
 std::string local_address_, registrar_address_;
-// Why the registration last failed, as baresip said it (the SIP answer, or
-// the error of the send): the window shows it with the failure, so that a
-// registration that cannot be made (no address at the start, an address
-// gone before the first REGISTER) is seen for what it is, and connected
-// again by hand. Cleared once a registration succeeds.
-std::string registration_detail_;
 void forget_addresses() {
     local_address_.clear();
     registrar_address_.clear();
 }
 // Room for an address as text (an IPv6 one is 45 characters at most).
 constexpr size_t ADDRESS_TEXT = 64;
-// Room for an error's text (str_error).
-constexpr size_t ERROR_TEXT = 128;
 std::string address_text(const sa *address) {
     char text[ADDRESS_TEXT];
     if (!address || !sa_isset(address, SA_ADDR) || re_snprintf(text, sizeof text, "%j", address) < 0) return {};
@@ -202,8 +194,6 @@ int login(re_printf *pf, void *) {
                 account_ua = nullptr;
                 ua_destroy(created);
                 registration_ = "REGISTER_FAIL";
-                char why[ERROR_TEXT];
-                registration_detail_ = str_error(err, why, sizeof why);
             }
         }
     }
@@ -229,7 +219,6 @@ void on_event(bevent_ev ev, const bevent *e) {
     if (bevent_get_ua(e) != account_ua) return;
     if (ev == BEVENT_REGISTER_OK && !unregistered) {
         registration_ = "REGISTER_OK";
-        registration_detail_.clear();
         if (failed_since_ok) subscriptions::resubscribe_all();
         failed_since_ok = false;
         subscriptions::subscribe_all();
@@ -238,8 +227,6 @@ void on_event(bevent_ev ev, const bevent *e) {
         registration_ = "REGISTER_FAIL";
         failed_since_ok = true;
         transport_.clear();
-        const char *why = bevent_get_text(e);
-        registration_detail_ = why ? why : "";
     }
     if (ev == BEVENT_REGISTERING) registration_ = "REGISTERING";
     if (ev == BEVENT_UNREGISTERING) {
@@ -278,7 +265,6 @@ void write_state(odict *od) {
     odict_entry_add(od, "registration", ODICT_STRING, registration_.c_str());
     odict_entry_add(od, "transport", ODICT_STRING, transport_.c_str());
     odict_entry_add(od, "media_encryption", ODICT_STRING, media_encryption_.c_str());
-    odict_entry_add(od, "registration_detail", ODICT_STRING, registration_detail_.c_str());
     odict_entry_add(od, "local_address", ODICT_STRING, local_address_.c_str());
     odict_entry_add(od, "registrar_address", ODICT_STRING, registrar_address_.c_str());
 }

@@ -1365,7 +1365,6 @@ impl Phone {
         v.mwi = Mwi::parse(&report.mwi_summary);
         v.audio_processing_stats = report.audio_processing_stats;
         v.registration = report.registration;
-        v.registration_detail = report.registration_detail;
         v.dnd = report.dnd;
         if !applied.ended.is_empty() {
             // A call of ours that never connected is said so, with the engine's

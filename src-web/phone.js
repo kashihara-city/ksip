@@ -57,10 +57,7 @@ export function render({clearNotices=false}={}){
   $('account-label').textContent=state.account.extension;
   $('server-label').textContent=state.account.server?state.account.server+':'+state.account.port:'';
   $('connection-server').hidden=paused||!state.account.extension;
-  // A failure says why, as the engine said it (the SIP answer, the send's
-  // error): what cannot be followed automatically is at least seen.
-  const failed=state.registration==='REGISTER_FAIL'&&state.registration_detail?texts.registrationFailed.replace('{0}',state.registration_detail):null;
-  $('registration').textContent=(failed||(state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting)+(state.dnd&&registered?' · '+t('DND_ACTIVE'):'');
+  $('registration').textContent=((state.registration==='UNCONFIGURED'?(state.account.has_password?texts.registrationPreparing:texts.registrationUnconfigured):texts.registration[state.registration])||texts.registrationStarting)+(state.dnd&&registered?' · '+t('DND_ACTIVE'):'');
   $('registration').className='reg-'+String(state.registration||'').toLowerCase();$('status-light').className=registered?'online':paused?'paused':state.registration==='REGISTER_FAIL'?'fault':'';
   $('transport-label').textContent=registered?state.transport||'':'';
   // As the engine says it runs, like the transport: not the saved setting.

@@ -6,7 +6,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
     callHeld:'On hold',callIdle:'Idle',
     registration:{REGISTER_OK:'Registered',REGISTERING:'Registering…',REGISTER_FAIL:'Registration failed — check the settings',
       CONNECTING:'Connecting…',DISCONNECTED:'Not connected',UNREGISTERING:'Unregistering',UNREGISTERED:'Unregistered — no calls arrive'},
-    registrationUnconfigured:'Set up an account',registrationPreparing:'Preparing…',registrationStarting:'Starting…',registrationFailed:'Registration failed — {0}',
+    registrationUnconfigured:'Set up an account',registrationPreparing:'Preparing…',registrationStarting:'Starting…',
     park:{IDLE:'Free',INUSE:'In use',UNKNOWN:'Unknown'},
     messages:{
       ACCOUNT_EXTENSION_INVALID:'The extension and user name may contain only letters, digits and _ . + -',

@@ -6,7 +6,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
     callHeld:'保留中',callIdle:'待機',
     registration:{REGISTER_OK:'登録済み',REGISTERING:'登録中…',REGISTER_FAIL:'登録失敗 — 設定を確認してください',
       CONNECTING:'接続中…',DISCONNECTED:'未接続',UNREGISTERING:'登録解除中',UNREGISTERED:'接続解除済み — 着信しません'},
-    registrationUnconfigured:'アカウントを設定してください',registrationPreparing:'接続準備中…',registrationStarting:'起動中…',registrationFailed:'登録失敗 — {0}',
+    registrationUnconfigured:'アカウントを設定してください',registrationPreparing:'接続準備中…',registrationStarting:'起動中…',
     park:{IDLE:'空き',INUSE:'使用中',UNKNOWN:'状態不明'},
     messages:{
       ACCOUNT_EXTENSION_INVALID:'内線番号・認証IDは半角英数字と _ . + - で指定してください',

@@ -242,7 +242,6 @@ impl Services {
             calls: vec![],
             transfer: Transfer::default(),
             registration: "UNCONFIGURED".into(),
-            registration_detail: String::new(),
             recording_call: String::new(),
             dnd: false,
             unregistered_by_choice: false,
