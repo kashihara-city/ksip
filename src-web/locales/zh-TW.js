@@ -197,7 +197,6 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       LINE_2:'通話 2',
       LINK_OPEN_FAILED:'無法開啟連結（{0}）',
       LINK_TARGET_INVALID:'只能開啟按鈕中設定的 http:// 或 https:// 網址',
-      LINK_NEEDS_CALL:'帶有通話對象的連結，請在通話中按下',
       LOGS_PAUSED:'記錄顯示已暫停更新',
       MEDIA_UNENCRYPTED:'未加密',
       AUDIO_RAW_TITLE:'麥克風與喇叭的開啟方式。RAW：不經過 Windows 或驅動程式的音效處理（APO）。APO：經過',
