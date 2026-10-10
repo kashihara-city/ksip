@@ -197,6 +197,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       LINE_2:'通話2',
       LINK_OPEN_FAILED:'リンクを開けませんでした（{0}）',
       LINK_TARGET_INVALID:'リンクはボタンに設定した http:// か https:// のURLだけ開けます',
+      LINK_NEEDS_CALL:'通話相手を差し込むリンクは、通話中に押してください',
       LOGS_PAUSED:'ログ表示更新停止中',
       MEDIA_UNENCRYPTED:'暗号化なし',
       AUDIO_RAW_TITLE:'マイク・スピーカーの開き方。RAW: Windows やドライバーの音声処理（APO）を通さない。APO: 通す',

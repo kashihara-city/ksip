@@ -164,7 +164,8 @@ function renderButtonBox(box,first,columns,configured,c){
     if(b.kind==='transfer'){status=fill('BUTTON_TRANSFER_TO',b.number);enabled=active;}
     else if(b.kind==='dial'){status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=freeLine;}
     else if(b.kind==='speed'){status=b.number;enabled=freeLine;}
-    else if(b.kind==='open'){status=b.number;enabled=true;needsPhone=false;}
+    // A link that names the call's peer ({TEL}, {SIPURI}) waits for a call.
+    else if(b.kind==='open'){status=b.number;enabled=!/\{(TEL|SIPURI)\}/.test(b.number)||!!c;needsPhone=false;}
     else if(b.kind==='dnd'){status=t(state.dnd?'DND_ON_STATUS':'DND_OFF_STATUS');enabled=true;}
     else if(b.kind==='mwi'){const m=state.mwi||{};status=m.new>0?fill('MWI_NEW',m.new):t('MWI_NONE');enabled=freeLine;}
     else{status=b.number+' · '+(texts.park[s]||texts.park.UNKNOWN);enabled=s!=='UNKNOWN'&&(active?s==='IDLE':s==='INUSE'&&freeLine);}
@@ -183,7 +184,7 @@ async function useButton(n){
   const b=configuredButtons().find(button=>button.index===n);
   if(!b)return;
   if(b.kind==='open'){
-    try{await invoke('open_link',{url:b.number});}
+    try{await invoke('open_link',{index:n,callId:current()?.id??null});}
     catch(e){setError(String(e));logUi('open link',e);render();}
     return;
   }

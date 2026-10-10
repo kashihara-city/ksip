@@ -460,26 +460,68 @@ pub fn open_microphone_privacy(state: State<AppState>) -> Result<(), String> {
 pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
-/// Opens the web address a button was set up with, and no other.
+/// Opens the web address a button (named by its number, 1 up) was set up
+/// with, and no other, with the call's peer put where the address names it
+/// (`{TEL}`, `{SIPURI}`; fill_link). An address that names the call needs
+/// one: the call the window has selected, by its id.
 #[tauri::command]
-pub fn open_link(url: String, state: State<AppState>) -> Result<(), String> {
-    let wanted = url.trim();
-    let known = state
-        .snapshot()
-        .settings
-        .buttons
-        .iter()
-        .any(|b| b.link_target() == Some(wanted));
-    if !known {
-        return Err(message("LINK_TARGET_INVALID"));
+pub fn open_link(index: usize, call_id: Option<String>, state: State<AppState>) -> Result<(), String> {
+    let snapshot = state.snapshot();
+    let template = index
+        .checked_sub(1)
+        .and_then(|at| snapshot.settings.buttons.get(at))
+        .and_then(|b| b.link_target())
+        .ok_or_else(|| message("LINK_TARGET_INVALID"))?;
+    let url = if link_names_call(template) {
+        let call = call_id
+            .and_then(|id| snapshot.calls.iter().find(|c| c.id == id))
+            .ok_or_else(|| message("LINK_NEEDS_CALL"))?;
+        fill_link(template, &call.peer)
+    } else {
+        template.to_string()
+    };
+    state.services.log_app(format!("ksip: opening {url}"));
+    native::open_url(&url)
+}
+/// Whether a link's address has a place for the call's peer.
+pub fn link_names_call(template: &str) -> bool {
+    template.contains("{TEL}") || template.contains("{SIPURI}")
+}
+/// The address with the peer in the places for it: `{TEL}` is the number as
+/// the history shows it (the user part of the SIP URI), `{SIPURI}` the URI
+/// whole; each percent-encoded, so that the address stays one.
+pub fn fill_link(template: &str, peer: &str) -> String {
+    let uri = peer.trim().trim_start_matches('<').trim_end_matches('>').trim();
+    let number = uri.strip_prefix("sip:").or_else(|| uri.strip_prefix("sips:")).unwrap_or(uri).split('@').next().unwrap_or("");
+    template.replace("{TEL}", &percent_encoded(number)).replace("{SIPURI}", &percent_encoded(uri))
+}
+fn percent_encoded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
     }
-    state.services.log_app(format!("ksip: opening {wanted}"));
-    native::open_url(wanted)
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A link's address takes the call's peer where it names it, encoded;
+    /// one that does not is opened as it is.
+    #[test]
+    fn a_link_takes_the_calls_peer_where_it_names_it() {
+        assert!(!link_names_call("https://pbx.example/extensions"));
+        assert!(link_names_call("https://pbx.example/ext?tel={TEL}"));
+        assert_eq!(fill_link("https://pbx.example/ext?tel={TEL}", "sip:1002@pbx.example"), "https://pbx.example/ext?tel=1002");
+        assert_eq!(fill_link("https://pbx.example/ext?tel={TEL}", "<sip:1002@pbx.example>"), "https://pbx.example/ext?tel=1002");
+        assert_eq!(fill_link("https://pbx.example/u?s={SIPURI}", "sip:1002@pbx.example"), "https://pbx.example/u?s=sip%3A1002%40pbx.example");
+        assert_eq!(fill_link("https://pbx.example/ext?tel={TEL}&x={TEL}", "sip:+81 3@h"), "https://pbx.example/ext?tel=%2B81%203&x=%2B81%203");
+        assert_eq!(fill_link("https://pbx.example/plain", "sip:1002@pbx.example"), "https://pbx.example/plain");
+    }
     #[test]
     fn reject_invalid_volume_without_launching_helper() {
         let app = AppState::new();

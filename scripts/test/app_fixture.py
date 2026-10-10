@@ -37,7 +37,7 @@ if sys.argv[1]=='setup':
                  ('button_3_title','Playback'),('button_3_kind','transfer'),('button_3_number',n['playback']),
                  # The same player named as a full URI in angle brackets, as some PBXs want it.
                  ('button_4_title','Player URI'),('button_4_kind','transfer'),('button_4_number','<sip:'+n['playback']+'@'+where['server']+'>'),
-                 ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions'),
+                 ('button_5_title','Directory'),('button_5_kind','open'),('button_5_number','https://example.invalid/extensions?ext={TEL}'),
                  # A button in the panel beside the phone, which makes the window twice as wide.
                  ('button_7_title','Panel player'),('button_7_kind','dial'),('button_7_number',n['playback']),
                  ('button_8_kind','dnd'),

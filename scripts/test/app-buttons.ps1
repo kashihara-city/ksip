@@ -35,10 +35,10 @@ try {
     Wait-Text 'custom-2' $slot | Out-Null
     Wait-Text 'custom-3' $playback | Out-Null
     Wait-Text 'custom-4' "sip:$playback@" | Out-Null
-    # The link button is usable without a call; it is not pressed here, because
-    # that would open a browser on the machine running the test.
+    # The link names the call ({TEL}), so it waits for one; it is not pressed
+    # here, because that would open a browser on the machine running the test.
     Wait-Text 'custom-5' 'example.invalid' | Out-Null
-    if(!(Wait-Id 'custom-5').Current.IsEnabled){throw 'Link button is disabled'}
+    if((Wait-Id 'custom-5').Current.IsEnabled){throw 'Link button that names the call is enabled without one'}
     'PASS: 設定したボタンだけが順に出る'
     # A button in the panel beside the phone: the window is twice as wide, the
     # panel holds the button, and it dials like any other.
@@ -48,8 +48,11 @@ try {
     $width=(Get-KsipRoot).Current.BoundingRectangle.Width
     if($width -lt 900){throw "The window is only $width wide with a panel button set"}
     Click-Id 'custom-7';Wait-Class 'line-1' 'call-established'
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while(!(Wait-Id 'custom-5').Current.IsEnabled -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    if(!(Wait-Id 'custom-5').Current.IsEnabled){throw 'Link button that names the call is disabled during one'}
     Click-Id 'hangup';Wait-Class 'line-1' 'call-idle'
-    'PASS: 拡張ボタンは右側の欄に出て、窓が2倍の幅になり、発信できる'
+    'PASS: 拡張ボタンは右側の欄に出て、窓が2倍の幅になり、発信できる。相手を差し込むリンクは通話中だけ押せる'
     # A dial without BLF: the number stays as written, with its separator, no
     # watch state is shown, and pressing it calls the peer all the same.
     $separated=$extension.Substring(0,2)+'-'+$extension.Substring(2)

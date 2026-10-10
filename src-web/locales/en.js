@@ -197,6 +197,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       LINE_2:'Call 2',
       LINK_OPEN_FAILED:'The link could not be opened ({0})',
       LINK_TARGET_INVALID:'Only an http:// or https:// URL set on a button can be opened',
+      LINK_NEEDS_CALL:'A link that names the call needs a call',
       LOGS_PAUSED:'Log display paused',
       MEDIA_UNENCRYPTED:'not encrypted',
       AUDIO_RAW_TITLE:'How the microphone and the speaker are open. RAW: past the effects of Windows and the drivers (APOs). APO: through them',
