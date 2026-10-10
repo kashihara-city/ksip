@@ -39,6 +39,10 @@ pub struct EngineReport {
     pub local_address: String,
     #[serde(default)]
     pub registrar_address: String,
+    /// Why the registration last failed, as the engine said it; empty
+    /// once it succeeds.
+    #[serde(default)]
+    pub registration_detail: String,
     #[serde(default)]
     pub dnd: bool,
     #[serde(default)]

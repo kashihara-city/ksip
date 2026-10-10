@@ -59,6 +59,10 @@ pub struct Snapshot {
     pub calls: Vec<CallInfo>,
     pub transfer: Transfer,
     pub registration: String,
+    /// Why the registration last failed, as the engine said it, shown with
+    /// the failure; empty once it succeeds.
+    #[serde(default)]
+    pub registration_detail: String,
     /// Do not disturb: incoming calls are refused as busy while this is on.
     #[serde(default)]
     pub dnd: bool,
