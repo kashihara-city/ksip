@@ -26,6 +26,15 @@
 #                                 interface, goes from the address the
 #                                 registration goes from (the interface's)
 #                                 instead of being refused ("no laddr").
+#   re/src/sip/transp.c           an outgoing TCP or TLS connection is bound
+#                                 to the address its transport listens on
+#                                 when there is one such transport on one
+#                                 specific address (net_interface set): it
+#                                 leaves from the interface chosen, as UDP
+#                                 does, not from whichever interface the
+#                                 routing table prefers. With a transport
+#                                 per local address (no interface chosen),
+#                                 the system picks, as before.
 #
 # Building and embedding (no change to what goes on the wire):
 #   baresip/src/main.c            take only "-f PROFILE_DIRECTORY" on the
@@ -59,7 +68,7 @@ def restore(archive_name: str, base: Path, relative_paths: list[str]):
 
 
 re_base = ROOT / "temp/vendor/re"
-restore("re", re_base, ["src/sipevent/subscribe.c", "src/rtp/rtp.c"])
+restore("re", re_base, ["src/sipevent/subscribe.c", "src/rtp/rtp.c", "src/sip/transp.c"])
 
 # After an un-SUBSCRIBE is answered 2xx, libre keeps the subscription, and with
 # it a reference to the SIP stack, for up to ten seconds waiting for the
@@ -161,6 +170,73 @@ text = text.replace(listen, '''\t\tif (!min_port && !max_port)
 \t\t\terr = udp_range_listen(rs, ip, min_port, max_port);
 ''')
 rtp.write_text(text)
+
+# With net_interface set, the SIP transports listen on that interface's
+# address and UDP leaves from it; a TCP or TLS connection was made with its
+# address left to the system, which on a Windows machine that prefers another
+# interface in its routing table leaves from that one, against the setting.
+# The connection is bound to the transport's address when there is one such
+# transport on one specific address. Without net_interface, baresip adds a
+# transport per local address (uag.c: sip_listen's address part, when unset,
+# is each address in turn), and the system picks, as before.
+transp = re_base / "src/sip/transp.c"
+text = transp.read_text()
+connect = '''	conncfg = sip_conncfg_find(sip, dst);
+	if (conncfg && conncfg->srcport) {
+		struct sa src;
+		sa_init(&src, sa_af(dst));
+		sa_set_port(&src, conncfg->srcport);
+		err = tcp_connect_bind(&conn->tc, dst,
+				       tcp_estab_handler, tcp_recv_handler,
+				       tcp_close_handler, &src, conn);
+	}
+	else {
+		err = tcp_connect(&conn->tc, dst,
+				  tcp_estab_handler, tcp_recv_handler,
+				  tcp_close_handler, conn);
+	}
+'''
+if text.count(connect) != 1:
+    raise SystemExit("patch-baresip: the TCP connect in transp.c has changed")
+text = text.replace(connect, '''	conncfg = sip_conncfg_find(sip, dst);
+	{
+		/* KSIP: the connection is bound to the address its transport
+		 * listens on when there is one such transport of its kind on one
+		 * specific address (net_interface set: the interface chosen),
+		 * so that it leaves from that interface, as UDP does, and not
+		 * from whichever interface the routing table prefers. With a
+		 * transport per local address, or one on every address, the
+		 * system picks the source, as before. */
+		struct sa src;
+		struct le *tle;
+		unsigned specific = 0;
+		sa_init(&src, sa_af(dst));
+		for (tle = sip->transpl.head; tle; tle = tle->next) {
+			const struct sip_transport *t = tle->data;
+			if (t->tp != conn->tp || sa_af(&t->laddr) != sa_af(dst))
+				continue;
+			if (!sa_isset(&t->laddr, SA_ADDR) || sa_is_any(&t->laddr))
+				continue;
+			if (++specific == 1) {
+				sa_cpy(&src, &t->laddr);
+				sa_set_port(&src, 0);
+			}
+		}
+		if (specific != 1)
+			sa_init(&src, sa_af(dst));
+		if (conncfg && conncfg->srcport)
+			sa_set_port(&src, conncfg->srcport);
+		if (sa_isset(&src, SA_ADDR) || sa_port(&src))
+			err = tcp_connect_bind(&conn->tc, dst,
+					       tcp_estab_handler, tcp_recv_handler,
+					       tcp_close_handler, &src, conn);
+		else
+			err = tcp_connect(&conn->tc, dst,
+					  tcp_estab_handler, tcp_recv_handler,
+					  tcp_close_handler, conn);
+	}
+''')
+transp.write_text(text)
 
 baresip = ROOT / "temp/vendor/baresip"
 restore("baresip", baresip, ["src/main.c", "src/stream.c", "src/ua.c", "CMakeLists.txt"])

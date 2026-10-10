@@ -420,13 +420,14 @@ struct Phone {
     /// How many orders in a row (the transports bound anew, the engine
     /// restarted) left the registration off its address, up to
     /// NETWORK_RETRIES; what to say once it is on it, when an order was
-    /// made for that (as against the address merely back); the addresses
-    /// given up on after the retries, not asked about again while they
-    /// stand; and a restart owed in place of the transports given up on.
+    /// made for that (as against the address merely back); and the
+    /// addresses given up on after the retries, not asked about again
+    /// while they stand. The count and what was given up on outlive an
+    /// engine: one restarted into the same standing is not restarted
+    /// without end.
     network_retries: u8,
     net_order: Option<String>,
     net_given_up: Option<(String, Option<NetObserved>)>,
-    network_restart_owed: bool,
     /// The registration was found off the address it should be, and the
     /// window was told (the notice stands until another): what makes it
     /// acceptable again something to say (network_settled), rather than
@@ -569,7 +570,6 @@ impl Actor {
             network_retries: 0,
             net_order: None,
             net_given_up: None,
-            network_restart_owed: false,
             address_lost: false,
             work_serial: 0,
             exclusive: Vec::new(),
@@ -999,25 +999,19 @@ impl Actor {
             }),
             Job::Reconnect => Box::pin(async move {
                 // Queued when the registration was found off the chosen
-                // adapter's addresses with another to restart on, when the
-                // transports could not be bound anew and no call is up, or
-                // when a start failed for the adapter having no address
-                // and it has one again. It waits its turn behind the flow
-                // under way, and is judged again by then: not made unless
-                // still asked for (the person unregistered, the address
-                // back, another engine since). A call that is up is not
-                // waited for: its sockets went with the address, and it
-                // cannot be saved.
+                // adapter's addresses with another to restart on, or when
+                // a start failed for the adapter having no address and it
+                // has one again. It waits its turn behind the flow under
+                // way, and is judged again by then: not made unless still
+                // asked for (the person unregistered, the address back,
+                // another engine since). A call that is up is not waited
+                // for: its sockets went with the address, and it cannot be
+                // saved.
                 let still_wanted = {
-                    let mut p = s.borrow_mut();
-                    let owed = std::mem::take(&mut p.network_restart_owed);
+                    let p = s.borrow();
                     let start_again = p.link.is_none()
-                        && p.net_observed.as_ref().is_some_and(|obs| {
-                            let (adapter, addresses) = (obs.adapter.clone(), obs.adapter_addresses.clone());
-                            p.adapter_back(&adapter, &addresses)
-                        });
-                    start_again
-                        || (p.link.is_some() && !p.closing && !p.view.unregistered_by_choice && (owed || p.network_standing() == Standing::Restart))
+                        && p.net_observed.as_ref().is_some_and(|obs| p.adapter_back(&obs.adapter, &obs.adapter_addresses));
+                    start_again || (p.link.is_some() && !p.closing && !p.view.unregistered_by_choice && p.network_standing() == Standing::Restart)
                 };
                 if !still_wanted {
                     return;
@@ -1483,14 +1477,14 @@ impl Phone {
         self.maintenance_off_owed = false;
         self.live_owed = None;
         // A new engine: nothing of its registration is reported yet, and
-        // nothing is owed from the one before.
+        // no notice or order of the one before stands. What was tried for
+        // the addresses as they are, and given up on, stands (the retries
+        // and net_given_up): an engine restarted into the same standing is
+        // not restarted without end.
         self.reported_local.clear();
         self.reported_registrar.clear();
-        self.network_retries = 0;
         self.network_pending = None;
         self.net_order = None;
-        self.net_given_up = None;
-        self.network_restart_owed = false;
         self.address_lost = false;
         self.link = Some(ready.link);
         self.view.running = true;
@@ -1679,9 +1673,8 @@ impl Phone {
     /// nothing to restart on, said once and waited for. An order made
     /// NETWORK_RETRIES times in a row without the registration becoming
     /// acceptable is given up on, said so, and not made again for the same
-    /// addresses; a restart stands in for the transports when no call is
-    /// up. Called whenever a report or a read came, and by the look at the
-    /// deadline.
+    /// addresses. Called whenever a report or a read came, and by the look
+    /// at the deadline.
     fn network_judge(&mut self) -> NetworkAction {
         let now = Instant::now();
         let standing = self.network_standing();
@@ -1728,10 +1721,9 @@ impl Phone {
                             self.network_retries = 0;
                             self.net_order = None;
                             self.net_given_up = Some((self.reported_local.clone(), self.net_observed.clone()));
-                            self.network_restart_owed = standing == Standing::Reset && self.phone.calls().is_empty();
                             self.services.log(LOG_APP, "ksip: the engine was asked that often without its registration going from the address it should; given up on until the addresses change".into());
                             self.network_settled(message("NETWORK_RESET_FAILED"));
-                            return if self.network_restart_owed { NetworkAction::Restart } else { NetworkAction::Nothing };
+                            return NetworkAction::Nothing;
                         }
                         self.network_retries += 1;
                         let (registrar, source, addresses) = {
@@ -3701,8 +3693,8 @@ mod tests {
             assert_eq!(p.network_retries, n);
         }
         p.network_pending = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(p.network_judge(), NetworkAction::Restart, "given up on: a restart stands in, no call being up");
-        assert!(p.network_retries == 0 && p.network_restart_owed && !p.address_lost && p.view.error == message("NETWORK_RESET_FAILED"));
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "given up on: said so, nothing more");
+        assert!(p.network_retries == 0 && !p.address_lost && p.view.error == message("NETWORK_RESET_FAILED"));
         assert_eq!(p.network_judge(), NetworkAction::Nothing, "the same addresses: not asked again");
         assert!(p.network_pending.is_none());
         seen(&mut p, "192.0.2.8");
