@@ -360,6 +360,9 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         let (services, initial) = Services::open();
+        // The first line of a run: which build this is, so that a log from
+        // another machine says what it was made from (build.rs, KSIP_SOURCE).
+        services.log_app(format!("ksip: version {}, source {}", env!("CARGO_PKG_VERSION"), env!("KSIP_SOURCE")));
         let (phone, published) = crate::phone_actor::spawn(services.clone(), initial);
         services.attach_phone(phone.clone());
         Self {

@@ -67,5 +67,30 @@ fn main() {
     ] {
         println!("cargo:rustc-link-lib={name}");
     }
+    // Where the build came from, for the first line of the app log (app.rs):
+    // the tag the version was cut at, the commits since it and the commit
+    // (git describe, "v0.0.14-2-gbab294f"), with "-dirty" when the tree had
+    // changes that were not committed. A checkout without git, or without
+    // the tags, gives what it can (the commit alone, or "no git"). Looked at
+    // again whenever the sources or the checked-out commit change, so that
+    // it is never stale.
+    let source = std::process::Command::new("git")
+        .args(["describe", "--tags", "--long", "--dirty", "--always"])
+        .current_dir(&root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "no git".to_string());
+    println!("cargo:rustc-env=KSIP_SOURCE={source}");
+    for name in ["src-tauri/src", "src-web", "src-native", ".git/HEAD", ".git/index"] {
+        println!("cargo:rerun-if-changed={}", root.join(name).display());
+    }
+    if let Ok(head) = fs::read_to_string(root.join(".git/HEAD")) {
+        if let Some(reference) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed={}", root.join(".git").join(reference).display());
+        }
+    }
     tauri_build::build()
 }

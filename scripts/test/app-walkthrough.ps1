@@ -16,6 +16,8 @@ try {
     if(!(Test-Path "$root/temp/build/ksip-ui/ready")){throw 'SIP peer not ready'}
     $started=[DateTime]::Now
     $app=Start-KsipApp "$Folder/ksip.exe" "$root/temp/build/ui-failure.txt"
+    # The first thing a run writes: which build it is.
+    Wait-KsipLog 'app' 'ksip: version ' 10 | Out-Null
     Wait-Class 'registration' 'reg-register_ok'
     Wait-Id 'refresh-devices' | Out-Null
     Wait-Id 'open-sound-control' | Out-Null
