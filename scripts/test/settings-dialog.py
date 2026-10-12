@@ -187,7 +187,7 @@ async function checks(){
   $('tab-audio').click();
   const onAudio=[visible('server'),visible('aec'),visible('save-settings'),$('tab-audio').getAttribute('aria-selected')];
   $('tab-audio').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
-  const onNext=[visible('auto_answer'),visible('aec')];
+  const onNext=[visible('incoming_action'),visible('aec')];
   check(JSON.stringify(onOpen)==='[true,false,true,"true"]'&&JSON.stringify(onAudio)==='[false,true,true,"true"]'&&JSON.stringify(onNext)==='[true,false]',
     'the dialog opens on the account tab, shows one tab at a time, moves by arrow key, and keeps the save in sight',[onOpen,onAudio,onNext]);
   $('configuration').close();await settle();

@@ -94,22 +94,22 @@ try {
     Wait-Text 'record-status' '自動' | Out-Null
     'PASS: 録音した通話に「録音を再生」が出て、録音は日時と相手番号の名前のMP3になる'
     # One box narrows both panels: the history by number, the log by tag and
-    # words, and says so while it does.
-    Focus-Id 'panel-filter'
-    # Not z: Set-KsipForeground taps Alt, and Alt+Z opens the GeForce overlay.
-    [System.Windows.Forms.SendKeys]::SendWait('qqq')
+    # words, and says so while it does. The box is set as a value, as the
+    # dial box is: keys typed into it reach the page only once the window's
+    # keyboard focus is in the WebView, which UI Automation's focus does not
+    # promise, and the typing is not what is tested here.
+    (Value-Id 'panel-filter').SetValue('qqq')
     Wait-Text 'call-history' 'フィルターに一致する通話はありません' | Out-Null
     Wait-Id 'filter-active' | Out-Null
-    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}'+$extension)
+    (Value-Id 'panel-filter').SetValue($extension)
     Wait-Text 'call-history' '\d+/\d+ \d+:\d+' | Out-Null
     Click-Id 'logs-tab';Wait-Text 'logs' 'CALL_ESTABLISHED' | Out-Null
     # The words are matched regardless of case; a line about another event goes.
-    Focus-Id 'panel-filter'
-    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}register_ok')
+    (Value-Id 'panel-filter').SetValue('register_ok')
     $end=[DateTime]::UtcNow.AddSeconds(5)
     while((Text-Id 'logs') -match 'CALL_ESTABLISHED' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
     if((Text-Id 'logs') -match 'CALL_ESTABLISHED' -or (Text-Id 'logs') -notmatch 'REGISTER_OK'){throw "The log filter did not narrow the lines: $((Text-Id 'logs').Substring(0,[Math]::Min(200,(Text-Id 'logs').Length)))"}
-    [System.Windows.Forms.SendKeys]::SendWait('^a{BACKSPACE}')
+    (Value-Id 'panel-filter').SetValue('')
     Wait-Text 'logs' 'CALL_ESTABLISHED' | Out-Null
     $end=[DateTime]::UtcNow.AddSeconds(5)
     while((Find-Id 'filter-active') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
@@ -119,27 +119,37 @@ try {
     # The number can be taken to another application. The button sits in the row,
     # and its name ends with the number it copies.
     $button=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button)
-    $copy=(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$button)
-    if(!$copy){throw 'The history row has no copy button'}
-    $number=($copy.Current.Name -split ' ')[-1]
     Set-Clipboard -Value 'まだコピーしていません'
-    Press $copy 'コピー'
-    $end=[DateTime]::UtcNow.AddSeconds(5)
-    while((Get-Clipboard) -ne $number -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    # The rows are drawn anew as the history polls, so the button found a
+    # moment ago can be gone by the press: it is found again until one takes.
+    $end=[DateTime]::UtcNow.AddSeconds(10)
+    do{
+        $copy=(Wait-Id 'call-history').FindFirst([Windows.Automation.TreeScope]::Descendants,$button)
+        if(!$copy){throw 'The history row has no copy button'}
+        $number=($copy.Current.Name -split ' ')[-1]
+        try{Press $copy 'コピー'}catch{Start-Sleep -Milliseconds 200}
+        $wait=[DateTime]::UtcNow.AddSeconds(2)
+        while((Get-Clipboard) -ne $number -and [DateTime]::UtcNow -lt $wait){Start-Sleep -Milliseconds 200}
+    }while((Get-Clipboard) -ne $number -and [DateTime]::UtcNow -lt $end)
     if((Get-Clipboard) -ne $number){throw "Clipboard has $(Get-Clipboard) instead of $number"}
     # Selecting lines to copy holds the log still: the display says so, new
     # lines wait, Ctrl+A then Ctrl+C takes the log, and a click elsewhere lets
-    # the lines in.
+    # the lines in. The keys are sent again, the focus taken again first,
+    # while the clipboard has not taken the lines: the keyboard reaches the
+    # page a moment after the focus does.
     Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
     Focus-Id 'logs'
     Wait-Id 'logs-paused' | Out-Null
     $held=Text-Id 'logs'
     Set-Clipboard -Value 'まだコピーしていません'
-    [System.Windows.Forms.SendKeys]::SendWait('^a')
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait('^c')
-    $end=[DateTime]::UtcNow.AddSeconds(5)
-    while((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \[' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
+    $end=[DateTime]::UtcNow.AddSeconds(15)
+    do{
+        Focus-Id 'logs'
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        Start-Sleep -Milliseconds 300
+        [System.Windows.Forms.SendKeys]::SendWait('^c')
+        Start-Sleep -Milliseconds 700
+    }while((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \[' -and [DateTime]::UtcNow -lt $end)
     if((Get-Clipboard) -notmatch '\d+/\d+ \d+:\d+:\d+ \['){throw "Clipboard has $(Get-Clipboard) instead of log lines"}
     # A reconnect writes log lines while the selection holds the display:
     # registered, the switch unregisters first (and asks), then connects again.
@@ -153,16 +163,19 @@ try {
     if(Find-Id 'logs-paused'){throw 'The log display is still held after clicking elsewhere'}
     if((Text-Id 'logs') -eq $held){throw 'The lines that arrived meanwhile did not show'}
     'PASS: ログを選択している間は表示が止まり、コピーでき、離れると追いつく'
-    # Clearing asks first, and names the list that is in front.
+    # Clearing is in the settings dialog ("その他"): each asks first, naming
+    # its list, and happens at once, whether or not the dialog is saved.
     Click-Id 'logs-tab';Wait-Text 'logs' 'REGISTER' | Out-Null
-    Click-Id 'clear-panel';Wait-Text 'confirm' 'ログをクリアします' | Out-Null
+    Click-Id 'settings-button';Wait-Id 'save-settings' | Out-Null;Click-Id 'tab-other'
+    Click-Id 'clear-logs';Wait-Text 'confirm' 'ログをクリアします' | Out-Null
     Click-Id 'confirm-ok'
+    Click-Id 'clear-history';Wait-Text 'confirm' '通話履歴をクリアします' | Out-Null
+    Click-Id 'confirm-ok'
+    Click-Id 'close-settings'
     $end=[DateTime]::UtcNow.AddSeconds(5)
     while((Text-Id 'logs') -match 'REGISTER' -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 200}
     if((Text-Id 'logs') -match 'REGISTER'){throw 'The log was not cleared'}
     Click-Id 'history-tab'
-    Click-Id 'clear-panel';Wait-Text 'confirm' '通話履歴をクリアします' | Out-Null
-    Click-Id 'confirm-ok'
     Wait-Class 'call-history' 'empty'
     Wait-Class 'line-2' 'call-idle'
     # Outside a call there is no codec to name.

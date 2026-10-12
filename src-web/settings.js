@@ -1,10 +1,12 @@
 // The settings dialog: what it shows when opened, how its parts depend on
 // each other, the echo calibration, and what it saves.
-import {$, invoke, logUi} from './ui.js';
+import {$, invoke, logUi, ask} from './ui.js';
 import {t, fill} from './i18n.js';
 import {state, busy, run, setError, managed, managedButton} from './session.js';
 import {BUTTON_MAIN, BUTTON_INDEXES, defaultTitle} from './buttons.js';
 import {render} from './phone.js';
+import {clearHistory} from './history.js';
+import {clearLogs} from './logs.js';
 
 // The codecs the setting can name, in the order offered when it names none.
 const CODEC_NAMES=['opus','G722','PCMU','PCMA'];
@@ -365,6 +367,20 @@ export function init(){
     $('settings-error').hidden=true;$('settings-file-note').hidden=true;
     try{const path=await invoke('export_settings_file');if(path){const note=$('settings-file-note');note.textContent=fill('SETTINGS_EXPORTED',path);note.hidden=false;}}
     catch(e){showFileError('export settings',e);}
+  });
+  // Clearing the log or the call history asks first and happens at once:
+  // the dialog's save, or closing it without saving, has no say in it.
+  $('clear-logs').addEventListener('click',async()=>{
+    if(!await ask(fill('CLEAR_CONFIRM',t('PANEL_LOGS'))))return;
+    $('settings-error').hidden=true;
+    try{await invoke('clear_logs');clearLogs();}
+    catch(e){showFileError('clear logs',e);}
+  });
+  $('clear-history').addEventListener('click',async()=>{
+    if(!await ask(fill('CLEAR_CONFIRM',t('PANEL_HISTORY'))))return;
+    $('settings-error').hidden=true;
+    try{await invoke('clear_call_history');clearHistory();}
+    catch(e){showFileError('clear history',e);}
   });
   $('calibrate-aec').addEventListener('click',()=>calibrateAec(false));
   $('calibrate-aec-careful').addEventListener('click',()=>calibrateAec(true));

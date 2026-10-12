@@ -63,7 +63,7 @@
         <div id="aec-metrics" role="status" hidden><span id="aec-core"></span><span id="aec-delay"></span><span id="aec-levels"></span><span id="aec-flow"></span><span id="aec-agc"></span></div>
       </footer>
       <section class="bottom-panel">
-        <div class="panel-tabs" role="tablist"><button id="history-tab" class="text active" role="tab" aria-selected="true" aria-controls="call-history" data-i18n="PANEL_HISTORY"></button><button id="logs-tab" class="text" role="tab" aria-selected="false" aria-controls="logs" data-i18n="PANEL_LOGS"></button><span id="detail-log-active" class="detail-log-active" role="status" data-i18n="DETAIL_LOG_ACTIVE" hidden></span><input id="panel-filter" type="search" autocomplete="off" placeholder="" data-i18n-placeholder="PANEL_FILTER" data-i18n-label="PANEL_FILTER"><span id="filter-active" class="hint" role="status" data-i18n="PANEL_FILTERING" hidden></span><span class="panel-status"><span id="logs-paused" class="hint" role="status" data-i18n="LOGS_PAUSED" hidden></span></span><button id="clear-panel" class="text" data-i18n="PANEL_CLEAR"></button></div>
+        <div class="panel-tabs" role="tablist"><button id="history-tab" class="text active" role="tab" aria-selected="true" aria-controls="call-history" data-i18n="PANEL_HISTORY"></button><button id="logs-tab" class="text" role="tab" aria-selected="false" aria-controls="logs" data-i18n="PANEL_LOGS"></button><span id="detail-log-active" class="detail-log-active" role="status" data-i18n="DETAIL_LOG_ACTIVE" hidden></span><input id="panel-filter" type="search" autocomplete="off" placeholder="" data-i18n-placeholder="PANEL_FILTER" data-i18n-label="PANEL_FILTER"><span id="filter-active" class="hint" role="status" data-i18n="PANEL_FILTERING" hidden></span><span class="panel-status"><span id="logs-paused" class="hint" role="status" data-i18n="LOGS_PAUSED" hidden></span></span></div>
         <div id="call-history" class="history" role="tabpanel"></div>
         <pre id="logs" role="tabpanel" tabindex="0" hidden></pre>
       </section>
@@ -116,7 +116,7 @@
           </ul>
           <p class="group-label" data-i18n="SETTINGS_DTMF"></p>
           <p class="hint" data-i18n="SETTINGS_DTMF_HINT"></p>
-          <label><span data-i18n="SETTINGS_DTMF_MODE"></span>
+          <label><span class="sr-only" data-i18n="SETTINGS_DTMF_MODE"></span>
             <select id="dtmf_mode">
               <option value="rtp" data-i18n="DTMF_MODE_RTP"></option>
               <option value="info" data-i18n="DTMF_MODE_INFO"></option>
@@ -168,8 +168,7 @@
           <div class="sound-settings"><label class="sound-row"><span data-i18n="SETTINGS_SOUND_RING"></span><input id="sound_ring" maxlength="400" placeholder="" data-i18n-placeholder="SETTINGS_SOUND_PLACEHOLDER"><button type="button" class="text" data-sound="ring" data-i18n="BROWSE"></button></label><label class="sound-row"><span data-i18n="SETTINGS_SOUND_RINGBACK"></span><input id="sound_ringback" maxlength="400" placeholder="" data-i18n-placeholder="SETTINGS_SOUND_PLACEHOLDER"><button type="button" class="text" data-sound="ringback" data-i18n="BROWSE"></button></label><label class="sound-row"><span data-i18n="SETTINGS_SOUND_BUSY"></span><input id="sound_busy" maxlength="400" placeholder="" data-i18n-placeholder="SETTINGS_SOUND_PLACEHOLDER"><button type="button" class="text" data-sound="busy" data-i18n="BROWSE"></button></label><label class="sound-row"><span data-i18n="SETTINGS_SOUND_NOTFOUND"></span><input id="sound_notfound" maxlength="400" placeholder="" data-i18n-placeholder="SETTINGS_SOUND_PLACEHOLDER"><button type="button" class="text" data-sound="notfound" data-i18n="BROWSE"></button></label><label class="sound-row"><span data-i18n="SETTINGS_SOUND_ERROR"></span><input id="sound_error" maxlength="400" placeholder="" data-i18n-placeholder="SETTINGS_SOUND_PLACEHOLDER"><button type="button" class="text" data-sound="error" data-i18n="BROWSE"></button></label></div>
         </section>
         <section id="settings-calls" class="settings-tab" role="tabpanel" aria-labelledby="tab-calls" hidden>
-          <h3 data-i18n="SETTINGS_INCOMING"></h3><label class="check"><input id="auto_answer" type="checkbox"><span data-i18n="SETTINGS_AUTO_ANSWER"></span></label>
-          <p class="hint" data-i18n="SETTINGS_AUTO_ANSWER_HINT"></p><label><span data-i18n="SETTINGS_INCOMING_ACTION"></span>
+          <h3 data-i18n="SETTINGS_INCOMING"></h3><label><span data-i18n="SETTINGS_INCOMING_ACTION"></span>
           <select id="incoming_action">
             <option value="show" data-i18n="SETTINGS_INCOMING_SHOW"></option>
             <option value="notify" data-i18n="SETTINGS_INCOMING_NOTIFY"></option>
@@ -209,9 +208,16 @@
         <section id="settings-other" class="settings-tab" role="tabpanel" aria-labelledby="tab-other" hidden>
           <h3 data-i18n="SETTINGS_LOG"></h3><label class="check"><input id="detail_log" type="checkbox"><span data-i18n="SETTINGS_DETAIL_LOG"></span></label>
           <p class="hint" data-i18n="SETTINGS_DETAIL_LOG_HINT"></p>
+          <div class="settings-file"><button id="clear-logs" type="button" data-i18n="SETTINGS_CLEAR_LOGS"></button></div>
+          <h3 data-i18n="PANEL_HISTORY"></h3>
+          <div class="settings-file"><button id="clear-history" type="button" data-i18n="SETTINGS_CLEAR_HISTORY"></button></div>
+          <p class="hint" data-i18n="SETTINGS_CLEAR_HINT"></p>
+          <h3 data-i18n="SETTINGS_TITLE"></h3>
           <div class="settings-file"><button id="import-settings" type="button" data-i18n="SETTINGS_IMPORT"></button><button id="export-settings" type="button" data-i18n="SETTINGS_EXPORT"></button></div>
           <p class="hint" data-i18n="SETTINGS_FILE_HINT"></p>
           <p id="settings-file-note" class="hint" role="status" hidden></p>
+          <h3 data-i18n="SETTINGS_TESTING"></h3><label class="check"><input id="auto_answer" type="checkbox"><span data-i18n="SETTINGS_AUTO_ANSWER"></span></label>
+          <p class="hint" data-i18n="SETTINGS_AUTO_ANSWER_HINT"></p>
         </section>
         <div class="settings-footer">
           <p class="hint" data-i18n="SETTINGS_SAVE_HINT"></p>
