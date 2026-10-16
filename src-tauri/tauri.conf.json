@@ -8,16 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "KSIP",
-        "width": 520,
-        "height": 672,
-        "minWidth": 420,
-        "minHeight": 620,
-        "dragDropEnabled": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; img-src 'self' data:"
     }

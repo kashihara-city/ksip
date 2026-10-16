@@ -157,6 +157,23 @@ pub fn run(state: AppState) {
             commands::quit_app,
         ])
         .setup(move |app| {
+            // The window is made here rather than from the configuration, so
+            // that WebView2's data (its cache; the page keeps nothing) goes
+            // with the rest of KSIP's scratch files, under the data folder
+            // (temp\WebView2\EBWebView), and not into a folder of the
+            // identifier's name beside it.
+            let window = tauri::utils::config::WindowConfig {
+                title: "KSIP".into(),
+                width: 520.0,
+                height: 672.0,
+                min_width: Some(420.0),
+                min_height: Some(620.0),
+                drag_drop_enabled: false,
+                ..Default::default()
+            };
+            tauri::WebviewWindowBuilder::from_config(app, &window)?
+                .data_directory(state.services.data.join("temp").join("WebView2"))
+                .build()?;
             let text = message::windows_text;
             let open = MenuItem::with_id(app, "open", text("TRAY_OPEN"), true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", text("TRAY_QUIT"), true, None::<&str>)?;
