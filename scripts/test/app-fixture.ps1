@@ -2,6 +2,9 @@
 # Dot-source this file; it brings the UI Automation helpers with it.
 . "$PSScriptRoot/ui-automation.ps1"
 $script:KsipFixture = "$PSScriptRoot/app_fixture.py"
+# The engine's scratch folder of the test profile: its config and the CA
+# file are read by the tests that check what a save put there.
+function Get-KsipProfileFolder { Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'temp/build/test-ui-ksip/temp/profile' }
 $script:KsipOldProfile = $null
 function Start-KsipProfile([string]$mode = '') {
     # Every app test runs against a throw-away registry profile and credential.
@@ -48,7 +51,7 @@ function Get-KsipLog {
 # the registration shown until then is the old engine's, so the file is read
 # until it matches (or the time is up), not once.
 function Wait-EngineConfig([string]$pattern, [int]$seconds = 25) {
-    $path = Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config'
+    $path = Join-Path (Get-KsipProfileFolder) 'config'
     $end = [DateTime]::UtcNow.AddSeconds($seconds)
     do {
         $config = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue

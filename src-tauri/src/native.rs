@@ -27,10 +27,11 @@ fn filter_list(text: &str) -> Vec<u16> {
     list
 }
 include!(concat!(env!("OUT_DIR"), "/sounds.rs"));
-/// Writes the built-in sounds to TEMP and returns that folder. A failure here only
-/// means the call tones stay silent, so the caller treats None as "no sounds".
-pub fn sounds() -> Option<PathBuf> {
-    let dir = std::env::temp_dir().join("ksip-sound");
+/// Writes the built-in sounds to the scratch folder under the data folder
+/// and returns that folder. A failure here only means the call tones stay
+/// silent, so the caller treats None as "no sounds".
+pub fn sounds(data: &std::path::Path) -> Option<PathBuf> {
+    let dir = data.join("temp").join("sound");
     std::fs::create_dir_all(&dir).ok()?;
     for (name, bytes) in SOUNDS {
         let path = dir.join(name);

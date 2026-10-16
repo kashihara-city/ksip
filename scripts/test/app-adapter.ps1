@@ -7,12 +7,14 @@ Use-KsipBuild $Folder $PSBoundParameters.ContainsKey('Folder')
 $version=Get-KsipVersion
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
 $key='HKCU:\Software\KashiharaCity\ksip\Test\test-ui-ksip'
-$configPath=Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config'
-# The adapter that owns the address this machine registers from.
-$address=(Get-NetIPAddress -AddressFamily IPv4 -PrefixOrigin Dhcp,Manual -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' } |
-    Sort-Object SkipAsSource,InterfaceMetric | Select-Object -First 1)
-if(!$address){throw 'No usable IPv4 address on this machine'}
+$configPath=Join-Path (Get-KsipProfileFolder) 'config'
+# The adapter that owns the address this machine registers from: the one
+# Windows routes to the PBX through. A virtual adapter (WSL's, say) can have
+# the better metric and no way to the PBX, so the metric does not decide.
+$pbx=[System.Net.Dns]::GetHostAddresses((Get-KsipLab).server) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
+if(!$pbx){throw 'The PBX address could not be resolved'}
+$address=(Find-NetRoute -RemoteIPAddress $pbx.IPAddressToString | Where-Object { $_.IPAddress } | Select-Object -First 1)
+if(!$address){throw 'No route to the PBX from this machine'}
 $guid=(Get-NetAdapter -InterfaceIndex $address.InterfaceIndex).InterfaceGuid
 function Set-Adapter([string]$value) {
     # The adapter is a registry value of its own, like every setting.

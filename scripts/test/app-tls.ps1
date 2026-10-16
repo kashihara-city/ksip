@@ -12,7 +12,7 @@ try {
     $app=Start-KsipApp "$Folder/ksip.exe" "$root/temp/build/ui-failure.txt"
     Wait-Class 'registration' 'reg-register_ok'
     # The engine configuration is built from the saved settings, not hard coded.
-    $config=Get-Content (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config') -Raw
+    $config=Get-Content (Join-Path (Get-KsipProfileFolder) 'config') -Raw
     foreach($line in 'sip_transports TLS','ksip_sip_transport TLS','ksip_mediaenc srtp-mand','sip_verify_server yes'){
         if($config -notmatch [regex]::Escape($line)){throw "Engine config is missing: $line"}
     }
@@ -49,7 +49,7 @@ try {
         Wait-Class 'registration' 'reg-register_ok'
         if($config -notmatch 'sip_cafile .*windows-trust\.pem'){throw 'Engine config does not use the Windows store'}
         if($config -notmatch 'sip_verify_server yes'){throw 'Engine config does not verify the server'}
-        if(!(Test-Path (Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/windows-trust.pem'))){throw 'windows-trust.pem was not written'}
+        if(!(Test-Path (Join-Path (Get-KsipProfileFolder) 'windows-trust.pem'))){throw 'windows-trust.pem was not written'}
         Wait-Text 'transport-label' '^TLS$' | Out-Null
         "PASS: 認証局を指定しなくてもWindowsの証明書ストアで検証して登録した"
         $storeResult=$true

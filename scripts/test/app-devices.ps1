@@ -7,7 +7,7 @@ Use-KsipBuild $Folder $PSBoundParameters.ContainsKey('Folder')
 $version=Get-KsipVersion
 New-Item -ItemType Directory -Force "$root/temp/reports" | Out-Null
 $key='HKCU:\Software\KashiharaCity\ksip\Test\test-ui-ksip'
-$configPath=Join-Path $env:TEMP 'ksip-profile/test-ui-ksip/config'
+$configPath=Join-Path (Get-KsipProfileFolder) 'config'
 # A real microphone of this machine, read the way the app reads them.
 $helper=Join-Path $root 'temp/cargo-target/debug/examples/audio-devices.exe'
 if(!(Test-Path $helper)){throw 'Run scripts/test/rust.ps1 first: the device helper is missing'}

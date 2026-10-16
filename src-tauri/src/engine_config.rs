@@ -85,7 +85,7 @@ impl Services {
     /// of a running engine. With the folder, what could not be replaced.
     pub fn prepare_sounds(&self, s: &Settings) -> (Option<PathBuf>, Vec<String>) {
         let mut notes = Vec::new();
-        let dir = crate::native::sounds();
+        let dir = crate::native::sounds(&self.data);
         if let Some(dir) = &dir {
             for (key, chosen) in Settings::SOUND_KEYS.iter().zip(s.sounds()) {
                 if let Err(e) = self.replace_sound(dir, key, chosen) {
@@ -109,11 +109,12 @@ impl Services {
         let converted = crate::wav::to_pcm16(&bytes)?;
         std::fs::write(dir.join(format!("{key}.wav")), converted).map_err(err)
     }
-    /// Where the engine's generated config lives. It is rebuilt on every connect
-    /// from the stored settings, so it is scratch space rather than user data.
+    /// Where the engine's generated config lives: the scratch folder under
+    /// the data folder (which is the profile's own already). It is rebuilt
+    /// on every connect from the stored settings, so it is scratch space
+    /// rather than user data, and can be deleted whole.
     pub fn profile_dir(&self) -> PathBuf {
-        let name = self.store.target.rsplit('/').next().unwrap_or("default");
-        std::env::temp_dir().join("ksip-profile").join(name)
+        self.data.join("temp").join("profile")
     }
     /// The address to bind to, and the adapter to hand to the engine. An
     /// unset adapter keeps the historic behaviour of binding everything.

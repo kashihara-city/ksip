@@ -155,7 +155,7 @@ elif sys.argv[1]=='stop-engine':
     # The control connection takes nobody but the app, so a leftover engine of
     # the test profile is ended by its process: the one started with --engine
     # on this profile's folder.
-    folder=str(pathlib.Path(tempfile.gettempdir())/'ksip-profile'/PROFILE).replace('\\','\\\\').replace("'","''")
+    folder=str(ROOT/'temp/build'/PROFILE/'temp/profile').replace('\\','\\\\').replace("'","''")
     script=f"Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%--engine%'\" | Where-Object {{ $_.CommandLine -like '*{folder}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
     subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',script],check=False,capture_output=True)
     time.sleep(1)
