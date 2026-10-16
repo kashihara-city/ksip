@@ -1318,7 +1318,11 @@ impl Phone {
         // (a REGISTER from another address, the engine's own doing or an
         // order's) has the machine's addresses read again, and the
         // registration judged against them (Work::Address, network_judge).
-        if self.reported_local != report.local_address || self.reported_registrar != report.registrar_address {
+        // The registrar is kept while the engine names none (nothing sent
+        // since the transports were bound anew): the route to it is what
+        // the registration is judged against.
+        let registrar = if report.registrar_address.is_empty() { self.reported_registrar.clone() } else { report.registrar_address.clone() };
+        if self.reported_local != report.local_address || self.reported_registrar != registrar {
             if !report.local_address.is_empty() {
                 // Said with what brought it about: an order of the phone's,
                 // the engine's start (or a login), or the engine's own
@@ -1334,7 +1338,7 @@ impl Phone {
                 self.services.log(LOG_APP, format!("ksip: the registration goes from {} to {} now ({how})", report.local_address, report.registrar_address));
             }
             self.reported_local = report.local_address;
-            self.reported_registrar = report.registrar_address;
+            self.reported_registrar = registrar;
             self.look_at_network();
         }
         let v = &mut self.view;
@@ -1638,15 +1642,20 @@ impl Phone {
     /// judge (Unjudged) until a REGISTER went out, when the read was made
     /// for another adapter or registrar than the engine's, and when Windows
     /// has no route to the registrar (the registration fails and says so).
-    /// Whether anyone is there to act (an engine, the person not
-    /// unregistered on purpose) is the caller's to see.
+    /// A registration that failed without going out at all (the transports
+    /// bound anew found no address, as when the address had just come and
+    /// Windows had it as tentative still) leaves the engine with no
+    /// transport, and it cannot register by itself: that is off the address
+    /// as much as a REGISTER from the wrong one, and judged so, which has
+    /// it ordered again. Whether anyone is there to act (an engine, the
+    /// person not unregistered on purpose) is the caller's to see.
     fn network_standing(&self) -> Standing {
         let chosen = self.view.settings.network_adapter.trim();
         let Some(obs) = self.net_observed.as_ref().filter(|obs| obs.adapter == chosen) else {
             return Standing::Unjudged;
         };
         let local = self.reported_local.as_str();
-        if local.is_empty() {
+        if local.is_empty() && self.view.registration != "REGISTER_FAIL" {
             return Standing::Unjudged;
         }
         if chosen.is_empty() {
@@ -3620,6 +3629,31 @@ mod tests {
     /// stood for the settle. Nothing is judged without a route, without a
     /// REGISTER out, or by a read made for another registrar; the
     /// registration moved by the engine itself to the route's source is
+    /// A registration that failed without going out (the transports bound
+    /// anew found no address) leaves the engine with no transport: it is
+    /// judged off the address Windows sends from, and so ordered again;
+    /// before any REGISTER, and without a route, there is nothing to judge.
+    #[test]
+    fn a_registration_that_could_not_be_sent_is_off_its_address() {
+        let a = actor();
+        let mut p = a.shared.borrow_mut();
+        let seen = |p: &mut Phone, source: Option<&str>| {
+            p.net_observed = Some(NetObserved { adapter: String::new(), adapter_addresses: vec![], all: vec!["192.0.2.7".into()], registrar: "198.51.100.2".into(), route_source: source.map(str::to_string) });
+        };
+        p.reported_registrar = "198.51.100.2".into();
+        p.reported_local = String::new();
+        p.view.registration = "REGISTERING".into();
+        seen(&mut p, Some("192.0.2.7"));
+        assert_eq!(p.network_standing(), Standing::Unjudged, "no REGISTER out yet and none failed: nothing to judge");
+        p.view.registration = "REGISTER_FAIL".into();
+        assert_eq!(p.network_standing(), Standing::Reset, "failed without going out: off the address Windows sends from");
+        assert_eq!(p.network_judge(), NetworkAction::Nothing, "the settle starts");
+        assert!(p.network_pending.is_some() && p.view.error == message("NETWORK_ADDRESSES_CHANGED"));
+        p.network_pending = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(p.network_judge(), NetworkAction::Reset, "and the transports are bound anew by its turn");
+        seen(&mut p, None);
+        assert_eq!(p.network_standing(), Standing::Unjudged, "no route to the registrar: nothing to bind on");
+    }
     /// acceptable as any other.
     #[test]
     fn without_an_adapter_the_registration_off_the_routes_source_has_the_transports_bound_anew() {

@@ -167,6 +167,11 @@ int net_reset(re_printf *pf, void *) {
     if (!net) return ENOENT;
     net_flush_addresses(net);
     net_if_apply(add_local_address, net);
+    // Said plainly: with no address there is no transport, and the
+    // registration below cannot go out. Windows has an address that has just
+    // come as tentative for a moment, and it is not listed then; the app
+    // orders this anew once it sees the registration is not on an address.
+    if (!sa_isset(net_laddr_af(net, AF_INET), SA_ADDR)) warning("ksip: no local address was found: no SIP transport is bound until the next reset\n");
     const int err = uag_reset_transp(false, true);
     if (err) {
         warning("ksip: binding the SIP transports anew, or telling a call its new address, failed (%m)\n", err);
@@ -178,7 +183,7 @@ int net_reset(re_printf *pf, void *) {
         auto *ua = static_cast<struct ua *>(l->data);
         if (!account_regint(ua_account(ua))) continue;
         if (const int sent = ua_register(ua))
-            info("ksip: the registration could not be sent (%m); it is tried again when the addresses next change\n", sent);
+            info("ksip: the registration could not be sent (%m); the app orders the transports bound anew when it sees the registration off its address\n", sent);
     }
     return re_hprintf(pf, "Network reset\n");
 }

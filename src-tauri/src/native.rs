@@ -353,11 +353,15 @@ pub fn adapter_address(name: &str) -> Result<String, String> {
     }
     Ok(adapter.address)
 }
-/// Every ordinary IPv4 address the machine holds, on any adapter but the
-/// loopback, sorted: what the engine's SIP transports are bound to when no
-/// adapter is chosen, to tell a change by (phone_actor.rs, network_seen).
+/// Every ordinary IPv4 address the machine holds on an adapter that is up,
+/// but the loopback, sorted: what the engine's SIP transports are bound to
+/// when no adapter is chosen (libre lists the adapters that are up and no
+/// other), to tell a change by (phone_actor.rs, look_at_network). An
+/// adapter that comes up with the address it already had is a change here
+/// too, so that a registration judged on the addresses before is judged
+/// again.
 pub fn ipv4_addresses(adapters: Vec<Adapter>) -> Vec<String> {
-    let mut all: Vec<String> = adapters.into_iter().flat_map(|a| a.addresses).collect();
+    let mut all: Vec<String> = adapters.into_iter().filter(|a| a.up).flat_map(|a| a.addresses).collect();
     all.sort();
     all.dedup();
     all
