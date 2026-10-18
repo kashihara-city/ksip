@@ -1,4 +1,4 @@
-# Build Google WebRTC's audio library with the KSIP bridge using GN/Ninja.
+﻿# Build Google WebRTC's audio library with the KSIP bridge using GN/Ninja.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../dev-env.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -9,7 +9,12 @@ if (!(Test-Path -LiteralPath "$depot/gn.bat")) { throw 'Pinned depot_tools was n
 $env:PATH = "$depot;$env:PATH"
 $env:DEPOT_TOOLS_UPDATE = '0'
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-$env:vs2022_install = $vs
+# vs_toolchain.py looks for the installation under the environment variable
+# of its version (vs2022_install, vs2026_install) before the default folders,
+# and Build Tools live under Program Files (x86), where it does not look for
+# 2026: the one the dev shell entered is named by its major version.
+$year = if ($env:VSCMD_VER -match '^18\.') { '2026' } else { '2022' }
+Set-Item -Path "env:vs${year}_install" -Value $vs
 python -X utf8 "$root/scripts/build/patch-webrtc.py" $source
 if ($LASTEXITCODE -ne 0) { throw 'WebRTC bridge preparation failed' }
 $out = "$source/out/ksip"
