@@ -1,5 +1,5 @@
 """Runs the settings dialog's own script with the page in headless Edge (Tauri's calls answered by the test) and checks that what the dialog shows and would save is what it was given, from a settings file and from the stored settings, never a value turned into another on the way."""
-import argparse, http.server, json, os, shutil, subprocess, sys, tempfile, threading, winreg
+import argparse, glob, http.server, json, os, shutil, subprocess, sys, tempfile, threading, time, winreg
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -618,6 +618,10 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     (ROOT / 'temp/build').mkdir(parents=True, exist_ok=True)
+    # What a run that broke off left (a profile is some 190 MB): removed
+    # first, and skipped if it is still held.
+    for left in glob.glob(str(ROOT / 'temp/build/settings-dialog-edge-*')):
+        shutil.rmtree(left, ignore_errors=True)
     profile = tempfile.mkdtemp(prefix='settings-dialog-edge-', dir=ROOT / 'temp/build')
     browser = subprocess.Popen([str(edge()), '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
                                 '--disable-extensions', f'--user-data-dir={profile}', f'http://127.0.0.1:{server.server_address[1]}/'],
@@ -625,10 +629,20 @@ def main():
     try:
         finished = done.wait(60)
     finally:
-        browser.kill()
+        # Edge is a tree of processes (renderers, the GPU process, crashpad)
+        # that hold files in the profile. kill() ends the browser process
+        # alone and the rest follow a moment later, so the whole tree is
+        # ended, and the folder removed once nothing holds it.
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(browser.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         browser.wait(10)
         server.shutdown()
-        shutil.rmtree(profile, ignore_errors=True)
+        for _ in range(40):
+            shutil.rmtree(profile, ignore_errors=True)
+            if not os.path.exists(profile):
+                break
+            time.sleep(0.25)
+        else:
+            print(f'WARN: the browser profile could not be removed: {profile}')
     if not finished:
         raise SystemExit('FAIL: the page sent no results within 60 s')
     results = received['results']
