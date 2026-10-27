@@ -7,12 +7,12 @@ CUTOFF = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=
 SOURCES = [('re', 'baresip/re', 'v4.12.0'),
            ('baresip', 'baresip/baresip', 'v4.12.0'),
            # Audio codecs for baresip's opus and libg722 modules.
-           ('opus', 'xiph/opus', 'v1.5.2'),
+           ('opus', 'xiph/opus', 'v1.6.1'),
            ('libg722', 'sippy/libg722', 'v1.2.8')]
 # Sources that are not published on GitHub. The release date is written here
 # because there is no API to read it from, and the hash is pinned in the lock.
-RELEASES = [('libressl', '4.3.2', '2026-05-26T00:00:00Z',
-             'https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.2.tar.gz')]
+RELEASES = [('libressl', '4.3.3', '2026-10-04T16:28:20Z',
+             'https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.3.tar.gz')]
 
 def get(url):
     req = urllib.request.Request(url, headers={'User-Agent': 'ksip-build/0.1'})

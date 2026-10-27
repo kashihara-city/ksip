@@ -13,7 +13,7 @@ BUCKET = 'https://commondatastorage.googleapis.com/chromium-browser-clang/Win'
 # The archive's SHA-256, by the version update.py names. A WebRTC update that
 # moves the version stops here until the new archive has been looked at and
 # its hash added.
-PINNED = {'llvmorg-24-init-7747-g62397f8b-31': '44743a0d903f7d0bcc7b289111aad8acceb75ab99ef4f9c146af44e28db4327f'}
+PINNED = {'llvmorg-24-init-7747-g62397f8b-57': '7d428d76bf66dd603860270ba0a41e88bbbb66c32770aae541c3a6777a9eb57f'}
 
 
 def get(url):

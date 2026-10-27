@@ -17,11 +17,11 @@
   },
   "opus": {
     "repository": "xiph/opus",
-    "version": "v1.5.2",
-    "commit": "ddbe48383984d56acd9e1ab6a090c54ca6b735a6",
-    "source_date": "2024-04-10T20:38:50Z",
-    "url": "https://codeload.github.com/xiph/opus/tar.gz/ddbe48383984d56acd9e1ab6a090c54ca6b735a6",
-    "sha256": "18e9d9e26565e279753aafb6823a482ef85ea9fddbfdcdbff8fd095b12dd96b6"
+    "version": "v1.6.1",
+    "commit": "22244de5a79bd1d6d623c32e72bf1954b56235be",
+    "source_date": "2026-01-13T20:16:34Z",
+    "url": "https://codeload.github.com/xiph/opus/tar.gz/22244de5a79bd1d6d623c32e72bf1954b56235be",
+    "sha256": "3267aa969b2b26542417f57819a5bc25d5079355300307dd2dddc7c704aed418"
   },
   "libg722": {
     "repository": "sippy/libg722",
@@ -33,28 +33,28 @@
   },
   "libressl": {
     "repository": "openbsd/libressl",
-    "version": "4.3.2",
-    "source_date": "2026-05-26T00:00:00Z",
-    "url": "https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.2.tar.gz",
-    "sha256": "edf01aee24c65d69e6a9efcb9d44bcda682ff9d4f3bbbd95e794e1dfa90847b5"
+    "version": "4.3.3",
+    "source_date": "2026-10-04T16:28:20Z",
+    "url": "https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.3.tar.gz",
+    "sha256": "ff97c432457f349e6ba3d416ab903bc7468f1436f0f32efe5fff808de292c7b8"
   },
   "depot-tools": {
     "repository": "chromium/tools/depot_tools",
-    "version": "2026-10-01",
-    "commit": "08f34739d842dbef086f2a4459bd29d29c0dfd4e",
-    "source_date": "2026-10-01T22:01:54-07:00",
+    "version": "2026-10-19",
+    "commit": "ebb15ce57304db04f948411fbecf8e93012bde46",
+    "source_date": "2026-10-19T16:59:42-07:00",
     "url": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
     "source_type": "git"
   },
   "google-webrtc": {
     "repository": "webrtc/src",
-    "version": "2026-10-02",
-    "commit": "a4a13a6690591c017b5ad2ae6649fa2437ba8bff",
-    "source_date": "2026-10-02T05:10:16-07:00",
+    "version": "2026-10-19",
+    "commit": "29ecea7e21dd233a7c9d1a822c3ea884d0cacbec",
+    "source_date": "2026-10-19T14:35:24-07:00",
     "url": "https://webrtc.googlesource.com/src.git",
     "source_type": "git",
-    "deps_sha256": "6160e907bae3619b44c7bf828504580863bed36a5dc32cdc6a208b7b3da59369",
-    "build_commit": "8f4d213ca23327067940282e2e896084844aa7a8",
-    "build_source_date": "2026-09-24T08:15:30-07:00"
+    "deps_sha256": "98602fab75e39af0c02c4db468bea7b51c83c86f45937b87732e8d9ca29baa6a",
+    "build_commit": "78170c8ee463fd5ab019ccff04243a8c4969d041",
+    "build_source_date": "2026-10-02T07:56:05-07:00"
   }
 }

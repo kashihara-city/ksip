@@ -7,10 +7,10 @@ Tauri/Rustで画面と状態管理、baresipでSIP/RTP処理、Google WebRTCでA
 単独exeで動作し、設定値はレジストリで管理するため、GPOによる一斉デプロイ等も可能です。  
 主要依存ライブラリのバージョンは以下のとおりです。画面のNPM依存はありません。
 
-- Tauri 2.12.1
+- Tauri 2.12.4
 - baresip/re 4.12.0
-- WebRTC 2026/10/2版
-- LibreSSL 4.3.2
+- WebRTC 2026/10/19版
+- LibreSSL 4.3.3
 
 ![KSIPの構成とコンポーネント間の接続](docs/ksip-components.svg)
 
