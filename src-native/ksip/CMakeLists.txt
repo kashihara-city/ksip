@@ -2,7 +2,7 @@
 # subscriptions and the app's commands. One of the objects of ksip_modules.lib
 # (../CMakeLists.txt).
 project(ksip)
-add_library(${PROJECT_NAME} OBJECT ksip.cpp ksip_io.cpp ksip_text.cpp sip_account.cpp calls.cpp transfer.cpp subscriptions.cpp trust_state.cpp system_ports.cpp)
+add_library(${PROJECT_NAME} OBJECT ksip.cpp ksip_io.cpp ksip_text.cpp sip_account.cpp calls.cpp failure_tone.cpp transfer.cpp subscriptions.cpp trust_state.cpp system_ports.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)

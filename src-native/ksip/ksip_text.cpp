@@ -315,14 +315,17 @@ bool parse_watch_list(const char *prm, std::array<std::string, WATCH_COUNT> &val
             if (!values[i].empty() && values[i] == values[j]) return false;
     return true;
 }
-bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone, std::string &speaker) {
+bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone, std::string &speaker, std::string &ringtone) {
     if (!prm || !*prm) return false;
     const std::string text = prm;
-    const auto comma = text.find(',');
-    if (comma == std::string::npos) return false;
-    microphone = text.substr(0, comma);
-    speaker = text.substr(comma + 1);
-    for (const auto &device : {microphone, speaker}) {
+    const auto first = text.find(',');
+    if (first == std::string::npos) return false;
+    const auto second = text.find(',', first + 1);
+    if (second == std::string::npos) return false;
+    microphone = text.substr(0, first);
+    speaker = text.substr(first + 1, second - first - 1);
+    ringtone = text.substr(second + 1);
+    for (const auto &device : {microphone, speaker, ringtone}) {
         if (device.empty() || device.size() >= limit) return false;
         for (const char c : device)
             if (const auto ch = static_cast<unsigned char>(c); ch < SPACE || ch == DEL || ch == ',') return false;

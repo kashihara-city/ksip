@@ -427,7 +427,8 @@ button {
   flex:0 0 104px;
   font-size:12px;
 }
-.sound-row input {
+.sound-row input,
+.sound-row select {
   flex:1;
   min-width:0;
   margin:0;

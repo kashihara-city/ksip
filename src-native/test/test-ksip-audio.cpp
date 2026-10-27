@@ -983,9 +983,12 @@ void numbers_and_lists_are_checked() {
     for (size_t n = 0; n < ksip_text::WATCH_COUNT; n++) full += (n ? ",7" : "7") + std::to_string(100 + n);
     check(ksip_text::parse_watch_list(full.c_str(), values) && values[ksip_text::WATCH_COUNT - 1] == "7153", "a number for every button is taken");
     check(!ksip_text::parse_watch_list((full + ",7999").c_str(), values), "one more than the buttons is refused");
-    std::string mic, spk;
-    check(ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk) && mic == "{mic}" && spk == "{spk}", "the two endpoint ids");
-    check(!ksip_text::parse_audio_devices("{mic}", 160, mic, spk), "one id is not enough");
+    std::string mic, spk, ring;
+    check(ksip_text::parse_audio_devices("{mic},{spk},{ring}", 160, mic, spk, ring) && mic == "{mic}" && spk == "{spk}" && ring == "{ring}", "the three endpoint ids");
+    check(ksip_text::parse_audio_devices("{mic},default,default", 160, mic, spk, ring) && spk == "default" && ring == "default", "the defaults by name");
+    check(!ksip_text::parse_audio_devices("{mic},{spk}", 160, mic, spk, ring), "two ids are not enough");
+    check(!ksip_text::parse_audio_devices("{mic},{spk},", 160, mic, spk, ring), "an empty ringtone id is refused");
+    check(!ksip_text::parse_audio_devices("{mic},{spk},{ring},{more}", 160, mic, spk, ring), "a fourth id is refused");
 }
 // The keepalives follow the registrar only on the 2xx to the REGISTER sent:
 // the same Call-ID, CSeq and top Via branch, compact names read too.

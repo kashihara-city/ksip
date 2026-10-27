@@ -2300,16 +2300,17 @@ async fn initialize(s: Shared) {
         s.borrow_mut().show_error(e);
     }
 }
-/// Hands the saved microphone and speaker to the running engine: for the
-/// calls to come, and for a call that is up, which the engine moves onto them
-/// at once (ksip_audio_switch). What came of that for each side of the call
+/// Hands the saved microphone and speaker, and the ringtone's speaker, to the
+/// running engine: for the calls to come, and for a call that is up, which
+/// the engine moves onto them at once (ksip_audio_switch), as it does a
+/// ringtone that is playing. What came of that for each side of the call
 /// is the engine's answer, logged; the window follows the engine's state
 /// report, which says which endpoint the call is on. The engine used to be
 /// restarted for a change of device, which meant a new registration and a
 /// second or more without a phone.
 async fn apply_audio_endpoints(s: &Shared, settings: &Settings) -> Result<(), String> {
     let endpoints = s.borrow().services.resolve_audio_endpoints(settings);
-    let (_, answer) = request(s, "ksip_audio_devices", &format!("{},{}", endpoints.microphone, endpoints.speaker)).await?;
+    let (_, answer) = request(s, "ksip_audio_devices", &format!("{},{},{}", endpoints.microphone, endpoints.speaker, endpoints.ringtone)).await?;
     {
         let p = s.borrow();
         for note in endpoint_notes(settings, &endpoints, &p.view.devices) {
@@ -2636,6 +2637,11 @@ async fn tell_engine(s: &Shared, old: &Settings, new: &Settings, all: bool) -> R
         if all || before != after {
             request(s, "ksip_gain", &format!("{kind} {after}")).await?;
         }
+    }
+    // The ringtone's speaker is the engine's from now on, a ringtone that is
+    // playing included; the microphone and the speaker go with it unchanged.
+    if all || old.ringtone_speaker != new.ringtone_speaker {
+        apply_audio_endpoints(s, new).await?;
     }
     let watched = watch_list(new);
     if all || watch_list(old) != watched {
@@ -3320,7 +3326,13 @@ mod tests {
         let link = a.shared.borrow_mut().link.take().unwrap();
         let stopped = link.stop();
         store.cleanup_test();
-        assert_eq!(told, ["ksip_detail_log", "ksip_gain", "ksip_gain", "ksip_parking"], "every command the engine takes while running is sent again");
+        // The ringtone's speaker goes with the devices, and the state is read
+        // again for the endpoints the call is on.
+        assert_eq!(
+            told,
+            ["ksip_detail_log", "ksip_gain", "ksip_gain", "ksip_audio_devices", "ksip_state", "ksip_parking"],
+            "every command the engine takes while running is sent again"
+        );
         assert!(a.shared.borrow().live_owed.is_none() && a.shared.borrow().view.error.is_empty(), "told, the error goes");
         assert!(stopped.is_ok());
     }

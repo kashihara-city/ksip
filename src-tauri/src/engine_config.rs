@@ -31,13 +31,19 @@ fn err(e: impl std::fmt::Display) -> String {
 pub struct AudioEndpoints {
     pub microphone: String,
     pub speaker: String,
+    /// The ringtone's: the ringtone speaker chosen, or the call's speaker
+    /// while none is.
+    pub ringtone: String,
     /// The chosen device is not there now (the default serves meanwhile).
     pub microphone_missing: bool,
     pub speaker_missing: bool,
+    /// The ringtone speaker chosen of its own is not there now.
+    pub ringtone_missing: bool,
     /// The endpoint that serves the choice now, when Windows has one: the
     /// device itself, or what "default" stands for at the moment.
     pub microphone_now: Option<String>,
     pub speaker_now: Option<String>,
+    pub ringtone_now: Option<String>,
 }
 /// What a start needs, worked out from the settings before the process
 /// exists: the plan the link spawns from, and the log lines that explain
@@ -61,14 +67,23 @@ pub fn endpoint_notes(s: &Settings, endpoints: &AudioEndpoints, devices: &[Devic
             notes.push(format!("ksip: the saved {kind} is not there, calls use the default until it is back"));
         }
     }
+    if endpoints.ringtone_missing {
+        notes.push("ksip: the saved ringtone speaker is not there, the ringtone plays on the default until it is back".into());
+    }
+    // The ringtone's speaker is said when it is one of its own.
+    let ringtone = (!s.ringtone_speaker.is_empty()).then_some(("ringtone speaker", &s.ringtone_speaker, &endpoints.ringtone_now));
     for (kind, chosen, now) in [
         ("microphone", &s.microphone, &endpoints.microphone_now),
         ("speaker", &s.speaker, &endpoints.speaker_now),
-    ] {
+    ]
+    .into_iter()
+    .chain(ringtone)
+    {
         let id = now.as_ref().unwrap_or(chosen);
+        let flow = if kind == "microphone" { "microphone" } else { "speaker" };
         let name = devices
             .iter()
-            .find(|d| d.kind == kind && d.id == *id)
+            .find(|d| d.kind == flow && d.id == *id)
             .map(|d| format!("{} ", d.name))
             .unwrap_or_default();
         let role = if chosen.as_str() == "default" { " (the Windows default)" } else { "" };
@@ -140,14 +155,20 @@ impl Services {
         let now = |kind: &str, chosen: &str| crate::audio::resolve(kind, chosen).ok();
         let microphone_now = now("microphone", &s.microphone);
         let speaker_now = now("speaker", &s.speaker);
+        let own_ringtone = !s.ringtone_speaker.is_empty();
+        let ringtone = if own_ringtone { &s.ringtone_speaker } else { &s.speaker };
+        let ringtone_now = if own_ringtone { now("speaker", ringtone) } else { speaker_now.clone() };
         let missing = |chosen: &str, now: &Option<crate::audio::Resolved>| chosen != "default" && now.as_ref().is_none_or(|r| r.stand_in);
         AudioEndpoints {
             microphone: s.microphone.clone(),
             speaker: s.speaker.clone(),
+            ringtone: ringtone.clone(),
             microphone_missing: missing(&s.microphone, &microphone_now),
             speaker_missing: missing(&s.speaker, &speaker_now),
+            ringtone_missing: own_ringtone && missing(ringtone, &ringtone_now),
             microphone_now: microphone_now.map(|r| r.id),
             speaker_now: speaker_now.map(|r| r.id),
+            ringtone_now: ringtone_now.map(|r| r.id),
         }
     }
     /// Works out everything a start needs and writes the engine's config:
@@ -160,6 +181,7 @@ impl Services {
         let endpoints = self.resolve_audio_endpoints(s);
         let microphone = endpoints.microphone.clone();
         let speaker = endpoints.speaker.clone();
+        let ringtone = endpoints.ringtone.clone();
         let profile = self.profile_dir();
         std::fs::create_dir_all(&profile).map_err(err)?;
         // The app's listener for the engine's control connection: held from
@@ -218,8 +240,16 @@ impl Services {
         put(format!("audio_player ksip_audio,{speaker}"));
         put(format!("audio_source ksip_audio,{microphone}"));
         // The alert sounds go through ksip_alert, which plays them on the
-        // speaker, or on the default while the speaker is not there.
-        put(format!("audio_alert ksip_alert,{speaker}"));
+        // ringtone's speaker, or on the default while it is not there. The
+        // tones of a call that failed (busy, not found, an error) are the
+        // call's, not the ringtone's: baresip would play them on the alert
+        // device, so it is told not to, and the engine module plays the same
+        // files on the call's speaker (failure_tone.h).
+        put(format!("audio_alert ksip_alert,{ringtone}"));
+        for key in ["busy_aufile", "notfound_aufile", "error_aufile"] {
+            put(format!("{key} none"));
+        }
+        put("ksip_failure_tones yes".into());
         // A second call during a call is shown, not sounded. baresip would send
         // that tone through the call's player, and ksip_audio cannot play a
         // tone and the call at the same time.
@@ -388,6 +418,11 @@ mod tests {
             assert!(config.contains(&format!("audio_player ksip_audio,{}", settings.speaker)));
             assert!(config.contains("webrtc_aec_delay_ms 20"));
             assert!(config.contains("callwaiting_aufile none"));
+            assert!(config.contains(&format!("audio_alert ksip_alert,{}", settings.speaker)), "the ringtone on the call's speaker while none of its own is chosen");
+            for key in ["busy_aufile", "notfound_aufile", "error_aufile"] {
+                assert!(config.contains(&format!("{key} none")), "{key} is the engine module's to play");
+            }
+            assert!(config.contains("ksip_failure_tones yes"));
             assert!(config.contains("ksip_audio_codecs opus,G722,PCMU,PCMA"));
             assert!(config.contains("ksip_aec_enabled yes"));
             assert!(config.contains("ksip_raw_microphone yes") && config.contains("ksip_raw_speaker yes"), "RAW unless turned off");
@@ -479,6 +514,22 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn the_ringtone_plays_on_its_own_speaker_or_else_the_calls() {
+        let app = Services::open().0;
+        let mut s = Settings { speaker: "{spk}".into(), ..Settings::default() };
+        let follows = app.resolve_audio_endpoints(&s);
+        assert!(follows.ringtone == "{spk}" && !follows.ringtone_missing);
+        assert!(!endpoint_notes(&s, &follows, &[]).iter().any(|n| n.contains("ringtone")), "nothing of its own to say");
+        s.ringtone_speaker = "default".into();
+        assert_eq!(app.resolve_audio_endpoints(&s).ringtone, "default");
+        s.ringtone_speaker = "{ring}".into();
+        let own = app.resolve_audio_endpoints(&s);
+        assert!(own.ringtone == "{ring}" && own.ringtone_missing, "a speaker of its own that is not there");
+        let notes = endpoint_notes(&s, &own, &[]);
+        assert!(notes.iter().any(|n| n == "ksip: ringtone speaker {ring}"), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("ringtone plays on the default")), "{notes:?}");
     }
     #[test]
     fn a_chosen_sound_replaces_the_built_in_one() {

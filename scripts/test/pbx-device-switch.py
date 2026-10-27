@@ -37,7 +37,8 @@ def main():
         time.sleep(2)
         for microphone, speaker in ((microphones[1], speakers[1]), (microphones[0], speakers[0])):
             before = phone.log_text().count("the call's speaker switched")
-            phone.command('ksip_audio_devices', f'{microphone},{speaker}')
+            # The ringtone's speaker goes with the call's, as the app sends it when none of its own is chosen.
+            phone.command('ksip_audio_devices', f'{microphone},{speaker},{speaker}')
             heard = loudest(speaker)
             state = phone.state()
             log = phone.log_text()

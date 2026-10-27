@@ -18,11 +18,13 @@ export const kinds=['microphone','speaker'];
 // said (available, muted, the endpoint's id), and a change waiting to be sent.
 export const volumes=Object.fromEntries(kinds.map(k=>[k,{pending:false,dragging:false,available:false,muted:false,id:null,sequence:0,queued:null}]));
 
-export function deviceOptions(kind,selected){
-  const options=[new Option(t(kind==='microphone'?'AUDIO_MICROPHONE_DEFAULT':'AUDIO_SPEAKER_DEFAULT'),'default')];
+// The devices of a kind to choose from, in the main screen's list of the
+// kind or another (`select`), after the choices that list has of its own.
+export function deviceOptions(kind,selected,select=$(kind),leading=[]){
+  const options=[...leading,new Option(t(kind==='microphone'?'AUDIO_MICROPHONE_DEFAULT':'AUDIO_SPEAKER_DEFAULT'),'default')];
   for(const d of state.devices.filter(d=>d.kind===kind)) options.push(new Option(d.name,d.id));
   if(!options.some(o=>o.value===selected))options.push(new Option(t('AUDIO_DEVICE_SAVED_MISSING'),selected));
-  $(kind).replaceChildren(...options);$(kind).value=selected;
+  select.replaceChildren(...options);select.value=selected;
 }
 // A failure is written down when it comes and when it changes, not once a
 // second for as long as it lasts; the backend writes down a device going and

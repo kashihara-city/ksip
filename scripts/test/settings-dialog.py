@@ -140,6 +140,22 @@ async function checks(){
   await importFile({settings:{agc:true},unreadable:['aec'],invalid:['codecs']});
   s=await save();
   check(text('settings-file-note').includes('aec')&&text('settings-file-note').includes('codecs')&&s&&s.settings.agc===true,'what a file could not bring is named',text('settings-file-note'));
+  // The ringtone's speaker: the call's unless one of its own is chosen, the
+  // Windows default or a speaker the machine has, and one saved that is not
+  // there now is kept as it was.
+  const devicesBefore=state.devices;
+  state.devices=[{kind:'microphone',id:'{m1}',name:'Mic 1'},{kind:'speaker',id:'{s1}',name:'Speaker 1'}];
+  await open();
+  const ringtoneChoices=[...$('ringtone_speaker').options].map(o=>o.value).join(),ringtoneFirst=$('ringtone_speaker').value;
+  $('ringtone_speaker').value='{s1}';
+  s=await save();
+  const ringtoneChosen=s&&s.settings.ringtone_speaker;
+  await open({ringtone_speaker:'{gone}'});
+  const ringtoneGone=[$('ringtone_speaker').value,$('ringtone_speaker').selectedOptions[0].textContent];
+  s=await save();
+  state.devices=devicesBefore;
+  check(ringtoneChoices===',default,{s1}'&&ringtoneFirst===''&&ringtoneChosen==='{s1}'&&ringtoneGone[0]==='{gone}'&&ringtoneGone[1]==='保存されたデバイス（未検出）'&&s&&s.settings.ringtone_speaker==='{gone}',
+    "the ringtone's speaker is the call's unless one is chosen, among the speakers alone, and one not there now is kept",[ringtoneChoices,ringtoneFirst,ringtoneChosen,ringtoneGone,s&&s.settings.ringtone_speaker]);
   await open({browser_integration:true});
   const lockedWhileOff=$('browser_integration').disabled&&$('browser_dial_confirm').disabled;
   s=await save();

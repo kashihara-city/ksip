@@ -18,6 +18,7 @@
 #include "ksip_io.h"
 #include "sip_account.h"
 #include "calls.h"
+#include "failure_tone.h"
 #include "subscriptions.h"
 #include "system_ports.h"
 #include "transfer.h"
@@ -57,6 +58,7 @@ void event(bevent_ev ev, bevent *e, void *) {
     auto c = bevent_get_call(e);
     if (!c || !call_id(c)) return;
     const std::string id = call_id(c);
+    failure_tone::on_event(ev, c);
     system_ports::on_event(ev, c);
     if (calls::on_event(ev, e, c, id)) return;
     transfer::on_event(ev, e, c, id);
@@ -113,9 +115,9 @@ int detail_log(re_printf *pf, void *arg) {
     ksip_audio_set_log_level(static_cast<int>(on));
     return re_hprintf(pf, "Detail log %s\n", on ? "on" : "off");
 }
-// The microphone and speaker for the calls from now on, as endpoint ids (or
-// "default"), so that a change of device does not need the engine
-// restarted. They are the choices as saved: which endpoint serves one is
+// The microphone and speaker for the calls from now on, and the ringtone's
+// speaker, as endpoint ids (or "default"), so that a change of device does
+// not need the engine restarted. They are the choices as saved: which endpoint serves one is
 // decided as each stream opens, the default in place of a device that is not
 // there (device_selection.cc, alert_player.h). baresip reads the devices out
 // of its configuration when a call's audio starts, so the configuration is
@@ -125,17 +127,17 @@ int detail_log(re_printf *pf, void *arg) {
 // JSON, see device_module.cpp; {} when the audio module is not up). baresip's
 // own auplay command would also move the alert sounds onto the call's
 // player, which only takes the call's 48 kHz, so the alert stays with its
-// own player (ksip_alert) and just follows the speaker.
+// own player (ksip_alert) and is told the ringtone's speaker.
 int audio_devices(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     config *cfg = conf_config();
     if (!cfg) return ENOENT;
-    std::string microphone, speaker;
-    if (!a || !ksip_io::parse_audio_devices(a->prm, sizeof(cfg->audio.play_dev), microphone, speaker)) return EINVAL;
+    std::string microphone, speaker, ringtone;
+    if (!a || !ksip_io::parse_audio_devices(a->prm, sizeof(cfg->audio.play_dev), microphone, speaker, ringtone)) return EINVAL;
     str_ncpy(cfg->audio.src_dev, microphone.c_str(), sizeof(cfg->audio.src_dev));
     str_ncpy(cfg->audio.play_dev, speaker.c_str(), sizeof(cfg->audio.play_dev));
-    str_ncpy(cfg->audio.alert_dev, speaker.c_str(), sizeof(cfg->audio.alert_dev));
-    info("ksip: audio devices, microphone %s, speaker %s\n", microphone.c_str(), speaker.c_str());
+    str_ncpy(cfg->audio.alert_dev, ringtone.c_str(), sizeof(cfg->audio.alert_dev));
+    info("ksip: audio devices, microphone %s, speaker %s, ringtone %s\n", microphone.c_str(), speaker.c_str(), ringtone.c_str());
     static const char switch_command[] = "ksip_audio_switch";
     const int err = cmd_process_long(baresip_commands(), switch_command, sizeof(switch_command) - 1, pf, nullptr);
     if (!err) return 0;
@@ -209,6 +211,7 @@ int init() {
     transfer::init();
     subscriptions::init();
     system_ports::init();
+    failure_tone::init();
     sip_set_trace_handler(uag_sip(), sip_trace);
     int err = bevent_register(event, nullptr);
     if (!err) err = cmd_register(baresip_commands(), commands, RE_ARRAY_SIZE(commands));
@@ -217,6 +220,7 @@ int init() {
 int close() {
     sip_set_trace_handler(uag_sip(), nullptr);
     system_ports::close();
+    failure_tone::close();
     calls::close();
     transfer::close();
     subscriptions::close();

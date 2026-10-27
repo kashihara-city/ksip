@@ -71,6 +71,7 @@ constexpr size_t WATCH_COUNT = 54;
 // empty one is a slot nobody watches. False for a number that is not a
 // number or URI, for too many, or for one named twice.
 bool parse_watch_list(const char *prm, std::array<std::string, WATCH_COUNT> &values);
-// The audio devices command: microphone and speaker endpoint ids, comma-separated.
-bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone, std::string &speaker);
+// The audio devices command: the microphone's, the speaker's and the
+// ringtone's endpoint ids, comma-separated.
+bool parse_audio_devices(const char *prm, size_t limit, std::string &microphone, std::string &speaker, std::string &ringtone);
 } // namespace ksip_text

@@ -16,6 +16,11 @@ pub struct Settings {
     pub rtp_port: u16,
     pub microphone: String,
     pub speaker: String,
+    /// The speaker the ringtone plays on: empty for the call's speaker,
+    /// "default" for Windows' default communications speaker, or an endpoint
+    /// id. The other sounds of a call go to the call's speaker whatever this
+    /// is. Like the speaker, the machine's own.
+    pub ringtone_speaker: String,
     pub microphone_gain: u16,
     pub speaker_gain: u16,
     pub auto_record: bool,
@@ -199,6 +204,7 @@ impl Default for Settings {
             rtp_port: 0,
             microphone: "default".into(),
             speaker: "default".into(),
+            ringtone_speaker: String::new(),
             microphone_gain: 100,
             speaker_gain: 100,
             auto_record: false,
@@ -356,6 +362,7 @@ impl Settings {
             ("rtp_port", Number(self.rtp_port.into())),
             ("microphone", text(&self.microphone)),
             ("speaker", text(&self.speaker)),
+            ("ringtone_speaker", text(&self.ringtone_speaker)),
             ("microphone_gain", Number(self.microphone_gain.into())),
             ("speaker_gain", Number(self.speaker_gain.into())),
             ("auto_record", flag(self.auto_record)),
@@ -429,6 +436,7 @@ impl Settings {
         r.number("rtp_port", &mut s.rtp_port);
         r.text("microphone", &mut s.microphone);
         r.text("speaker", &mut s.speaker);
+        r.text("ringtone_speaker", &mut s.ringtone_speaker);
         r.number("microphone_gain", &mut s.microphone_gain);
         r.number("speaker_gain", &mut s.speaker_gain);
         r.flag("auto_record", &mut s.auto_record);
@@ -759,7 +767,7 @@ pub fn export_settings(store: &Store) -> serde_json::Value {
 /// an empty transport, encryption or codec list means something (UDP, none,
 /// all of them), and a value the dialog could not show would be saved as that.
 /// What a file leaves out is not there, so the dialog keeps what it has. The
-/// microphone, the speaker and the network adapter belong to the machine and
+/// microphone, the speakers and the network adapter belong to the machine and
 /// are never taken. A file that is not a KSIP settings file (format 1) is refused.
 /// Whether the settings taken go together (SDES needs TLS, say) depends on
 /// what the dialog holds besides; the dialog checks that, and the save again.
@@ -788,7 +796,7 @@ pub fn import_settings(text: &str, managed: impl Fn(&str) -> bool) -> Result<ser
     let mut invalid = Vec::new();
     let mut fixed = Vec::new();
     for (name, value) in document["settings"].as_object().into_iter().flatten() {
-        if matches!(name.as_str(), "microphone" | "speaker" | "network_adapter") {
+        if matches!(name.as_str(), "microphone" | "speaker" | "ringtone_speaker" | "network_adapter") {
             continue;
         }
         if name == "buttons" {
@@ -1024,7 +1032,7 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     if s.sip_port != 0 && s.rtp_port != 0 && (s.rtp_port..=s.rtp_port + 20).contains(&s.sip_port) {
         return Err(message("SETTINGS_PORT_OVERLAP"));
     }
-    for dev in [&s.microphone, &s.speaker] {
+    for dev in [&s.microphone, &s.speaker, &s.ringtone_speaker] {
         if dev.len() > 500 || dev.contains(['\r', '\n', '\0']) {
             return Err(message("SETTINGS_AUDIO_DEVICE_INVALID"));
         }
@@ -1588,6 +1596,7 @@ mod tests {
             ("detail_log", with(&|s| s.detail_log = true)),
             ("gain", with(&|s| s.microphone_gain = 150)),
             ("sound", with(&|s| s.sound_ring = r"C:\ring.wav".into())),
+            ("ringtone speaker", with(&|s| s.ringtone_speaker = "{ring}".into())),
             ("program_integration", with(&|s| s.program_integration = true)),
             ("tray_after_call", with(&|s| s.tray_after_call = 10)),
         ] {
@@ -1827,6 +1836,7 @@ mod tests {
             no_fw_prompt: false,
             microphone: "{mic}".into(),
             speaker: "{spk}".into(),
+            ringtone_speaker: "{ring}".into(),
             microphone_gain: 150,
             speaker_gain: 120,
             auto_record: true,
@@ -2144,7 +2154,7 @@ mod tests {
             "format": 1,
             "settings": {
                 "sip_port": 5070, "aec": false, "language": "en", "agc": true,
-                "microphone": "{mic}", "speaker": "{spk}", "network_adapter": "{nic}",
+                "microphone": "{mic}", "speaker": "{spk}", "ringtone_speaker": "{ring}", "network_adapter": "{nic}",
                 "tray_after_call": -1, "register_interval": "often", "unknown_to_this_version": 1,
                 "buttons": [{"title": "Park", "kind": "park", "number": "701"}, {}, {"title": 3}]
             },

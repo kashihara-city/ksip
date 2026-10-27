@@ -7,6 +7,7 @@ import {BUTTON_MAIN, BUTTON_INDEXES, defaultTitle} from './buttons.js';
 import {render} from './phone.js';
 import {clearHistory} from './history.js';
 import {clearLogs} from './logs.js';
+import {deviceOptions} from './audio.js';
 
 // The codecs the setting can name, in the order offered when it names none.
 const CODEC_NAMES=['opus','G722','PCMU','PCMA'];
@@ -155,6 +156,8 @@ export function openSettings(){
   $('pbx_only').checked=state.settings.pbx_only!==false;$('no_fw_prompt').checked=state.settings.no_fw_prompt!==false;syncIntegration();syncKeepalive();syncNoPrompt();
   setChoice($('transport'),String(state.settings.transport||'').trim().toLowerCase()||'udp');setChoice($('media_encryption'),String(state.settings.media_encryption||'').trim().toLowerCase());syncEncryptionChoices();$('ca_file').value=state.settings.ca_file||'';
   $('auto_answer').checked=!!state.settings.auto_answer;
+  // The ringtone's speaker: the call's while none of its own is chosen.
+  deviceOptions('speaker',state.settings.ringtone_speaker||'',$('ringtone_speaker'),[new Option(t('SETTINGS_RINGTONE_SPEAKER_SAME'),'')]);
   $('aec').checked=state.settings.aec;$('aec_delay_ms').value=state.settings.aec_delay_ms??20;$('high_pass').checked=!!state.settings.high_pass;setChoice($('noise_suppression'),state.settings.noise_suppression||'high');$('agc').checked=!!state.settings.agc;$('raw_microphone').checked=state.settings.raw_microphone!==false;$('raw_speaker').checked=state.settings.raw_speaker!==false;
   $('calibration-status').textContent=t('SETTINGS_CALIBRATION_IDLE');$('calibration-devices').textContent='';
   $('password-hint').textContent=t(state.account.has_password?'SETTINGS_PASSWORD_SAVED':'SETTINGS_PASSWORD_HINT');
@@ -291,7 +294,7 @@ function collectSettings(){
 function heldSettings(){
   return {
     network_adapter:$('network_adapter').value,sip_port:Number($('sip_port').value),rtp_port:Number($('rtp_port').value),
-    microphone:state.settings.microphone,speaker:state.settings.speaker,
+    microphone:state.settings.microphone,speaker:state.settings.speaker,ringtone_speaker:$('ringtone_speaker').value,
     microphone_gain:carried.microphone_gain??(state.settings.microphone_gain||100),speaker_gain:carried.speaker_gain??(state.settings.speaker_gain||100),
     auto_record:carried.auto_record??!!state.settings.auto_record,
     // A button made unused is saved empty: its old number (a link, a number
