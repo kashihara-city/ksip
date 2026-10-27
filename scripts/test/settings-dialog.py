@@ -14,6 +14,7 @@ import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
 import {state, managed, selected, setSelected, update, run} from './session.js';
 import * as audio from './audio.js';
+import {applyText} from './i18n.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
@@ -362,18 +363,51 @@ async function checks(){
   state.detail_log_active=false;state.settings.detail_log=false;state.running=wasRunning;render();
   check(markOn&&markOffBySetting&&markStopped,'the detail log mark is shown only while the running engine says the log is on',[markOn,markOffBySetting,markStopped]);
 
-  // How the call's microphone and speaker are open, after the AGC and in that
-  // order: RAW as the other labels are, APO in red, - for one not open, and
-  // nothing while neither is.
+  // How the call's microphone and speaker are open, in that order, at the
+  // start of the line under the processing: RAW as the other labels are, APO
+  // in red, - for one not open, and nothing while neither is.
   const capturePath=()=>({shown:!$('capture-path').hidden,text:$('capture-path').textContent,titled:!!$('capture-path').title,
     red:[$('capture-name').classList.contains('apo'),$('playout-name').classList.contains('apo')],color:getComputedStyle($('playout-name')).color});
   const both=(mic,speaker)=>{state.microphone_raw=mic;state.speaker_raw=speaker;render();return capturePath();};
   const captureNone=both(null,null),captureRaw=both(true,true),captureApo=both(true,false),captureMicOnly=both(true,null),captureMicApo=both(false,null);
   both(null,null);
-  check(!captureNone.shown&&captureRaw.shown&&captureRaw.titled&&captureRaw.text===' · RAW RAW'&&captureRaw.red.join()==='false,false'
-    &&captureApo.text===' · RAW APO'&&captureApo.red.join()==='false,true'&&captureApo.color!==captureRaw.color
-    &&captureMicOnly.text===' · RAW -'&&captureMicApo.text===' · APO -'&&captureMicApo.red.join()==='true,false',
-    'whether the microphone and the speaker are raw follows the AGC label: RAW plainly, APO in red, - for one not open',[captureNone,captureRaw,captureApo,captureMicOnly,captureMicApo]);
+  check(!captureNone.shown&&captureRaw.shown&&captureRaw.titled&&captureRaw.text==='RAW RAW'&&captureRaw.red.join()==='false,false'
+    &&captureApo.text==='RAW APO'&&captureApo.red.join()==='false,true'&&captureApo.color!==captureRaw.color
+    &&captureMicOnly.text==='RAW -'&&captureMicApo.text==='APO -'&&captureMicApo.red.join()==='true,false',
+    'whether the microphone and the speaker are raw starts the line under the processing: RAW plainly, APO in red, - for one not open',[captureNone,captureRaw,captureApo,captureMicOnly,captureMicApo]);
+  // The processing is a line of its own; the codec follows the devices, or
+  // starts that line when they are not shown.
+  const callFor=codec=>{state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:5,line:1,codec,secure:true}];state.media_encryption='srtp';};
+  const callsBefore=state.calls;
+  callFor('opus');both(true,true);
+  const codecAfterDevices=text('codec-label'),ownLine=getComputedStyle($('processing-labels')).display;
+  both(null,null);
+  const codecAlone=text('codec-label');
+  state.calls=callsBefore;render();
+  check(ownLine==='block'&&codecAfterDevices.startsWith(' · ')&&codecAlone.length>0&&!codecAlone.startsWith(' · '),
+    'the processing has a line of its own; the codec follows the devices with a dot, or starts the line without one',[ownLine,codecAfterDevices,codecAlone]);
+
+  // The AEC label in a call: past the errors and the waits, what AEC3 itself
+  // judged, in its order, with a tooltip; its two warnings to its left only
+  // while it says so; none of it outside a call.
+  applyText();
+  const aecBefore={calls:state.calls,stats:state.audio_processing_stats,active:state.aec_active};
+  const aecLabel=(aec3,render_rms_dbfs=-30)=>{
+    state.aec_active=true;state.calls=[{id:'c1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];
+    state.audio_processing_stats={render_frames:100,capture_frames:100,render_errors:0,capture_errors:0,render_rms_dbfs,capture_input_rms_dbfs:-40,capture_output_rms_dbfs:-50,stream_delay_ms:20,stream_delay_from_device:true,aec3};
+    render();
+    return [$('aec-state').hidden?'':text('aec-state'),!!$('aec-state').title,$('aec-saturated').hidden?'':text('aec-saturated'),$('aec-diverged').hidden?'':text('aec-diverged')].join('|');
+  };
+  const judged=(bits)=>({transparent:false,linear:false,converged:false,learning:false,saturated_echo:false,diverged:false,...bits});
+  const aecLabels=[aecLabel(undefined),aecLabel(judged({transparent:true,learning:true})),aecLabel(judged({learning:true})),
+    aecLabel(judged({linear:true,converged:true,learning:true})),aecLabel(judged({linear:true,learning:true})),aecLabel(judged({linear:true})),
+    aecLabel(judged({linear:true,converged:true,saturated_echo:true,diverged:true})),aecLabel(judged({linear:true,saturated_echo:true}),-70)];
+  state.calls=[];render();
+  const aecOutside=[$('aec-state').hidden,$('aec-saturated').hidden,$('aec-diverged').hidden];
+  state.calls=aecBefore.calls;state.audio_processing_stats=aecBefore.stats;state.aec_active=aecBefore.active;render();
+  check(aecLabels.join(',')==='参照信号待ち|true||,エコー無し判定|true||,推定抑圧|true||,線形除去|true||,線形除去（学習中）|true||,線形除去（学習停止）|true||,'
+    +'線形除去|true|エコー過大|除去不安定,参照信号待ち|true||'&&aecOutside.every(Boolean),
+    'the AEC label says what AEC3 judged, in its order, its warnings beside it only while it says so, and nothing outside a call',[aecLabels,aecOutside]);
 
   // Moving to the other line empties the number box, as the clear button
   // does, both ways; staying on the same line keeps what was typed.

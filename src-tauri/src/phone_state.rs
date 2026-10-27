@@ -178,6 +178,26 @@ pub struct AudioProcessingStats {
     pub capture_errors: u32,
     pub capture_device_rate: u32,
     pub capture_device_channels: u32,
+    /// What AEC3 judged, once it has since the processing was reset.
+    pub aec3: Option<Aec3Judgments>,
+}
+/// AEC3's own judgments, each made of every block (4 ms): its two modes as of
+/// the last block, and the rest when any block of the last second had them
+/// (the bridge's KSIP_AUDIO_AEC3_*).
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Aec3Judgments {
+    /// It took the device for one without echo, and all but stops suppressing.
+    pub transparent: bool,
+    /// Its linear filter is usable: the echo the filter estimates is taken out.
+    pub linear: bool,
+    pub converged: bool,
+    /// The filter adapted: the far end excited it, and the microphone was not clipped.
+    pub learning: bool,
+    /// The echo was clipped at the microphone.
+    pub saturated_echo: bool,
+    /// The filter had gone wrong and AEC3 scaled it back.
+    pub diverged: bool,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Transfer {

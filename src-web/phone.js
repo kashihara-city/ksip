@@ -126,8 +126,9 @@ export function render({clearNotices=false}={}){
   $('refresh-devices').disabled=busy;
   $('save-settings').disabled=busy;$('close-settings').disabled=busy;for(const id of ['calibrate-aec','calibrate-aec-careful'])$(id).disabled=busy||state.calls.length>0;
 }
-// The footer names every part of the audio processing and whether it is on;
-// the numbers below it are the AEC's, then the levels, then the AGC's report.
+// The footer names every part of the audio processing and whether it is on,
+// and below that how the devices are open and the call's codec; the numbers
+// under them are the AEC's, then the levels, then the AGC's report.
 function renderFooter(){
   const processing=state.settings,noiseOn=!!NOISE_LEVEL_NAMES[processing.noise_suppression],processingOn=!!processing.aec||!!processing.high_pass||noiseOn||!!processing.agc;
   $('processing-labels').textContent=['AEC '+(processing.aec?'ON':'OFF'),'HPF '+(processing.high_pass?'ON':'OFF'),'NS '+(noiseOn?t(NOISE_LEVEL_NAMES[processing.noise_suppression]):'OFF'),'AGC '+(processing.agc?'ON':'OFF')].join(' · ');
@@ -136,19 +137,29 @@ function renderFooter(){
   const mic=state.microphone_raw,speaker=state.speaker_raw;
   $('capture-path').hidden=typeof mic!=='boolean'&&typeof speaker!=='boolean';$('capture-path').title=t('AUDIO_RAW_TITLE');
   for(const [id,raw] of [['capture-name',mic],['playout-name',speaker]]){$(id).textContent=raw===true?'RAW':raw===false?'APO':'-';$(id).classList.toggle('apo',raw===false);}
-  // A codec and an encryption belong to a call, so outside one this stays empty.
-  $('codec-label').textContent=callSummary(current());$('codec-label').classList.toggle('unencrypted',fellBack(current()));
+  // A codec and an encryption belong to a call, so outside one this stays
+  // empty. It starts its line when the devices are not shown.
+  const summary=callSummary(current());
+  $('codec-label').textContent=$('capture-path').hidden?summary.replace(/^ · /,''):summary;$('codec-label').classList.toggle('unencrypted',fellBack(current()));
   const metrics=state.audio_processing_stats;
   const showMetrics=processingOn&&!!state.aec_active&&state.calls.some(call=>call.state==='ESTABLISHED')&&!!metrics;
   $('aec-metrics').hidden=!showMetrics;
   $('aec-state').hidden=!showMetrics||!processing.aec;
+  $('aec-saturated').hidden=true;$('aec-diverged').hidden=true;
   if(!showMetrics){
     for(const id of ['aec-core','aec-delay','aec-levels','aec-flow','aec-agc'])$(id).textContent='';
     return;
   }
-  const errors=(metrics.render_errors||0)+(metrics.capture_errors||0),hasRender=(metrics.render_frames||0)>0&&Number.isFinite(metrics.render_rms_dbfs)&&metrics.render_rms_dbfs>-65,hasCapture=(metrics.capture_frames||0)>0,hasCaptureSignal=Number.isFinite(metrics.capture_input_rms_dbfs)&&metrics.capture_input_rms_dbfs>-65,converged=(metrics.capture_frames||0)>500&&Number.isFinite(metrics.delay_ms)&&metrics.delay_ms>0&&Number.isFinite(metrics.echo_return_loss_enhancement)&&metrics.echo_return_loss_enhancement>3;
-  $('aec-state').textContent=t(errors?'AEC_ERROR':!hasCapture?'AEC_WAITING_MICROPHONE':!hasRender?'AEC_WAITING_REFERENCE':!hasCaptureSignal?'AEC_LOW_INPUT':converged?'AEC_CONVERGED':'AEC_ESTIMATING');
-  $('aec-state').classList.toggle('error',errors>0);$('aec-state').classList.toggle('ready',!errors&&converged);
+  // Past the errors and the two waits, the state is AEC3's own judgment
+  // (the bridge's KSIP_AUDIO_AEC3_*): its mode, then whether its filter
+  // converged, or adapted, in the last second. The two warnings are its too.
+  const errors=(metrics.render_errors||0)+(metrics.capture_errors||0),hasRender=(metrics.render_frames||0)>0&&Number.isFinite(metrics.render_rms_dbfs)&&metrics.render_rms_dbfs>-65,hasCapture=(metrics.capture_frames||0)>0,aec3=metrics.aec3;
+  const judged=!errors&&hasCapture&&hasRender&&!!aec3;
+  const aecState=errors?'error':!hasCapture?'microphone':!judged?'reference':aec3.transparent?'transparent':!aec3.linear?'suppressing':aec3.converged?'linear':aec3.learning?'learning':'paused';
+  $('aec-state').textContent=t({error:'AEC_ERROR',microphone:'AEC_WAITING_MICROPHONE',reference:'AEC_WAITING_REFERENCE',transparent:'AEC_TRANSPARENT',suppressing:'AEC_SUPPRESSING',linear:'AEC_LINEAR',learning:'AEC_LINEAR_LEARNING',paused:'AEC_LINEAR_PAUSED'}[aecState]);
+  $('aec-state').title=t({error:'AEC_ERROR_TITLE',microphone:'AEC_WAITING_MICROPHONE_TITLE',reference:'AEC_WAITING_REFERENCE_TITLE',transparent:'AEC_TRANSPARENT_TITLE',suppressing:'AEC_SUPPRESSING_TITLE',linear:'AEC_LINEAR_TITLE',learning:'AEC_LINEAR_LEARNING_TITLE',paused:'AEC_LINEAR_PAUSED_TITLE'}[aecState]);
+  $('aec-state').classList.toggle('error',errors>0);$('aec-state').classList.toggle('ready',['linear','learning','paused'].includes(aecState));
+  $('aec-saturated').hidden=!processing.aec||!judged||!aec3.saturated_echo;$('aec-diverged').hidden=!processing.aec||!judged||!aec3.diverged;
   const residual=Number.isFinite(metrics.residual_echo_likelihood)?fill('AEC_RESIDUAL',metric(metrics.residual_echo_likelihood*100,'%',0),
     Number.isFinite(metrics.residual_echo_likelihood_recent_max)?fill('AEC_RESIDUAL_MAX',metric(metrics.residual_echo_likelihood_recent_max*100,'%',0)):''):'';
   const divergent=Number.isFinite(metrics.divergent_filter_fraction)?fill('AEC_DIVERGENT',metric(metrics.divergent_filter_fraction*100,'%',0)):'';

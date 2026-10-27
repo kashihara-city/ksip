@@ -1066,6 +1066,11 @@ footer.aec-status {
   align-items:center;
   gap:8px;
 }
+/* The processing on a line of its own, so that the labels on the right
+   coming and going do not move where the line breaks. */
+#processing-labels {
+  display:block;
+}
 .aec-heading strong {
   padding:1px 6px;
   border-radius:8px;
@@ -1077,7 +1082,8 @@ footer.aec-status {
   background:#dceee5;
   color:#286249;
 }
-.aec-heading strong.error {
+.aec-heading strong.error,
+.aec-heading strong.warning {
   background:#f6dfda;
   color:#963a2b;
 }

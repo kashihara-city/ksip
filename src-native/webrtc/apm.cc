@@ -5,9 +5,18 @@
 #include "bridge_state.h"
 #include "ksip_audio_bridge_internal.h"
 
+#include <atomic>
+#include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 
+#include "api/audio/echo_canceller3_config.h"
+#include "api/environment/environment_factory.h"
+#include "api/field_trials.h"
+#include "rtc_base/logging.h"
 #include "system_wrappers/include/metrics.h"
 
 using ksip_audio_bridge::FramePower;
@@ -34,6 +43,88 @@ bool AnyProcessing(const ksip_audio_processing &p) {
          p.noise_suppression >= 0 || p.gain_control;
 }
 
+// AEC3 as KSIP runs it, the same for every device. Until its linear filter
+// is usable, AEC3 suppresses by an assumed echo path gain, 1.0 by default:
+// as if the far end came back as loud as it is played. The near end's speech
+// under the far end is then cut, and quiet speech is cut to pieces, until
+// AEC3 either finds the echo or decides the device has none (transparent
+// mode). Its legacy rule for that waits for 6 s of loud far end without
+// convergence, which takes 15 s and more of a call. So:
+//  - the HMM classifier of transparent mode (field trial
+//    WebRTC-Aec3TransparentModeHmm) in place of the legacy rule: it decides
+//    after about 2 s of far end with no echo found, and leaves as soon as
+//    the filter converges;
+//  - an assumed gain of 0.1 (an amplitude: the echo 20 dB under the far end;
+//    WebRTC's own field trials WebRTC-Aec3UseLow*ReflectionsDefaultGain set
+//    the same): the near end is cut far less meanwhile. A strong echo is
+//    heard more in the first 2 s or so, until the linear filter takes it,
+//    which it does as soon as with 1.0.
+webrtc::Environment Aec3Environment() {
+  auto trials =
+      webrtc::FieldTrials::Create("WebRTC-Aec3TransparentModeHmm/Enabled/");
+  if (!trials) {
+    RTC_LOG(LS_ERROR) << "AEC3: the HMM transparent mode could not be set; "
+                         "the legacy one runs";
+    return webrtc::CreateEnvironment();
+  }
+  return webrtc::CreateEnvironment(std::move(trials));
+}
+
+webrtc::EchoCanceller3Config Aec3Config() {
+  webrtc::EchoCanceller3Config config;
+  config.ep_strength.default_gain = 0.1f;
+  return config;
+}
+
+namespace {
+// What AEC3 judged of each block (4 ms), as the patched echo_remover.cc tells
+// it from the capture thread (KsipNoteAec3, scripts/build/patch-webrtc.py):
+// its two modes as of the last block, and the last block each of the rest
+// was judged at (0: not since the reset). The app asks every 0.5 s, and at
+// times in between, while AEC3 judges 125 times in 0.5 s; what is told is
+// what it judged over the last second, so that none falls between two asks.
+// One canceller runs in the process, and a reset of the processing starts it
+// over (ResetAec3Judgments).
+constexpr uint64_t kAec3WindowBlocks = 250;
+struct Aec3Seen {
+  std::atomic<uint64_t> blocks{0};
+  std::atomic<bool> transparent{false};
+  std::atomic<bool> linear{false};
+  std::atomic<uint64_t> converged{0};
+  std::atomic<uint64_t> learning{0};
+  std::atomic<uint64_t> saturated_echo{0};
+  std::atomic<uint64_t> diverged{0};
+};
+Aec3Seen aec3_seen;
+}  // namespace
+
+std::optional<uint32_t> Aec3Judgments() {
+  const uint64_t blocks = aec3_seen.blocks;
+  if (!blocks) return std::nullopt;
+  const auto recent = [blocks](const std::atomic<uint64_t> &at) {
+    const uint64_t block = at;
+    return block && blocks - block < kAec3WindowBlocks;
+  };
+  uint32_t bits = 0;
+  if (aec3_seen.transparent) bits |= KSIP_AUDIO_AEC3_TRANSPARENT;
+  if (aec3_seen.linear) bits |= KSIP_AUDIO_AEC3_LINEAR;
+  if (recent(aec3_seen.converged)) bits |= KSIP_AUDIO_AEC3_CONVERGED;
+  if (recent(aec3_seen.learning)) bits |= KSIP_AUDIO_AEC3_LEARNING;
+  if (recent(aec3_seen.saturated_echo)) bits |= KSIP_AUDIO_AEC3_SATURATED_ECHO;
+  if (recent(aec3_seen.diverged)) bits |= KSIP_AUDIO_AEC3_DIVERGED;
+  return bits;
+}
+
+void ResetAec3Judgments() {
+  aec3_seen.blocks = 0;
+  aec3_seen.transparent = false;
+  aec3_seen.linear = false;
+  aec3_seen.converged = 0;
+  aec3_seen.learning = 0;
+  aec3_seen.saturated_echo = 0;
+  aec3_seen.diverged = 0;
+}
+
 webrtc::AudioProcessing::Config ApmConfig(const ksip_audio_processing &p) {
   webrtc::AudioProcessing::Config config;
   config.echo_canceller.enabled = p.echo_cancellation != 0;
@@ -50,6 +141,20 @@ webrtc::AudioProcessing::Config ApmConfig(const ksip_audio_processing &p) {
   return config;
 }
 }  // namespace ksip_audio_bridge
+
+void webrtc::KsipNoteAec3(bool transparent, bool linear, bool converged,
+                          bool learning, bool saturated_echo, bool diverged) {
+  using ksip_audio_bridge::aec3_seen;
+  const uint64_t block = aec3_seen.blocks + 1;
+  aec3_seen.transparent = transparent;
+  aec3_seen.linear = linear;
+  if (converged) aec3_seen.converged = block;
+  if (learning) aec3_seen.learning = block;
+  if (saturated_echo) aec3_seen.saturated_echo = block;
+  if (diverged) aec3_seen.diverged = block;
+  // Last, so that a reader that sees the block sees what was judged of it.
+  aec3_seen.blocks = block;
+}
 
 int ksip_audio::ProcessRenderApm(const int16_t *mono48, bool input_error) {
   if (!processing_enabled) return 0;
@@ -147,6 +252,7 @@ int ksip_audio::ResetDiagnostics() {
   capture_device_rate = 0;
   capture_device_channels = 0;
   agc_reported = false;
+  ksip_audio_bridge::ResetAec3Judgments();
   return result;
 }
 
@@ -171,7 +277,9 @@ int ksip_audio_internal::SetEchoCancellationForTest(ksip_audio *audio,
   ksip_audio_processing processing = audio->processing;
   processing.echo_cancellation = enabled;
   audio->apm->ApplyConfig(ksip_audio_bridge::ApmConfig(processing));
-  return audio->apm->Initialize();
+  const int result = audio->apm->Initialize();
+  ksip_audio_bridge::ResetAec3Judgments();
+  return result;
 }
 
 extern "C" int ksip_audio_get_stats(ksip_audio *audio,
@@ -187,6 +295,10 @@ extern "C" int ksip_audio_get_stats(ksip_audio *audio,
   stats->capture_errors = audio->capture_errors;
   stats->capture_device_rate = audio->capture_device_rate;
   stats->capture_device_channels = audio->capture_device_channels;
+  if (const auto aec3 = ksip_audio_bridge::Aec3Judgments()) {
+    stats->aec3 = *aec3;
+    stats->flags |= KSIP_AUDIO_STATS_AEC3;
+  }
   if (audio->processing.gain_control) {
     audio->PollAgcMetrics();
     if (audio->agc_reported) {

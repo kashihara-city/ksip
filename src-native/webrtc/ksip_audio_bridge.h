@@ -55,6 +55,8 @@ typedef struct ksip_audio_stats {
   double agc_noise_level_dbfs;
   double agc_headroom_db;
   double agc_gain_db;
+  /* What AEC3 judged over the last second, as KSIP_AUDIO_AEC3_* bits. */
+  uint32_t aec3;
   uint32_t flags;
 } ksip_audio_stats;
 
@@ -81,6 +83,29 @@ enum {
   KSIP_AUDIO_STATS_CAPTURE_DEVICE_LEVEL = 1u << 11,
   KSIP_AUDIO_STATS_CAPTURE_MONO_LEVEL = 1u << 12,
   KSIP_AUDIO_STATS_AGC = 1u << 13,
+  KSIP_AUDIO_STATS_AEC3 = 1u << 14,
+};
+/* AEC3's own judgments, each made of every block (4 ms): its two modes as
+   of the last block, and the rest when any block of the last second had
+   them. Told once AEC3 has judged since the processing was reset. */
+enum {
+  /* It took the device for one without echo, and all but stops suppressing. */
+  KSIP_AUDIO_AEC3_TRANSPARENT = 1u << 0,
+  /* Its linear filter is usable: the echo the filter estimates is taken out
+     of the microphone, and suppressed by it. Without it, the suppression
+     goes by an assumed echo path gain. */
+  KSIP_AUDIO_AEC3_LINEAR = 1u << 1,
+  /* The filter converged: what is left after it is much under the
+     microphone's level. */
+  KSIP_AUDIO_AEC3_CONVERGED = 1u << 2,
+  /* The filter adapted: the far end excited it, and the microphone was not
+     clipped. */
+  KSIP_AUDIO_AEC3_LEARNING = 1u << 3,
+  /* The echo was clipped at the microphone. */
+  KSIP_AUDIO_AEC3_SATURATED_ECHO = 1u << 4,
+  /* The filter had gone wrong (diverged) and AEC3 scaled it back: what was
+     left after it came out loud and far over the microphone's level. */
+  KSIP_AUDIO_AEC3_DIVERGED = 1u << 5,
 };
 
 /* Call before creating: WebRTC prints from LS_INFO unless told otherwise. */

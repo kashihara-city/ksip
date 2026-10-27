@@ -10,6 +10,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "api/audio/builtin_audio_processing_builder.h"
@@ -103,9 +104,14 @@ extern "C" int ksip_audio_playout_raw(void) {
 
 int ksip_audio::Initialize() {
   if (!com.Succeeded()) return -2;
+  // The render is mono, so AEC3's multichannel settings never apply.
   apm = webrtc::BuiltinAudioProcessingBuilder(
-            ksip_audio_bridge::ApmConfig(processing)).Build(env);
+            ksip_audio_bridge::ApmConfig(processing))
+            .SetEchoCancellerConfig(ksip_audio_bridge::Aec3Config(),
+                                    std::nullopt)
+            .Build(env);
   if (!apm) return -3;
+  ksip_audio_bridge::ResetAec3Judgments();
   adm = webrtc::CreateWindowsCoreAudioAudioDeviceModule(env);
   if (!adm || adm->Init() || adm->RegisterAudioCallback(this)) return -4;
   return 0;

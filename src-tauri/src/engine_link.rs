@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn webrtc_audio_processing_statistics_are_parsed_from_native_state() {
         let state: EngineReport = serde_json::from_str(
-            r#"{"registration":"OK","calls":[],"transfer":{"original":"","consultation":"","pending":false,"outcome":""},"audio_processing_stats":{"echo_return_loss":12.5,"echo_return_loss_enhancement":28.75,"residual_echo_likelihood":0.04,"render_rms_dbfs":-18.5,"capture_input_rms_dbfs":-24.0,"capture_output_rms_dbfs":-51.5,"delay_ms":84,"delay_median_ms":82,"delay_standard_deviation_ms":3,"stream_delay_ms":20,"stream_delay_from_device":true,"render_frames":1200,"capture_frames":1198,"render_errors":0,"capture_errors":0}}"#,
+            r#"{"registration":"OK","calls":[],"transfer":{"original":"","consultation":"","pending":false,"outcome":""},"audio_processing_stats":{"echo_return_loss":12.5,"echo_return_loss_enhancement":28.75,"residual_echo_likelihood":0.04,"render_rms_dbfs":-18.5,"capture_input_rms_dbfs":-24.0,"capture_output_rms_dbfs":-51.5,"delay_ms":84,"delay_median_ms":82,"delay_standard_deviation_ms":3,"stream_delay_ms":20,"stream_delay_from_device":true,"render_frames":1200,"capture_frames":1198,"render_errors":0,"capture_errors":0,"aec3":{"transparent":false,"linear":true,"converged":true,"learning":false,"saturated_echo":false,"diverged":true}}}"#,
         )
         .unwrap();
         let stats = state.audio_processing_stats.unwrap();
@@ -537,6 +537,8 @@ mod tests {
         assert_eq!(stats.render_frames, 1200);
         assert_eq!(stats.capture_frames, 1198);
         assert_eq!(stats.render_errors + stats.capture_errors, 0);
+        let aec3 = stats.aec3.unwrap();
+        assert!(!aec3.transparent && aec3.linear && aec3.converged && !aec3.learning && !aec3.saturated_echo && aec3.diverged);
     }
 }
 

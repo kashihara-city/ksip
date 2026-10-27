@@ -38,6 +38,9 @@ int TestSyntheticEcho(ksip_audio *audio) {
   double output_energy = 0;
   size_t measured_samples = 0;
   ksip_audio_stats stats{};
+  // When AEC3 first said its linear filter is used, and that it converged.
+  int linear_at = -1;
+  int converged_at = -1;
   for (int block = 0; block < 3000; ++block) {
     const double envelope = 0.35 + 0.65 * std::pow(
         std::sin(3.141592653589793 * (block % 100) / 100.0), 2);
@@ -59,7 +62,11 @@ int TestSyntheticEcho(ksip_audio *audio) {
             kEchoDelayFrames * 10))
       return 6;
     // Match the application's roughly 300 ms statistics polling interval.
-    if ((block + 1) % 30 == 0 && ksip_audio_get_stats(audio, &stats)) return 7;
+    if ((block + 1) % 30 == 0) {
+      if (ksip_audio_get_stats(audio, &stats)) return 7;
+      if (linear_at < 0 && (stats.aec3 & KSIP_AUDIO_AEC3_LINEAR)) linear_at = block + 1;
+      if (converged_at < 0 && (stats.aec3 & KSIP_AUDIO_AEC3_CONVERGED)) converged_at = block + 1;
+    }
     if (block >= 1500) {
       for (size_t i = 0; i < kFrame; ++i) {
         input_energy += static_cast<double>(before[i]) * before[i];
@@ -84,6 +91,15 @@ int TestSyntheticEcho(ksip_audio *audio) {
       static_cast<unsigned long long>(stats.render_frames),
       static_cast<unsigned long long>(stats.capture_frames),
       stats.render_errors, stats.capture_errors);
+  std::printf("AEC3 judged: linear filter used at %d ms, converged at %d ms, "
+              "at the end 0x%x\n",
+              linear_at * 10, converged_at * 10, stats.aec3);
+  // At the end, with the echo taken out: the linear filter used, converged
+  // and adapting to the far end, which never stops; nothing wrong judged.
+  const uint32_t judged = KSIP_AUDIO_AEC3_LINEAR | KSIP_AUDIO_AEC3_CONVERGED |
+                          KSIP_AUDIO_AEC3_LEARNING;
+  if (!(stats.flags & KSIP_AUDIO_STATS_AEC3) || stats.aec3 != judged)
+    return 22;
   const uint32_t required = KSIP_AUDIO_STATS_ECHO_RETURN_LOSS |
       KSIP_AUDIO_STATS_ECHO_RETURN_LOSS_ENHANCEMENT |
       KSIP_AUDIO_STATS_DELAY | KSIP_AUDIO_STATS_RENDER_LEVEL |
@@ -97,6 +113,48 @@ int TestSyntheticEcho(ksip_audio *audio) {
       stats.capture_errors ||
       stats.capture_output_rms_dbfs > stats.capture_input_rms_dbfs - 10.0)
     return 8;
+  return 0;
+}
+
+// A far end that talks into a device without echo (a headset): only the
+// microphone's own noise comes back. AEC3 is to judge it so (transparent
+// mode) within 4 s of the far end, as its HMM classifier does in about 2 s;
+// the legacy rule, WebRTC's default, waits for 6 s and more.
+int TestNoEcho(ksip_audio *audio) {
+  if (ksip_audio_internal::SetEchoCancellationForTest(audio, true)) return 23;
+  std::array<int16_t, kFrame> render{};
+  std::array<int16_t, kFrame> capture{};
+  uint32_t random = 0x6e6f6563;
+  uint32_t noise = 0x6d696373;
+  ksip_audio_stats stats{};
+  int transparent_at = -1;
+  for (int block = 0; block < 1000; ++block) {
+    const double envelope = 0.35 + 0.65 * std::pow(
+        std::sin(3.141592653589793 * (block % 100) / 100.0), 2);
+    int32_t smooth = 0;
+    for (size_t i = 0; i < kFrame; ++i) {
+      const int32_t sample =
+          static_cast<int32_t>(NextRandom(random) & 0xffff) - 32768;
+      smooth = (3 * smooth + sample) / 4;
+      render[i] = static_cast<int16_t>(std::clamp(
+          static_cast<int32_t>(smooth * envelope * 0.55), -16000, 16000));
+      // About -60 dBFS.
+      capture[i] = static_cast<int16_t>(static_cast<int32_t>(NextRandom(noise) % 113) - 56);
+    }
+    if (ksip_audio_internal::ProcessSyntheticFrame(
+            audio, render.data(), capture.data(), capture.size(), 20))
+      return 6;
+    if ((block + 1) % 30 == 0) {
+      if (ksip_audio_get_stats(audio, &stats)) return 7;
+      if (transparent_at < 0 && (stats.aec3 & KSIP_AUDIO_AEC3_TRANSPARENT))
+        transparent_at = block + 1;
+    }
+  }
+  std::printf("AEC3 without echo: judged so at %d ms, at the end 0x%x\n",
+              transparent_at * 10, stats.aec3);
+  if (transparent_at < 0 || transparent_at > 400 ||
+      !(stats.aec3 & KSIP_AUDIO_AEC3_TRANSPARENT))
+    return 24;
   return 0;
 }
 
@@ -186,6 +244,8 @@ int main(int argc, char **argv) {
   if (ksip_audio_create(20, &processing, &audio) != 0 || !audio) return 1;
   ksip_audio_stats stats{};
   if (ksip_audio_get_stats(audio, &stats) != 0) return 2;
+  // Nothing processed yet, so nothing judged.
+  if (stats.flags & KSIP_AUDIO_STATS_AEC3) return 25;
   const bool disable_aec = argc >= 2 &&
       !std::strcmp(argv[1], "--duplex-no-aec");
   if (disable_aec) {
@@ -194,6 +254,8 @@ int main(int argc, char **argv) {
   } else {
     const int synthetic_result = TestSyntheticEcho(audio);
     if (synthetic_result) return synthetic_result;
+    const int no_echo_result = TestNoEcho(audio);
+    if (no_echo_result) return no_echo_result;
   }
   // --capture-restarts / --playout-restarts [rounds] [device] [hold ms]
   const bool test_restarts = argc >= 2 &&

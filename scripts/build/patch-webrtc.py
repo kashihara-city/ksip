@@ -52,6 +52,29 @@
 #       PBX that waits for RTP sends none back, and a firewall closes the way
 #       in. The three microphones tried did not mark muted packets so.
 #
+# What the echo canceller says (no change to what it does):
+#   modules/audio_processing/aec3/echo_remover.cc
+#   modules/audio_processing/aec3/subtractor.{cc,h}
+#       AEC3 tells nothing of how it is cancelling. Each block (4 ms) its own
+#       judgments are told to the bridge (KsipNoteAec3), which hands them to
+#       the app: whether it took the device for one without echo (transparent
+#       mode, where it all but stops suppressing), whether its linear filter
+#       is used, whether the filter converged (the analysis AecState makes of
+#       the subtractor's output, run once more on the same output), whether
+#       the refined filter adapted (its update gain was not all zero) or was
+#       scaled back as gone wrong (the subtractor keeps both), and whether the
+#       echo is clipped.
+#       Each change of the transparent mode, the linear filter's use and the
+#       clipping is logged as a warning, with the seconds since the canceller
+#       started, so that it shows in a log without the detail log; and every
+#       10 s a line (at the info level, the detail log's) says how the last
+#       10 s went: the share of blocks with the far end active (above AEC3's
+#       own threshold), in transparent mode, with the linear filter used, with
+#       the filter converged and adapting, with both filters over the
+#       microphone (the analysis's "diverged", which AEC3 itself does not act
+#       on block by block), and with the near end dominant, the times the
+#       filter was scaled back, and the canceller's ERLE, ERL and filter delay.
+#
 # Building and embedding (no change to what the library does):
 #   ksip_bridge/                   the KSIP bridge sources copied from
 #                                  src-native/webrtc.
@@ -63,6 +86,7 @@
 # same list).
 from pathlib import Path
 import argparse
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,6 +146,152 @@ ACTIVE_BEGIN = "// KSIP ACTIVE BEFORE START BEGIN"
 ACTIVE_END = "// KSIP ACTIVE BEFORE START END"
 SILENT_BEGIN = "// KSIP SILENT DELIVERED BEGIN"
 SILENT_END = "// KSIP SILENT DELIVERED END"
+AEC3_BEGIN = "// KSIP AEC3 STATE BEGIN"
+AEC3_END = "// KSIP AEC3 STATE END"
+# Each insertion of the AEC3 state patch: the file (in aec3/), the line it
+# goes by, whether it goes before or after that line, and what goes between
+# the marks.
+AEC3_INSERTIONS = [
+    ("echo_remover.cc", '#include "rtc_base/logging.h"\n', "after", """\
+#include "modules/audio_processing/aec3/subtractor_output_analyzer.h"
+
+namespace webrtc {
+// Defined by the KSIP bridge: what AEC3 judged of each block (4 ms).
+void KsipNoteAec3(bool transparent,
+                  bool linear,
+                  bool converged,
+                  bool learning,
+                  bool saturated_echo,
+                  bool diverged);
+}  // namespace webrtc
+"""),
+    ("echo_remover.cc", "  bool ml_ree_was_active_ = false;\n", "after", """\
+  bool ksip_transparent_ = false;
+  bool ksip_linear_ = false;
+  bool ksip_saturated_ = false;
+  // AEC3's own analysis of the subtractor's output, as AecState makes it.
+  SubtractorOutputAnalyzer ksip_analyzer_{num_capture_channels_};
+  size_t ksip_window_ = 0;
+  size_t ksip_render_ = 0;
+  size_t ksip_transparent_blocks_ = 0;
+  size_t ksip_linear_blocks_ = 0;
+  size_t ksip_converged_blocks_ = 0;
+  size_t ksip_learning_blocks_ = 0;
+  size_t ksip_diverged_blocks_ = 0;
+  size_t ksip_rescales_ = 0;
+  size_t ksip_nearend_blocks_ = 0;
+"""),
+    ("echo_remover.cc",
+     "  metrics_.Update(aec_state_, cng_.NoiseSpectrum()[0], G);\n", "after", """\
+  {
+    // Seconds since this canceller started, at one decimal.
+    const double seconds =
+        static_cast<int>(block_counter_ * 10 / kNumBlocksPerSecond) / 10.0;
+    const bool transparent = aec_state_.TransparentModeActive();
+    const bool linear = aec_state_.UsableLinearEstimate();
+    const bool saturated = aec_state_.SaturatedEcho();
+    // The block's filters as AEC3 judges them: converged by the analysis
+    // AecState makes of the subtractor's output, adapted, and rescaled. A
+    // block whose filters both came out over the microphone (the analysis's
+    // "diverged") happens now and then and is only counted: AEC3 acts on it
+    // only when 60 come in a row, and only in the legacy transparent mode.
+    // What it does about a filter gone wrong is the rescale.
+    bool converged = false;
+    bool coarse_converged = false;
+    bool diverged = false;
+    ksip_analyzer_.Update(subtractor_output, &converged, &coarse_converged,
+                          &diverged);
+    const bool learning = subtractor_.KsipRefinedAdapted();
+    const bool rescaled = subtractor_.KsipRefinedRescaled();
+    KsipNoteAec3(transparent, linear, converged, learning, saturated,
+                 rescaled);
+    if (transparent != ksip_transparent_ || linear != ksip_linear_ ||
+        saturated != ksip_saturated_) {
+      RTC_LOG(LS_WARNING) << "AEC3 state at " << seconds
+                          << " s: transparent " << (transparent ? "on" : "off")
+                          << ", linear filter "
+                          << (linear ? "used" : "not used")
+                          << ", saturated echo " << (saturated ? "yes" : "no");
+      ksip_transparent_ = transparent;
+      ksip_linear_ = linear;
+      ksip_saturated_ = saturated;
+    }
+    // The far end active as AEC3 counts it (aec_state.cc): the block's
+    // energy above active_render_limit squared per sample.
+    float render_energy = 0.f;
+    for (float v : x.View(/*band=*/0, /*channel=*/0)) render_energy += v * v;
+    constexpr float kActiveRender = 100.f * 100.f * kFftLengthBy2;
+    ++ksip_window_;
+    ksip_render_ += render_energy > kActiveRender ? 1 : 0;
+    ksip_transparent_blocks_ += transparent ? 1 : 0;
+    ksip_linear_blocks_ += linear ? 1 : 0;
+    ksip_converged_blocks_ += converged ? 1 : 0;
+    ksip_learning_blocks_ += learning ? 1 : 0;
+    ksip_diverged_blocks_ += diverged ? 1 : 0;
+    ksip_rescales_ += rescaled ? 1 : 0;
+    ksip_nearend_blocks_ += suppression_gain_.IsDominantNearend() ? 1 : 0;
+    if (ksip_window_ == 10 * kNumBlocksPerSecond) {
+      const auto share = [this](size_t n) {
+        return static_cast<int>(100 * n / ksip_window_);
+      };
+      RTC_LOG(LS_INFO) << "AEC3 last 10 s at " << seconds
+                       << " s: far end active " << share(ksip_render_)
+                       << "%, transparent " << share(ksip_transparent_blocks_)
+                       << "%, linear filter " << share(ksip_linear_blocks_)
+                       << "%, filter converged "
+                       << share(ksip_converged_blocks_) << "%, learning "
+                       << share(ksip_learning_blocks_)
+                       << "%, both filters over the microphone "
+                       << share(ksip_diverged_blocks_)
+                       << "%, filter rescaled " << ksip_rescales_
+                       << " times, near end dominant "
+                       << share(ksip_nearend_blocks_) << "%, ERLE "
+                       << static_cast<int>(3.0103f *
+                                           aec_state_.FullBandErleLog2())
+                       << " dB, ERL "
+                       << static_cast<int>(
+                              10.f * std::log10(std::max(
+                                         aec_state_.ErlTimeDomain(), 1e-6f)))
+                       << " dB, filter delay "
+                       << aec_state_.MinDirectPathFilterDelay() << " blocks";
+      ksip_window_ = ksip_render_ = ksip_transparent_blocks_ =
+          ksip_linear_blocks_ = ksip_converged_blocks_ =
+              ksip_learning_blocks_ = ksip_diverged_blocks_ = ksip_rescales_ =
+                  ksip_nearend_blocks_ = 0;
+    }
+  }
+"""),
+    ("subtractor.h", "  void DumpFilters() {\n", "before", """\
+  // Whether the refined filter adapted in the last block: its update gain
+  // was not all zero. It is while the render excites the filter and the
+  // capture is not saturated, and not just after a reset.
+  bool KsipRefinedAdapted() const { return ksip_refined_adapted_; }
+  // Whether the refined filter was scaled back in the last block: its error
+  // had come out loud and far over the microphone (the misadjustment
+  // estimator), which is how AEC3 finds a filter gone wrong.
+  bool KsipRefinedRescaled() const { return ksip_refined_rescaled_; }
+"""),
+    ("subtractor.h",
+     "  std::vector<std::vector<float>> coarse_impulse_responses_;\n", "after",
+     """\
+  bool ksip_refined_adapted_ = false;
+  bool ksip_refined_rescaled_ = false;
+"""),
+    ("subtractor.cc",
+     "    refined_filters_[ch]->Adapt(render_buffer, G,\n"
+     "                                &refined_impulse_responses_[ch]);\n",
+     "before", """\
+    if (ch == 0) {
+      ksip_refined_adapted_ = false;
+      ksip_refined_rescaled_ = false;
+    }
+    ksip_refined_rescaled_ = ksip_refined_rescaled_ || refined_filters_adjusted;
+    for (size_t k = 0; k < kFftLengthBy2Plus1; ++k) {
+      ksip_refined_adapted_ =
+          ksip_refined_adapted_ || G.re[k] != 0.f || G.im[k] != 0.f;
+    }
+"""),
+]
 TARGET = f'''{BEGIN}
 rtc_static_library("ksip_webrtc_audio") {{
   visibility = [ "*" ]
@@ -135,6 +305,8 @@ rtc_static_library("ksip_webrtc_audio") {{
   complete_static_lib = true
   suppressed_configs += [ "//build/config/compiler:thin_archive" ]
   deps = [
+    "api:field_trials",
+    "api/audio:aec3_config",
     "api/audio:builtin_audio_processing_builder",
     "api/environment:environment_factory",
     "common_audio",
@@ -398,6 +570,29 @@ def patch_silent_delivered(source: Path):
     path.write_text(text, encoding="utf-8")
 
 
+def patch_aec3_state(source: Path):
+    """AEC3's judgments told to the bridge and logged (the header above):
+    the marked insertions of AEC3_INSERTIONS in echo_remover.cc and the
+    subtractor."""
+    aec3 = source / "modules" / "audio_processing" / "aec3"
+    marked = re.compile(rf"^[ \t]*{re.escape(AEC3_BEGIN)}\n.*?^[ \t]*{re.escape(AEC3_END)}\n",
+                        re.DOTALL | re.MULTILINE)
+    for name in sorted({name for name, _, _, _ in AEC3_INSERTIONS}):
+        path = aec3 / name
+        # What an earlier run put in is taken out first, so that a second run
+        # puts the current text in again.
+        text = marked.sub("", path.read_text(encoding="utf-8"))
+        if AEC3_BEGIN in text or AEC3_END in text:
+            raise RuntimeError(f"Unsupported partial KSIP AEC3 state patch in {name}")
+        for _, anchor, where, body in (i for i in AEC3_INSERTIONS if i[0] == name):
+            if text.count(anchor) != 1:
+                raise RuntimeError(f"Unsupported WebRTC AEC3 source: {name} anchor missing")
+            indent = anchor[:len(anchor) - len(anchor.lstrip(" "))]
+            block = f"{indent}{AEC3_BEGIN}\n{body}{indent}{AEC3_END}\n"
+            text = text.replace(anchor, anchor + block if where == "after" else block + anchor, 1)
+        path.write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -406,6 +601,7 @@ def main():
     patch_raw_capture(source)
     patch_active_before_start(source)
     patch_silent_delivered(source)
+    patch_aec3_state(source)
     bridge = source / "ksip_bridge"
     bridge.mkdir(exist_ok=True)
     for name in ["ksip_audio_bridge.h", "ksip_audio_bridge_internal.h",

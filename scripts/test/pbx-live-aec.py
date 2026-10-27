@@ -70,6 +70,7 @@ def main():
     assert final["capture_errors"] == 0
     assert final["capture_device_rate"] == 48000
     assert final["capture_device_channels"] >= 1
+    assert isinstance(final.get("aec3"), dict), "AEC3 told nothing of what it judged"
     for name in (
         "render_rms_dbfs",
         "capture_device_rms_dbfs",

@@ -31,6 +31,7 @@
 #include "api/audio/audio_device.h"
 #include "api/audio/audio_device_defines.h"
 #include "api/audio/audio_processing.h"
+#include "api/audio/echo_canceller3_config.h"
 #include "api/environment/environment.h"
 #include "api/environment/environment_factory.h"
 #include "common_audio/resampler/include/push_resampler.h"
@@ -71,7 +72,24 @@ std::string OpenedEndpoint(bool playout);
 // apm.cc
 bool AnyProcessing(const ksip_audio_processing &p);
 webrtc::AudioProcessing::Config ApmConfig(const ksip_audio_processing &p);
+// AEC3 as KSIP runs it: the environment with its transparent mode
+// classifier, and its settings.
+webrtc::Environment Aec3Environment();
+webrtc::EchoCanceller3Config Aec3Config();
+// What AEC3 judged over the last second (KsipNoteAec3), as
+// KSIP_AUDIO_AEC3_* bits; none while it has judged nothing since the
+// processing was reset (ResetAec3Judgments, also when the APM is built).
+std::optional<uint32_t> Aec3Judgments();
+void ResetAec3Judgments();
 }  // namespace ksip_audio_bridge
+
+namespace webrtc {
+// Told by AEC3 of each block (4 ms) from the capture thread, as it processes
+// it: the patch of echo_remover.cc in scripts/build/patch-webrtc.py, which
+// declares it the same way.
+void KsipNoteAec3(bool transparent, bool linear, bool converged,
+                  bool learning, bool saturated_echo, bool diverged);
+}  // namespace webrtc
 
 struct ksip_audio final : public webrtc::AudioTransport {
   ksip_audio(uint32_t fallback_delay, const ksip_audio_processing &p)
@@ -79,7 +97,7 @@ struct ksip_audio final : public webrtc::AudioTransport {
         processing(p),
         processing_enabled(ksip_audio_bridge::AnyProcessing(p)),
         com(webrtc::ScopedCOMInitializer::kMTA),
-        env(webrtc::CreateEnvironment()),
+        env(ksip_audio_bridge::Aec3Environment()),
         mono_config(ksip_audio_bridge::kSampleRate, 1) {}
 
   // ksip_audio_bridge.cc

@@ -16,7 +16,9 @@ PATCHED={'re':{'src/sipevent/subscribe.c','src/rtp/rtp.c','src/sip/transp.c'},
 ADDED={'baresip':('modules/ksip_audio/','modules/ksip_audio_filter/','modules/ksip/','modules/ksip_ctrl/')}
 WEBRTC_TOUCHED={'BUILD.gn','modules/audio_device/win/core_audio_utility_win.cc',
                 'modules/audio_device/win/core_audio_utility_win.h','modules/audio_device/win/core_audio_base_win.cc',
-                'modules/audio_device/win/core_audio_input_win.cc','modules/audio_device/win/core_audio_output_win.cc','ksip_bridge/'}
+                'modules/audio_device/win/core_audio_input_win.cc','modules/audio_device/win/core_audio_output_win.cc',
+                'modules/audio_processing/aec3/echo_remover.cc','modules/audio_processing/aec3/subtractor.cc',
+                'modules/audio_processing/aec3/subtractor.h','ksip_bridge/'}
 # Tauri publishes its advisories as GitHub repository advisories and files none with
 # RustSec (its 2026 advisories are in neither RustSec nor, for weeks after, GitHub's
 # reviewed database), so the repositories behind the crates of these owners are asked

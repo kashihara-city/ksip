@@ -51,6 +51,18 @@ void add_audio_stats(odict *od, const ksip_audio_stats &stats) {
         odict_entry_add(aec, "agc_headroom_db", ODICT_DOUBLE, stats.agc_headroom_db);
         odict_entry_add(aec, "agc_gain_db", ODICT_DOUBLE, stats.agc_gain_db);
     }
+    odict *aec3 = nullptr;
+    if ((stats.flags & KSIP_AUDIO_STATS_AEC3) && !odict_alloc(&aec3, DICT_BUCKETS)) {
+        const auto judged = [&](const char *name, uint32_t bit) { odict_entry_add(aec3, name, ODICT_BOOL, static_cast<int>((stats.aec3 & bit) != 0)); };
+        judged("transparent", KSIP_AUDIO_AEC3_TRANSPARENT);
+        judged("linear", KSIP_AUDIO_AEC3_LINEAR);
+        judged("converged", KSIP_AUDIO_AEC3_CONVERGED);
+        judged("learning", KSIP_AUDIO_AEC3_LEARNING);
+        judged("saturated_echo", KSIP_AUDIO_AEC3_SATURATED_ECHO);
+        judged("diverged", KSIP_AUDIO_AEC3_DIVERGED);
+        odict_entry_add(aec, "aec3", ODICT_OBJECT, aec3);
+        mem_deref(aec3);
+    }
     odict_entry_add(aec, "stream_delay_ms", ODICT_INT, static_cast<int64_t>(stats.stream_delay_ms));
     odict_entry_add(aec, "stream_delay_from_device", ODICT_BOOL, static_cast<int>(stats.stream_delay_from_device != 0));
     odict_entry_add(aec, "render_frames", ODICT_INT, static_cast<int64_t>(stats.render_frames));
