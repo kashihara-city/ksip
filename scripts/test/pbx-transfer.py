@@ -27,8 +27,16 @@ def main():
         b.action('select',remote)
         time.sleep(.5)
         recording=a.dir/'first-call.wav'
+        recording.unlink(missing_ok=True)
         a.command('ksip_record',first+' '+str(recording))
-        time.sleep(.5)
+        # The header is written with the first audio. A B2BUA such as 3CX tells
+        # this side of each switch with re-INVITEs of its own, and the first
+        # call's audio can take more than a moment to come back; the other call
+        # is closed only once this recording is under way.
+        end=time.time()+10
+        while not(recording.exists() and recording.stat().st_size>=44):
+            assert time.time()<end,'The recording of the first call never started'
+            time.sleep(.1)
         b.action('hangup',remote2)
         a.wait(lambda s:len(s['calls'])==1)
         header=recording.read_bytes()
