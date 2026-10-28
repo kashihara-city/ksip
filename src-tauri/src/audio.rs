@@ -828,11 +828,16 @@ fn locate_probe(capture: &[f32], start_ms: usize, variant: u8) -> Option<(i32, f
     let mut best = (0usize, 0.0f32);
     for offset in first..=last {
         let window = &capture[offset..offset + reference.len()];
-        let energy: f32 = window.iter().map(|v| v * v).sum();
+        // Some microphones add a constant (a DC offset) to all they hear. It
+        // is taken out of the window first: left in, its energy outweighs a
+        // faint probe, and the correlation falls under the threshold even
+        // where the probe is.
+        let mean = window.iter().sum::<f32>() / window.len() as f32;
+        let energy: f32 = window.iter().map(|v| (v - mean) * (v - mean)).sum();
         if energy < 1e-8 {
             continue;
         }
-        let dot: f32 = reference.iter().zip(window).map(|(a, b)| a * b).sum();
+        let dot: f32 = reference.iter().zip(window).map(|(a, b)| a * (b - mean)).sum();
         let correlation = dot.abs() / (reference_energy * energy).sqrt();
         if correlation > best.1 {
             best = (offset, correlation);
@@ -1293,6 +1298,23 @@ mod tests {
             let found = locate_probe(&capture, start_ms, variant as u8).unwrap();
             assert!((found.0 - delay_ms as i32).abs() <= 1);
             assert!(found.1 > 0.99);
+        }
+    }
+
+    // A faint probe on a microphone with a DC offset larger than the probe
+    // itself is found as if there were no offset.
+    #[test]
+    fn a_dc_offset_does_not_hide_the_probe() {
+        let mut capture = vec![0.010; 32_000];
+        let delay_ms = 14;
+        for (variant, start_ms) in [300, 1050].into_iter().enumerate() {
+            for i in 0..2800 {
+                let target = (start_ms + delay_ms) * 8 + i;
+                capture[target] += 0.005 * probe(i as f32 / 8000.0, variant as u8);
+            }
+            let found = locate_probe(&capture, start_ms, variant as u8).unwrap();
+            assert!((found.0 - delay_ms as i32).abs() <= 1);
+            assert!(found.1 > 0.99, "correlation {}", found.1);
         }
     }
 
