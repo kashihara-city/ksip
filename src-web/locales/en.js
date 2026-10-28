@@ -354,7 +354,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_LANGUAGE_SYSTEM:'Follow Windows',
       SETTINGS_LOG:'Log',
       SETTINGS_CODECS:'Audio codecs',
-      SETTINGS_CODECS_HINT:'Tick the codecs to offer; they are offered top to bottom. Put G.711 μ-law first when a PBX and a handset garble the sound between them',
+      SETTINGS_CODECS_HINT:'Tick the codecs to offer; they are offered top to bottom, but the order the PBX gives takes precedence. When the sound is garbled, tick G.711 μ-law alone',
       SETTINGS_CODEC_DOWN:'Down',
       SETTINGS_CODEC_UP:'Up',
       SETTINGS_CODECS_INVALID:'Choose at least one audio codec, each once',

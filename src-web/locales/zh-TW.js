@@ -354,7 +354,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_LANGUAGE_SYSTEM:'跟隨 Windows',
       SETTINGS_LOG:'記錄',
       SETTINGS_CODECS:'語音編解碼器',
-      SETTINGS_CODECS_HINT:'勾選要使用的編解碼器，依由上而下的順序提示。若 PBX 與話機的組合造成雜音，請將 G.711 μ-law 放在最前面',
+      SETTINGS_CODECS_HINT:'勾選要使用的編解碼器，依由上而下的順序提示，但以 PBX 提示的順序為優先。若聲音失真，請只勾選 G.711 μ-law',
       SETTINGS_CODEC_DOWN:'下移',
       SETTINGS_CODEC_UP:'上移',
       SETTINGS_CODECS_INVALID:'請至少選擇一個語音編解碼器，且不可重複',

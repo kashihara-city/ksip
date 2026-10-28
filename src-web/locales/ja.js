@@ -354,7 +354,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       SETTINGS_LANGUAGE_SYSTEM:'Windowsに合わせる',
       SETTINGS_LOG:'ログ',
       SETTINGS_CODECS:'音声コーデック',
-      SETTINGS_CODECS_HINT:'使うものにチェックを付けます。上から順に相手へ提示します。PBXと相手機器の組み合わせで音が乱れるときは G.711 μ-law を先頭にしてください',
+      SETTINGS_CODECS_HINT:'使うものにチェックを付けます。上から順に相手へ提示しますが、PBXの提示順が優先されます。音が乱れるときは G.711 μ-law だけにチェックを付けてください',
       SETTINGS_CODEC_DOWN:'下へ',
       SETTINGS_CODEC_UP:'上へ',
       SETTINGS_CODECS_INVALID:'音声コーデックは1つ以上を選び、名前が重複しないようにしてください',
