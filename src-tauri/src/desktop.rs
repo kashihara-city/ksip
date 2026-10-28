@@ -60,6 +60,18 @@ fn start_height(wanted: f64, most: Option<f64>) -> Option<f64> {
     }
     Some(wanted.ceil().min(most.unwrap_or(f64::MAX)).max(MIN_HEIGHT))
 }
+/// The window's title: the version, and, for a build that is not the tagged
+/// release itself (commits past the tag, or changes not committed), what git
+/// said it was built from (build.rs), so that a test build is told apart at a
+/// glance. A build without git (the source archive) has only the version.
+fn window_title(version: &str, source: &str) -> String {
+    let release = source.starts_with(&format!("v{version}-0-g")) && !source.ends_with("-dirty");
+    if release || source == "no git" {
+        format!("KSIP {version}")
+    } else {
+        format!("KSIP {version} ({source})")
+    }
+}
 /// Fits the window's height once, when the page has laid out what it shows
 /// at the start; the width stays. Later calls do nothing, so that a height
 /// the person chooses stays, and a maximized window is left as it is.
@@ -163,7 +175,7 @@ pub fn run(state: AppState) {
             // (temp\WebView2\EBWebView), and not into a folder of the
             // identifier's name beside it.
             let window = tauri::utils::config::WindowConfig {
-                title: "KSIP".into(),
+                title: window_title(env!("CARGO_PKG_VERSION"), env!("KSIP_SOURCE")),
                 width: 520.0,
                 height: 672.0,
                 min_width: Some(420.0),
@@ -365,5 +377,15 @@ mod tests {
         assert_eq!(start_height(900.0, None), Some(900.0), "no screen known, the measure as it is");
         assert_eq!(start_height(f64::NAN, Some(1000.0)), None);
         assert_eq!(start_height(0.0, Some(1000.0)), None, "a page not laid out yet changes nothing");
+    }
+    #[test]
+    fn the_title_names_the_source_only_for_a_build_that_is_not_the_release_itself() {
+        assert_eq!(window_title("0.0.15", "v0.0.15-0-g73a372a"), "KSIP 0.0.15", "the tag itself");
+        assert_eq!(window_title("0.0.15", "no git"), "KSIP 0.0.15", "built from the source archive");
+        assert_eq!(window_title("0.0.15", "v0.0.15-0-g73a372a-dirty"), "KSIP 0.0.15 (v0.0.15-0-g73a372a-dirty)");
+        assert_eq!(window_title("0.0.15", "v0.0.15-1-gd310c6b"), "KSIP 0.0.15 (v0.0.15-1-gd310c6b)");
+        assert_eq!(window_title("0.0.15", "v0.0.14-11-gdbbdabe"), "KSIP 0.0.15 (v0.0.14-11-gdbbdabe)", "the version raised before its tag");
+        assert_eq!(window_title("0.0.1", "v0.0.15-0-g73a372a"), "KSIP 0.0.1 (v0.0.15-0-g73a372a)", "another version's tag");
+        assert_eq!(window_title("0.0.15", "73a372a"), "KSIP 0.0.15 (73a372a)", "no tag reached");
     }
 }
