@@ -41,9 +41,8 @@ try {
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $manifest = Get-Content -LiteralPath "$root/src-tauri/Cargo.toml" -Raw
 if ($manifest -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') { throw 'Cargo package version was not found' }
-# Only this build's executables are replaced. Call history, recordings and the
-# engine profile live in the same folder once the app has run, and must survive
-# a build. Copies of earlier versions stay too: they are kept for comparison.
+# Only this build's executables are replaced. Copies of earlier versions stay:
+# they are kept for comparison.
 Stop-ReleaseCopies 'before replacing the executables'
 foreach ($name in 'ksip.exe', "ksip-v$($Matches[1]).exe") {
     $stale = Join-Path $release $name

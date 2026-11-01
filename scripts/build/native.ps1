@@ -1,4 +1,5 @@
-﻿# Build WebRTC, re, baresip and the KSIP modules into temp/build/native.
+﻿# Build WebRTC, LibreSSL, opus, libg722, re, baresip and the KSIP modules
+# into temp/build/native.
 param([switch]$Clean)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../dev-env.ps1"
@@ -48,9 +49,6 @@ Run cmake @('--install','temp/build/libg722')
 Run cmake (@('-S','temp/vendor/re','-B','temp/build/re','-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_EXE_LINKER_FLAGS=/Brepro bcrypt.lib','-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded','-DLIBRE_BUILD_SHARED=OFF','-DLIBRE_BUILD_STATIC=ON','-DUSE_MBEDTLS=OFF','-DUSE_BFCP=OFF','-DUSE_PCP=OFF','-DUSE_RTMP=OFF') + $tls + $tlsFlags)
 Run cmake @('--build','temp/build/re','--parallel','8')
 Run cmake @('--install','temp/build/re')
-# baresip would otherwise embed the absolute install prefix as its default sound
-# and module directories. KSIP writes audio_path itself and links every module
-# statically, so fixed relative names are enough.
 # KSIP's own code (src-native/CMakeLists.txt), compiled with the clang-cl the
 # pinned WebRTC brings along, the one its build uses, so that all of KSIP's C
 # and C++ goes through one compiler whose warnings and checks the rest can
@@ -72,6 +70,9 @@ $link = (Get-Command link.exe).Source
 Run cmake (@('-S','src-native','-B','temp/build/ksip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',"-DCMAKE_C_COMPILER=$clang","-DCMAKE_CXX_COMPILER=$clang","-DCMAKE_C_FLAGS_RELEASE=$ksipFlags","-DCMAKE_CXX_FLAGS_RELEASE=$ksipFlags",'-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_AR=$lib","-DCMAKE_LINKER=$link","-DCMAKE_INSTALL_PREFIX=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',"-DKSIP_NATIVE=$prefix","-DBARESIP_SOURCE=$root/temp/vendor/baresip") + $tls)
 Run cmake @('--build','temp/build/ksip','--parallel','8')
 Run cmake @('--install','temp/build/ksip')
+# baresip would otherwise embed the absolute install prefix as its default sound
+# and module directories. KSIP writes audio_path itself and links every module
+# statically, so fixed relative names are enough.
 $paths = @('-DSHARE_PATH=share/baresip','-DMOD_PATH=lib/baresip/modules')
 Run cmake (@('-S','temp/vendor/baresip','-B','temp/build/baresip','-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_EXE_LINKER_FLAGS=/Brepro bcrypt.lib','-DCMAKE_STATIC_LINKER_FLAGS=/Brepro',"-DCMAKE_INSTALL_PREFIX=$prefix", "-DCMAKE_PREFIX_PATH=$prefix",'-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded','-DSTATIC=ON','-DMODULES=account;menu;ksip_ctrl;g711;libg722;opus;srtp;dtls_srtp;ksip_audio;aufile;auconv;auresamp;ksip_audio_filter;ksip',"-DLIBG722_INCLUDE_DIR=$prefix/include","-DLIBG722_LIBRARY=$prefix/lib/g722_static.lib","-DOPUS_INCLUDE_DIR=$prefix/include","-DOPUS_LIBRARY=$prefix/lib/opus.lib","-DKSIP_NATIVE=$prefix") + $paths + $tls + $tlsFlags)
 Run cmake @('--build','temp/build/baresip','--parallel','8')

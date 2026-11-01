@@ -1,14 +1,12 @@
 # Build outputs and caches
 /temp/
-# ビルド中だけ temp/build/tauri-gen へのジャンクションとして現れる
-/src-tauri/gen/
 /release/
 **/__pycache__/
+# Exists only during a build, as a junction to temp/build/tauri-gen
+/src-tauri/gen/
 
 # Local Asterisk host details and credentials
 /test-pbx/
 
-# メモ類（手元だけ）
-/AGENTS.md
-/HANDOVER.md
-/PROJECT.md
+# Local notes, kept out of the repository
+/notes/
