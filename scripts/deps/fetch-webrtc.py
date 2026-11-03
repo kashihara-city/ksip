@@ -55,13 +55,17 @@ def main():
 
     checkout.mkdir(parents=True, exist_ok=True)
     gclient = checkout / ".gclient"
+    # clang-format's sources and editor scripts are not fetched: nothing in
+    # the build uses them (the formatter WebRTC runs comes from buildtools),
+    # and Chromium's mirror of them was rolled back to before the commit the
+    # pinned DEPS names, which it then refuses to serve.
     gclient.write_text(
         "solutions = [{\n"
         "  'name': 'src',\n"
         f"  'url': '{webrtc['url']}',\n"
         "  'deps_file': 'DEPS',\n"
         "  'managed': False,\n"
-        "  'custom_deps': {},\n"
+        "  'custom_deps': {'src/third_party/clang-format/script': None},\n"
         "  'custom_vars': {},\n"
         "}]\n",
         encoding="utf-8",
