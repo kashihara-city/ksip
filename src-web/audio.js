@@ -61,13 +61,18 @@ async function sendVolume(kind){
   catch(e){failVolume(kind,e);}
   finally{control.pending=false;render();if(control.queued)sendVolume(kind);}
 }
+// The level over the slider; above 100, the words for the software gain
+// before it (null: no level to show).
+function showLevel(kind,level){
+  $(kind+'-level').textContent=level===null?'—':level+'%';
+  $(kind+'-gain').hidden=!(level>100);
+}
 // What a look, or a change, said about a kind of device, onto its controls.
 function applyVolume(kind,result){
   const control=volumes[kind];
   control.id=result.id;
-  $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);$(kind+'-level').textContent=result.level+'%';
+  $(kind+'-volume').value=result.level;control.available=true;showMute(kind,result.muted);showLevel(kind,result.level);
   const notices=[];
-  if(result.level>100)notices.push(fill('GAIN_APPLIED',result.level+'%'));
   if(result.stand_in==='absent')notices.push(t('AUDIO_DEVICE_FALLBACK'));
   if(result.stand_in==='failed')notices.push(t('AUDIO_DEVICE_KEPT'));
   if(kind==='microphone'&&state.microphone_fallback)notices.push(t('MICROPHONE_SILENT'));
@@ -77,7 +82,7 @@ function applyVolume(kind,result){
 }
 function failVolume(kind,e){
   const control=volumes[kind];
-  logFailure('volume '+kind,e);control.id=null;control.available=false;$(kind+'-level').textContent='—';
+  logFailure('volume '+kind,e);control.id=null;control.available=false;showLevel(kind,null);
   const none=String(e)==='AUDIO_MICROPHONE_NONE'||String(e)==='AUDIO_SPEAKER_NONE';
   $(kind+'-volume-status').textContent=kind==='microphone'&&state.microphone_fallback&&!none?t('MICROPHONE_SILENT'):t(String(e));
   $(kind+'-volume-status').classList.toggle('missing',none);
@@ -90,6 +95,34 @@ function queueChange(kind,change){
   const c=volumes[kind],device=c.id,waiting=c.queued&&c.queued.device===device?c.queued:{device,level:null,mute:null};
   ++c.sequence;
   c.queued={device,level:change.level??waiting.level,mute:change.mute??waiting.mute};
+}
+
+// The buttons beside the level move it a percent at a time, and on and on
+// while one is held: a step at the press, then one every REPEAT_MS once it
+// has been held HOLD_MS. The level shows as it moves, as when the slider is
+// dragged, and is sent when the button is let go, since a gain is saved
+// with every change sent.
+const HOLD_MS=400,REPEAT_MS=50;
+let stepping=null;
+function stepLevel(kind,delta){
+  const slider=$(kind+'-volume'),level=Math.max(0,Math.min(Number(slider.max),Number(slider.value)+delta));
+  slider.value=level;showLevel(kind,level);
+}
+function sendLevel(kind){
+  volumes[kind].dragging=false;
+  queueChange(kind,{level:Number($(kind+'-volume').value),mute:null});sendVolume(kind);
+}
+function startStepping(kind,button,delta){
+  stopStepping();
+  volumes[kind].dragging=true;stepLevel(kind,delta);
+  // A button disabled while held (the phone busy) hears no letting go.
+  const tick=()=>{if(button.disabled){stopStepping();return;}stepLevel(kind,delta);stepping.timer=setTimeout(tick,REPEAT_MS);};
+  stepping={kind,timer:setTimeout(tick,HOLD_MS)};
+}
+function stopStepping(){
+  if(!stepping)return;
+  const {kind,timer}=stepping;stepping=null;clearTimeout(timer);
+  sendLevel(kind);
 }
 
 function showMute(kind,muted){
@@ -171,8 +204,29 @@ export function init(){
   for(const kind of kinds){
     $(kind+'-volume').addEventListener('pointerdown',()=>{volumes[kind].pointer=true;});
     for(const type of ['pointerup','pointercancel'])window.addEventListener(type,()=>{volumes[kind].pointer=false;});
-    $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;$(kind+'-level').textContent=slider.value+'%';});
+    $(kind+'-volume').addEventListener('input',()=>{const slider=$(kind+'-volume');volumes[kind].dragging=true;if(volumes[kind].pointer&&Math.abs(Number(slider.value)-100)<=3)slider.value=100;showLevel(kind,Number(slider.value));});
     $(kind+'-volume').addEventListener('change',()=>{const c=volumes[kind],level=Number($(kind+'-volume').value);c.dragging=false;c.pointer=false;queueChange(kind,{level,mute:null});sendVolume(kind);});
+    for(const [suffix,delta] of [['-volume-down',-1],['-volume-up',1]]){
+      const button=$(kind+suffix);
+      // The click that ends a press of the pointer has had its steps; one
+      // with no press before it (the keyboard, UI Automation) is one step,
+      // sent at once.
+      let pressed=false;
+      button.addEventListener('pointerdown',e=>{
+        if(e.button!==0||button.disabled)return;
+        pressed=true;
+        // Held on when the pointer strays off it; one the page cannot capture still steps.
+        try{button.setPointerCapture(e.pointerId);}catch{}
+        startStepping(kind,button,delta);
+      });
+      for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,stopStepping);
+      button.addEventListener('pointerup',()=>setTimeout(()=>{pressed=false;}));
+      button.addEventListener('pointercancel',()=>{pressed=false;});
+      button.addEventListener('click',()=>{
+        if(pressed){pressed=false;return;}
+        if(!button.disabled){stepLevel(kind,delta);sendLevel(kind);}
+      });
+    }
     // A second click while one is waiting toggles the waiting one back.
     $(kind+'-mute').addEventListener('click',()=>{const c=volumes[kind],waiting=c.queued&&c.queued.device===c.id?c.queued.mute:null;queueChange(kind,{level:null,mute:!(waiting??c.muted)});sendVolume(kind);});
   }

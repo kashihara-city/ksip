@@ -39,7 +39,7 @@ try {
     'PASS: スライダー横のアイコンでWindowsのミュートを切り替えられる'
     foreach($id in @('microphone-volume','speaker-volume')){
         $range=(Wait-Id $id).GetCurrentPattern([Windows.Automation.RangeValuePattern]::Pattern)
-        if($range.Current.Maximum -ne 200){throw "$id maximum is $($range.Current.Maximum)"}
+        if($range.Current.Maximum -ne 300){throw "$id maximum is $($range.Current.Maximum)"}
     }
     $app.Id | Set-Content "$root/temp/build/gui-test-pid.txt"
     & "$PSScriptRoot/app-screenshot.ps1" | Out-Null

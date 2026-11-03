@@ -531,8 +531,32 @@ async function checks(){
   finish();await operation;
   await new Promise(r=>setTimeout(r,1500));
   const afterOperation={...microphone};
-  volumeHandler=null;levelsHandler=null;
   check(afterDrag.level===70&&afterDrag.muted===true&&afterOperation.muted===true,'a mute waiting while the slider is dragged, or while another operation runs, is sent once that is over',[afterDrag,afterOperation]);
+  // The buttons beside the level: a press with no pointer (the keyboard, UI
+  // Automation) is a step of one, sent at once; one held steps on and on,
+  // shown as it goes and sent once let go. Over 100 the words for the
+  // software gain stand before the level, and go again at 100.
+  microphone={level:100,muted:false};await audio.look();
+  const gainAt100=$('microphone-gain').hidden;
+  $('microphone-volume-up').click();await settle();await settle();
+  const pressed={sent:microphone.level,shown:text('microphone-level'),gain:!$('microphone-gain').hidden};
+  const up=$('microphone-volume-up');
+  up.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1}));
+  await new Promise(r=>setTimeout(r,700));
+  const held={sent:microphone.level,shown:Number($('microphone-volume').value),text:text('microphone-level')};
+  up.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerId:1}));
+  up.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  await settle();await settle();
+  const released=microphone.level;
+  microphone={level:101,muted:false};await audio.look();
+  $('microphone-volume-down').click();await settle();await settle();
+  const down={sent:microphone.level,gain:!$('microphone-gain').hidden};
+  microphone={level:300,muted:false};await audio.look();
+  $('microphone-volume-up').click();await settle();await settle();
+  const top=microphone.level;
+  volumeHandler=null;levelsHandler=null;
+  check(gainAt100&&pressed.sent===101&&pressed.shown==='101%'&&pressed.gain&&held.sent===101&&held.shown>=105&&held.text===held.shown+'%'&&released===held.shown&&down.sent===100&&!down.gain&&top===300,
+    'the buttons beside the level step it by one, on and on while held and sent once let go, within 0 to 300; the software gain is named before the level over 100',[gainAt100,pressed,held,released,down,top]);
 
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring

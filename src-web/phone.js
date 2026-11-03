@@ -120,7 +120,7 @@ export function render({clearNotices=false}={}){
   $('history-tab').classList.toggle('active',activePanel==='history');$('logs-tab').classList.toggle('active',activePanel==='logs');
   $('history-tab').setAttribute('aria-selected',String(activePanel==='history'));$('logs-tab').setAttribute('aria-selected',String(activePanel==='logs'));
   renderLogs();
-  for(const kind of kinds){$(kind+'-volume').disabled=busy||!volumes[kind].available;$(kind+'-mute').disabled=busy||!volumes[kind].available;$(kind).disabled=busy||!state.account.has_password;}
+  for(const kind of kinds){for(const id of ['-volume','-mute','-volume-down','-volume-up'])$(kind+id).disabled=busy||!volumes[kind].available;$(kind).disabled=busy||!state.account.has_password;}
   // The refresh is the way back when a device notice was missed, in a call
   // too: the engine is then handed the devices without a restart.
   $('refresh-devices').disabled=busy;

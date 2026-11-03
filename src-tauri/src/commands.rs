@@ -322,7 +322,7 @@ pub struct VolumeView {
 /// says what is in use. The arguments are checked here, before anything is
 /// asked of Windows.
 pub fn volume(state: &AppState, kind: &str, level: Option<u16>, mute: Option<bool>, expected: Option<&str>) -> Result<VolumeView, String> {
-    if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 200) {
+    if !matches!(kind, "microphone" | "speaker") || level.is_some_and(|value| value > 300) {
         return Err(message("AUDIO_VOLUME_ARGUMENT_INVALID"));
     }
     if level.is_none() && mute.is_none() {
@@ -515,7 +515,7 @@ mod tests {
     fn reject_invalid_volume_without_launching_helper() {
         let app = AppState::new();
         assert!(volume(&app, "other", None, None, None).is_err());
-        assert!(volume(&app, "speaker", Some(201), None, None).is_err());
+        assert!(volume(&app, "speaker", Some(301), None, None).is_err());
         assert!(target(&app, "other", true).is_err());
         assert!(crate::audio::resolve("microphone", "bad\0id").is_err());
         assert!(crate::audio::peak("other", "default").is_err());

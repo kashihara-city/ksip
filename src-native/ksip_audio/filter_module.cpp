@@ -93,13 +93,13 @@ int select_recording(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     return recording_session::select(pf, a ? a->prm : nullptr);
 }
-// The software gain as the app sets it: a percentage, from 100 (as is) to 200.
-constexpr uint32_t kMinGainPercent = 100, kMaxGainPercent = 200;
+// The software gain as the app sets it: a percentage, from 100 (as is) to 300.
+constexpr uint32_t kMinGainPercent = 100, kMaxGainPercent = 300;
 constexpr float kPercent = 100.f;
 int gain(re_printf *pf, void *arg) {
     auto a = static_cast<cmd_arg *>(arg);
     if (!a || !str_isset(a->prm)) return EINVAL;
-    // "<kind> <level>": the level a percentage from 100 to 200 with nothing
+    // "<kind> <level>": the level a percentage from 100 to 300 with nothing
     // after it, read strictly (sscanf would take a sign and overflow quietly).
     const std::string_view prm(a->prm);
     const size_t space = prm.find(' ');

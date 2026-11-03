@@ -1037,7 +1037,7 @@ pub fn validate(s: &Settings) -> Result<(), String> {
             return Err(message("SETTINGS_AUDIO_DEVICE_INVALID"));
         }
     }
-    if !(100..=200).contains(&s.microphone_gain) || !(100..=200).contains(&s.speaker_gain) {
+    if !(100..=300).contains(&s.microphone_gain) || !(100..=300).contains(&s.speaker_gain) {
         return Err(message("SETTINGS_GAIN_RANGE"));
     }
     if s.aec_delay_ms > 500 {

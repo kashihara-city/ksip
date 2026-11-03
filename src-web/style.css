@@ -209,10 +209,41 @@ summary {
   gap:22px;
   margin-top:20px;
 }
-.audio label {
+.volume-head {
   display:flex;
   justify-content:space-between;
+  align-items:center;
   font-size:12px;
+}
+.volume-level {
+  display:flex;
+  align-items:center;
+  gap:2px;
+}
+.audio .gain {
+  margin-right:4px;
+  font-size:11px;
+  color:#718079;
+}
+/* As wide as 300%, so that the buttons stay put as the number changes. */
+.volume-level output {
+  min-width:2.8em;
+  text-align:center;
+}
+.step {
+  width:18px;
+  height:18px;
+  padding:0;
+  border:0;
+  border-radius:6px;
+  background:transparent;
+  color:#4c6158;
+  font-size:14px;
+  line-height:1;
+  user-select:none;
+}
+.step:hover:enabled {
+  background:#edf5f1;
 }
 .audio input {
   padding:0;
