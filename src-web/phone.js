@@ -175,7 +175,7 @@ function renderFooter(){
   $('aec-agc').textContent=!processing.agc?'':Number.isFinite(metrics.agc_gain_db)?fill('AGC_REPORT',metric(metrics.agc_gain_db,' dB'),metric(metrics.agc_speech_level_dbfs,' dBFS',0),metric(metrics.agc_noise_level_dbfs,' dBFS',0),metric(metrics.agc_headroom_db,' dB',0)):t('AGC_WAITING');
 }
 // Empties the number box and puts the cursor there, when it can be typed in.
-function clearTarget(){$('target').value='';if(!$('target').disabled)$('target').focus();}
+export function clearTarget(){$('target').value='';if(!$('target').disabled)$('target').focus();}
 export function init(){
   for(let n=1;n<=2;n++)$('line-'+n).addEventListener('click',async()=>{
     const before=selected;
@@ -186,8 +186,8 @@ export function init(){
     if(selected!==before)clearTarget();
   });
   $('dial-form').addEventListener('submit',e=>{e.preventDefault();dial($('target').value.trim());});
-  // The number stays in the box after a call (to see what was dialled); this
-  // empties it and puts the cursor there for the next one.
+  // The number stays in the box after a call the far end ended (to see what
+  // was dialled); this empties it and puts the cursor there for the next one.
   $('clear-target').addEventListener('click',clearTarget);
   $('answer').addEventListener('click',()=>answer());
   $('hangup').addEventListener('click',()=>hangup());

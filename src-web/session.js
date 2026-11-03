@@ -4,7 +4,7 @@
 // live bindings here and change it only through these functions.
 import {$, invoke, logUi} from './ui.js';
 import {t, language, languageFor, useLanguage} from './i18n.js';
-import {render} from './phone.js';
+import {render, clearTarget} from './phone.js';
 import {kinds, deviceOptions} from './audio.js';
 import {openSettings} from './settings.js';
 
@@ -89,7 +89,8 @@ async function sendDigits(){
 // Every way of placing a call ends here: the dial box, a button, the history
 // and a link. The selected line is used while it is free, otherwise the free
 // one; the number goes into the dial box, so that what was dialled can be seen
-// afterwards. The box and the buttons are disabled while something else is
+// during the call, and after it when the far end ended it (hangup empties it).
+// The box and the buttons are disabled while something else is
 // going on, so of the refusals only a link ever meets one.
 export function dial(number){
   if(!number||busy||state.transfer.pending)return;
@@ -107,9 +108,12 @@ export function answer(){
   if(!ringing){logUi('call','ANSWER without an incoming call');return;}
   selected=ringing.line;render();return act('answer',ringing.id,'',ringing.line);
 }
-export function hangup(){
+// Hanging up from here, by the button or a link, is done with the number too:
+// the box is emptied as the clear button does, once the hang-up is through and
+// the box can be typed in. A call the far end ends leaves it.
+export async function hangup(){
   if(!current()){logUi('call','HANGUP without a call');return;}
-  return act('hangup');
+  await act('hangup');clearTarget();
 }
 // A history row keeps the far end as the engine reported it: a SIP URI with
 // the host, port and parameters of that call. Redialling someone on the

@@ -96,12 +96,17 @@ try {
     Restart-Connection
     Send-Link '(90)%2001'
     Wait-Class 'line-1' 'call-established'
+    # The dial box is locked during the call, but it can be read; a hang-up
+    # by the link empties it, as the button does.
+    $dialled=(Wait-Id 'target').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value
+    if($dialled -ne $playback){throw "The dial box shows $dialled"}
     Send-Link 'HANGUP'
     Wait-Class 'line-1' 'call-idle'
-    # The dial box is read once the call is over, since it is locked during one.
-    $dialled=(Value-Id 'target').Current.Value
-    if($dialled -ne $playback){throw "The dial box shows $dialled"}
-    'PASS: 確認なしの設定では区切り文字と%20を除いてそのまま発信し、番号欄に残した'
+    # The line can show idle a moment before the hang-up's own answer is in.
+    $end=[DateTime]::UtcNow.AddSeconds(5)
+    while(($left=(Value-Id 'target').Current.Value) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 150}
+    if($left){throw "The dial box still shows $left after the hang-up"}
+    'PASS: 確認なしの設定では区切り文字と%20を除いてそのまま発信して番号欄に出し、リンクで切ると番号欄が空になる'
 
     # A number with letters is refused before anything is dialled, and the
     # link is recorded as it came. A hang-up with no call is only noted.

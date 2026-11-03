@@ -467,6 +467,14 @@ async function checks(){
   // The clear beside the dial button empties the number box and puts the cursor there.
   $('target').value='1001';$('clear-target').click();
   check($('target').value===''&&document.activeElement===$('target')&&$('clear-target').type==='button','the clear button empties the number box and puts the cursor in it, without dialling',[$('target').value,document.activeElement&&document.activeElement.id]);
+  // The hang-up button empties it too, as the clear button does, once the
+  // hang-up is through.
+  answers.action='';answers.snapshot={...state,calls:[]};
+  $('target').value='1002';state.calls=[{id:'h1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];setSelected(1);render();
+  const lockedInCall=$('target').disabled;
+  $('hangup').click();await settle();await settle();
+  check(lockedInCall&&$('target').value===''&&document.activeElement===$('target'),'the hang-up button empties the number box and puts the cursor in it once the call is over',[lockedInCall,$('target').value,document.activeElement&&document.activeElement.id]);
+  delete answers.action;delete answers.snapshot;state.calls=[];render();
 
   // A button made unused is saved empty, whatever its number was.
   await open({buttons:[{title:'Web',kind:'open',number:'https://pbx.example/',transfer:'',pickup:''},{title:'',kind:'speed',number:'06-1234-5678',transfer:'',pickup:''}]});
