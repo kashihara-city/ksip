@@ -220,10 +220,13 @@ summary {
   align-items:center;
   gap:2px;
 }
+/* One line, so that the row keeps its height when the words come and go;
+   each language's are short enough for the narrowest window. */
 .audio .gain {
   margin-right:4px;
   font-size:11px;
   color:#718079;
+  white-space:nowrap;
 }
 /* As wide as 300%, so that the buttons stay put as the number changes. */
 .volume-level output {

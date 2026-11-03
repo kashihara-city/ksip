@@ -184,7 +184,7 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       OPERATION_WAIT_TIMEOUT:'The operation was dropped because another one did not finish',
       ENGINE_START_FAILED:'The audio engine failed to start: {0}. Check the log',
       FILE_NOT_FOUND:'The file was not found',
-      GAIN_APPLIED:'Software gain',
+      GAIN_APPLIED:'Boost',
       HANGUP:'Hang up',
       HEADER_ACTIONS:'Application actions',
       JOURNAL_WRITE_FAILED:'The log or the call history could not be written to its file: {0}',

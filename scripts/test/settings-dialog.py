@@ -12,15 +12,16 @@ CHECKS = r"""
 import {buildButtonSets, setEditing} from './buttons.js';
 import * as buttons from './buttons.js';
 import {init, openSettings, openButtonSettings} from './settings.js';
-import {state, managed, selected, setSelected, update, run} from './session.js';
+import {state, managed, selected, setSelected, update, run, hangup} from './session.js';
 import * as audio from './audio.js';
-import {applyText} from './i18n.js';
+import {applyText, useLanguage} from './i18n.js';
 import {render, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0;
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0,hangupsSent=0,hangupError=null;
 window.__invoke=async(command,args)=>{
+  if(command==='action'&&args.name==='hangup'){hangupsSent++;if(hangupError)throw hangupError;}
   if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
   if(command==='audio_levels'&&levelsHandler)return levelsHandler(args);
   if(command==='open_microphone_privacy'){privacyOpened++;return null;}
@@ -467,13 +468,25 @@ async function checks(){
   // The clear beside the dial button empties the number box and puts the cursor there.
   $('target').value='1001';$('clear-target').click();
   check($('target').value===''&&document.activeElement===$('target')&&$('clear-target').type==='button','the clear button empties the number box and puts the cursor in it, without dialling',[$('target').value,document.activeElement&&document.activeElement.id]);
-  // The hang-up button empties it too, as the clear button does, once the
-  // hang-up is through.
+  // A hang-up empties it too, as the clear button does, once the hang-up is
+  // through. One that failed, or was not sent because another operation was
+  // going on (a link can ask then; the button is disabled), leaves the number.
   answers.action='';answers.snapshot={...state,calls:[]};
-  $('target').value='1002';state.calls=[{id:'h1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];setSelected(1);render();
+  const inCall=()=>{$('target').value='1002';state.calls=[{id:'h1',peer:'sip:1002@pbx.example',state:'ESTABLISHED',held:false,duration:1,line:1}];setSelected(1);render();};
+  inCall();hangupError='ENGINE_TIMEOUT';
+  $('hangup').click();await settle();await settle();
+  const failed={number:$('target').value,sent:hangupsSent};
+  hangupError=null;hangupsSent=0;inCall();
+  let letGo=null;const busyRun=run(()=>new Promise(r=>letGo=r));
+  await hangup();
+  const notSent={number:$('target').value,sent:hangupsSent};
+  letGo();await busyRun;await settle();
+  // The page now holds the answered snapshot itself; the call is put in a copy.
+  answers.snapshot={...state,calls:[]};inCall();
   const lockedInCall=$('target').disabled;
   $('hangup').click();await settle();await settle();
-  check(lockedInCall&&$('target').value===''&&document.activeElement===$('target'),'the hang-up button empties the number box and puts the cursor in it once the call is over',[lockedInCall,$('target').value,document.activeElement&&document.activeElement.id]);
+  check(failed.number==='1002'&&failed.sent===1&&notSent.number==='1002'&&notSent.sent===0&&lockedInCall&&$('target').value===''&&document.activeElement===$('target'),
+    'a hang-up empties the number box and puts the cursor in it once the call is over; one that failed or was not sent leaves the number',[failed,notSent,lockedInCall,$('target').value,document.activeElement&&document.activeElement.id]);
   delete answers.action;delete answers.snapshot;state.calls=[];render();
 
   // A button made unused is saved empty, whatever its number was.
@@ -565,6 +578,29 @@ async function checks(){
   volumeHandler=null;levelsHandler=null;
   check(gainAt100&&pressed.sent===101&&pressed.shown==='101%'&&pressed.gain&&held.sent===101&&held.shown>=105&&held.text===held.shown+'%'&&released===held.shown&&down.sent===100&&!down.gain&&top===300,
     'the buttons beside the level step it by one, on and on while held and sent once let go, within 0 to 300; the software gain is named before the level over 100',[gainAt100,pressed,held,released,down,top]);
+  // The words for the software gain coming and going leave the row as it was,
+  // in every language and down to the narrowest window (420, the least inner
+  // width desktop.rs gives it): the meter below stays put, and nothing on the
+  // row runs into the next.
+  const misplaced=[];
+  for(const lang of ['ja','en','zh-TW']){
+    useLanguage(lang);applyText();
+    for(const width of [420,520,600]){
+      document.body.style.width=width+'px';
+      const before={};
+      for(const level of [100,101,300]){
+        levelsHandler=async()=>({microphone:side({level,muted:false}),speaker:side({level,muted:false})});
+        await audio.look();
+        for(const kind of ['microphone','speaker']){
+          const row=$(kind+'-level').closest('.volume-head'),head=row.getBoundingClientRect(),label=row.querySelector('label').getBoundingClientRect(),group=row.querySelector('.volume-level').getBoundingClientRect(),meter=$(kind+'-meter').getBoundingClientRect().top;
+          if(level===100)before[kind]=meter;
+          if(Math.abs(meter-before[kind])>=0.5||label.right>group.left+0.5||group.right>head.right+0.5)misplaced.push({lang,width,level,kind,meter,before:before[kind],label:label.right,group:[group.left,group.right],head:head.right});
+        }
+      }
+    }
+  }
+  levelsHandler=null;document.body.style.width='';useLanguage('ja');applyText();
+  check(misplaced.length===0,'the software gain shown or not leaves the volume row and the meter below in place, in every language down to the narrowest window',misplaced);
 
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring

@@ -47,15 +47,18 @@ export function update(snapshot){
   if(first){first=false;if(!state.account.has_password)openSettings();}
 }
 // An operation: the page is busy while it runs, the notices go, and the
-// snapshot is read again once it is done.
+// snapshot is read again once it is done. The answer says whether it went
+// through: false when it did not run (another was going on); a failure throws.
 export async function run(fn){
-  if(busy)return;busy=true;error='';render({clearNotices:true});
-  try{await fn();update(await invoke('snapshot'));}
+  if(busy)return false;busy=true;error='';render({clearNotices:true});
+  try{await fn();update(await invoke('snapshot'));return true;}
   catch(e){error=String(e);logUi('command',e);throw e;}
   finally{busy=false;render();}
 }
+// An action of the phone; true once the app has carried it out, false when it
+// failed (said in the banner) or was not sent.
 export async function act(name,id=current()?.id||'',value='',line=selected){
-  try{await run(()=>invoke('action',{name,id,value,line}));}catch{}
+  try{return await run(()=>invoke('action',{name,id,value,line}));}catch{return false;}
 }
 // Key presses on a call (DTMF): each digit is sent in turn, one request at a
 // time, outside run(), so that a digit pressed while the one before is on its
@@ -110,10 +113,11 @@ export function answer(){
 }
 // Hanging up from here, by the button or a link, is done with the number too:
 // the box is emptied as the clear button does, once the hang-up is through and
-// the box can be typed in. A call the far end ends leaves it.
+// the box can be typed in. A hang-up that failed, or was not sent because
+// another operation was going on, leaves it, as does a call the far end ends.
 export async function hangup(){
   if(!current()){logUi('call','HANGUP without a call');return;}
-  await act('hangup');clearTarget();
+  if(await act('hangup'))clearTarget();
 }
 // A history row keeps the far end as the engine reported it: a SIP URI with
 // the host, port and parameters of that call. Redialling someone on the
