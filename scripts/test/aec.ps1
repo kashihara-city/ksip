@@ -28,6 +28,8 @@ if ($env:KSIP_TEST_AUDIO_SIGNAL -eq '1') {
     $helper = 'temp/cargo-target/debug/examples/audio-devices.exe'
     if (!(Test-Path -LiteralPath $helper)) { throw 'Run scripts/test/rust.ps1 before the signal test' }
     $probe = Start-Process -FilePath 'temp/build/test-webrtc-audio.exe' -ArgumentList '--playout-signal' -WindowStyle Hidden -PassThru
+    # The handle read now, or the exit code is not filled in once it ends.
+    $null = $probe.Handle
     $maximum = 0.0
     try {
         while (!$probe.HasExited) {

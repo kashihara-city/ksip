@@ -115,16 +115,22 @@ def account_with(kind, purpose):
     return match[0]
 def dtls_account():
     return account_with('dtls', 'DTLS-SRTPのテストに使う')
-def free_ports(count=2, kind='udp'):
+def free_ports(count=2):
     """Ports nobody listens on right now, for a phone's SIP and RTP; the RTP one
-    is followed by a gap, so a range of twenty stays free enough."""
+    is followed by a gap, so a range of twenty stays free enough. They are
+    taken below Windows' dynamic range (49152 up), where the system's own
+    sockets come and go, and tried for UDP and TCP alike, each held
+    exclusively: a plain bind to every address goes through beside another
+    program's socket on one of them, where the engine's then fails."""
     import random
     found=[]
     while len(found)<count:
-        port=random.randrange(20000,60000,32)
+        port=random.randrange(20000,49152-32,32)
         try:
-            with socket.socket(socket.AF_INET,socket.SOCK_DGRAM if kind=='udp' else socket.SOCK_STREAM) as probe:
-                probe.bind(('0.0.0.0',port))
+            for kind in (socket.SOCK_DGRAM,socket.SOCK_STREAM):
+                with socket.socket(socket.AF_INET,kind) as probe:
+                    probe.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+                    probe.bind(('0.0.0.0',port))
         except OSError:
             continue
         found.append(port)

@@ -691,6 +691,17 @@ def edge():
     raise SystemExit('msedge.exe not found')
 
 
+def stop_browsers(profile):
+    """Ends every msedge.exe whose command line names `profile` (a test
+    profile folder, or the start of their names), the browser and all its
+    helpers, wherever their parent went. Only processes started with such a
+    folder are touched, never the person's own Edge."""
+    query = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | "
+             f"Where-Object {{ $_.CommandLine -like '*{profile}*' }} | "
+             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+    subprocess.run(['powershell', '-NoProfile', '-Command', query], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
 def page():
     text = (WEB / 'index.html').read_text(encoding='utf-8')
     app = '<script type="module" src="app.js"></script>'
@@ -736,8 +747,9 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     (ROOT / 'temp/build').mkdir(parents=True, exist_ok=True)
-    # What a run that broke off left (a profile is some 190 MB): removed
-    # first, and skipped if it is still held.
+    # What a run that broke off left (a profile is some 190 MB): its browsers
+    # ended and the folders removed first, and one still held skipped.
+    stop_browsers(str(ROOT / 'temp' / 'build' / 'settings-dialog-edge-'))
     for left in glob.glob(str(ROOT / 'temp/build/settings-dialog-edge-*')):
         shutil.rmtree(left, ignore_errors=True)
     profile = tempfile.mkdtemp(prefix='settings-dialog-edge-', dir=ROOT / 'temp/build')
@@ -748,10 +760,11 @@ def main():
         finished = done.wait(60)
     finally:
         # Edge is a tree of processes (renderers, the GPU process, crashpad)
-        # that hold files in the profile. kill() ends the browser process
-        # alone and the rest follow a moment later, so the whole tree is
-        # ended, and the folder removed once nothing holds it.
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(browser.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        # that hold files in the profile, and the process started can hand
+        # over to another browser and exit, so that its tree no longer leads
+        # to them. Every process of this profile is ended, and the folder
+        # removed once nothing holds it.
+        stop_browsers(profile)
         browser.wait(10)
         server.shutdown()
         for _ in range(40):

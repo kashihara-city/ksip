@@ -102,14 +102,20 @@ if ($LASTEXITCODE -ne 0) { throw 'test-webrtc-restart did not build' }
 # Bounded: before the change, the case with its own handle never returned.
 foreach ($case in @('self-handle', 'no-handle')) {
     $out = "temp/reports/webrtc-restart-$case.txt"
-    $p = Start-Process -FilePath "$PWD/temp/build/test-webrtc-restart.exe" -ArgumentList $case -NoNewWindow -PassThru -RedirectStandardOutput $out
-    # The handle read now, or the exit code is not filled in later.
-    $null = $p.Handle
+    # Started through Process itself: with its output redirected, the object
+    # Start-Process hands back now and then has no exit code once it ends,
+    # even with its handle read at once.
+    $info = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList "$PWD/temp/build/test-webrtc-restart.exe", $case
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $p = [System.Diagnostics.Process]::Start($info)
+    $reading = $p.StandardOutput.ReadToEndAsync()
     if (!$p.WaitForExit(5000)) {
         $p.Kill()
         throw "Start() did not return on the audio thread ($case): it waits for its own end"
     }
     $p.WaitForExit()
+    [System.IO.File]::WriteAllText("$PWD/$out", $reading.Result)
     if ($p.ExitCode -ne 0) { throw "test-webrtc-restart exited with $($p.ExitCode) ($case)" }
     if (!(Select-String -Path $out -Pattern 'returned=0' -Quiet)) { throw "Start() did not report its failure ($case): $(Get-Content $out)" }
 }

@@ -4,6 +4,7 @@ A sends silence; B sends a tone. RX recording must contain only the peer.
 from pathlib import Path
 import array, json, math, os, socket, subprocess, threading, time, wave
 import engine_control
+from sip_fixture import free_ports
 
 ROOT=Path(__file__).resolve().parents[2]
 BASE=ROOT/'temp/build/call-test'
@@ -15,10 +16,6 @@ def source(path,tone):
     with wave.open(str(path),'wb') as f:
         f.setparams((1,2,48000,0,'NONE','not compressed')); f.writeframes(samples.tobytes())
 
-def free_udp_port():
-    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
-        s.bind(('127.0.0.1',0));return s.getsockname()[1]
-
 class Phone:
     # A port given as 0 is one the system picks, so that a range Windows has
     # reserved (they move at each boot) never stops a test: the control port is
@@ -28,7 +25,7 @@ class Phone:
         self.name=name;self.events=[];self.responses={};self.cv=threading.Condition();self.serial=0
         self.dir=BASE/name;self.dir.mkdir(exist_ok=True)
         source(self.dir/'source.wav',tone)
-        self.sip=sip=sip or free_udp_port()
+        self.sip=sip=sip or free_ports(1)[0]
         self.secret=engine_control.new_secret()
         control,ctrl=engine_control.listen(ctrl)
         config=f'''sip_listen 0.0.0.0:{sip}
@@ -117,9 +114,9 @@ def stats(path):
 def main():
     phones=[]
     try:
-        a=Phone('a',15060,15444,16000,True,False);phones.append(a)
-        b=Phone('b',15062,15445,16100,False,True);phones.append(b)
-        b.command('dial','sip:a@127.0.0.1:15060');a.event('CALL_INCOMING');a.command('accept')
+        a=Phone('a',0,0,0,True,False);phones.append(a)
+        b=Phone('b',0,0,0,False,True);phones.append(b)
+        b.command('dial',f'sip:a@127.0.0.1:{a.sip}');a.event('CALL_INCOMING');a.command('accept')
         a.event('CALL_ESTABLISHED');b.event('CALL_ESTABLISHED')
         time.sleep(1)
         for p in phones:p.command('ksip_record',str(p.dir/'receive.wav'))

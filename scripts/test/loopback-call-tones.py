@@ -2,6 +2,7 @@
 from pathlib import Path
 import array, json, os, subprocess, threading, time, wave
 import engine_control
+from sip_fixture import free_ports
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "temp" / "build" / "call-tones-test"
@@ -17,12 +18,18 @@ def source(path):
 
 
 class Phone:
+    # A port given as 0 is one the system picks, as loopback-call.py's Phone
+    # does: the control port the listener's own, the SIP port a free one
+    # (self.sip, for the peer to dial), and RTP the engine's rtp_ports 0.
     def __init__(self, name, sip, ctrl, rtp, player, alert, extra=""):
         self.name, self.responses, self.events, self.serial = name, {}, [], 0
         self.cv = threading.Condition()
         self.directory = BASE / name
         self.directory.mkdir(exist_ok=True)
         source(self.directory / "source.wav")
+        self.sip = sip = sip or free_ports(1)[0]
+        self.secret = engine_control.new_secret()
+        control, ctrl = engine_control.listen(ctrl)
         config = f"""sip_listen 0.0.0.0:{sip}
 net_interface 127.0.0.1
 sip_transports udp
@@ -40,7 +47,7 @@ ausrc_format s16
 auplay_format s16
 auenc_format s16
 audec_format s16
-rtp_ports {rtp}-{rtp + 20}
+rtp_ports {f"{rtp}-{rtp + 20}" if rtp else 0}
 ksip_ctrl_connect 127.0.0.1:{ctrl}
 {extra}module g711.dll
 module ksip_audio.dll
@@ -53,8 +60,6 @@ module menu.dll
 module ksip.dll
 module_app account.dll
 """
-        self.secret = engine_control.new_secret()
-        control, _ = engine_control.listen(ctrl)
         (self.directory / "config").write_text(config, encoding="utf-8")
         (self.directory / "accounts").write_text(
             f"<sip:{name}@localhost:{sip};transport=udp>;regint=0;audio_codecs=PCMU/8000/1;answermode=manual\n",
@@ -147,16 +152,16 @@ def main():
     try:
         # The receiver rings: its ringtone's speaker, the third device, is
         # one no machine has; then the default, while it rings.
-        receiver = Phone("receiver", 17260, 17644, 18400, "aufile,NUL", "ksip_alert,default")
+        receiver = Phone("receiver", 0, 0, 0, "aufile,NUL", "ksip_alert,default")
         phones.append(receiver)
         receiver.command("ksip_audio_devices", f"source.wav,NUL,{NO_SUCH_SPEAKER}")
         # The caller's call speaker is the default, its ringtone's one no
         # machine has, and the failure tones are the engine module's, as the
         # app's config has them.
-        caller = Phone("caller", 17262, 17645, 18500, "ksip_audio,default", f"ksip_alert,{NO_SUCH_SPEAKER}",
+        caller = Phone("caller", 0, 0, 0, "ksip_audio,default", f"ksip_alert,{NO_SUCH_SPEAKER}",
                        "busy_aufile none\nnotfound_aufile none\nerror_aufile none\nksip_failure_tones yes\n")
         phones.append(caller)
-        caller.command("dial", "sip:receiver@127.0.0.1:17260")
+        caller.command("dial", f"sip:receiver@127.0.0.1:{receiver.sip}")
         receiver.event("CALL_INCOMING")
         ringing = receiver.alert()
         if not ringing.get("playing"):
