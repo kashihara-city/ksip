@@ -11,8 +11,8 @@ SOURCES = [('re', 'baresip/re', 'v4.12.0'),
            ('libg722', 'sippy/libg722', 'v1.2.8')]
 # Sources that are not published on GitHub. The release date is written here
 # because there is no API to read it from, and the hash is pinned in the lock.
-RELEASES = [('libressl', '4.3.3', '2026-10-04T16:28:20Z',
-             'https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.3.tar.gz')]
+RELEASES = [('libressl', '4.4.0', '2026-10-22T18:20:14Z',
+             'https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.4.0.tar.gz')]
 
 def get(url):
     req = urllib.request.Request(url, headers={'User-Agent': 'ksip-build/0.1'})
