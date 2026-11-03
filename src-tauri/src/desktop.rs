@@ -237,6 +237,10 @@ pub fn run(state: AppState) {
             protocol::serve(move |link| {
                 let state = served.state::<AppState>();
                 state.services.log_protocol(&link);
+                // Whatever comes from outside brings the window out first, from
+                // the tray too, so that the person sees what it did: the call it
+                // started or ended, the question it asks, the error it met.
+                show(&served);
                 // Operating the phone from outside is program integration's;
                 // the link process checks the stored setting first, and this
                 // checks the one the app runs with, for any other client of
@@ -246,7 +250,8 @@ pub fn run(state: AppState) {
                     return;
                 }
                 match protocol::parse(&link) {
-                    Ok(protocol::Link::ShowWindow) => show(&served),
+                    // Shown above, as for every link.
+                    Ok(protocol::Link::ShowWindow) => {}
                     Ok(protocol::Link::Quit) => served.exit(0),
                     Ok(protocol::Link::Answer) => commands::emit_link(&served, "ksip-link", serde_json::json!("ANSWER")),
                     Ok(protocol::Link::Hangup) => commands::emit_link(&served, "ksip-link", serde_json::json!("HANGUP")),
@@ -254,19 +259,13 @@ pub fn run(state: AppState) {
                         Ok(target) => {
                             // Dialling asks first unless that was turned off, and
                             // always for a URI, which a page can point anywhere.
-                            // The window asks; a question put from the tray would
-                            // go unseen, so the window comes out before it is asked.
                             let confirm = state.snapshot().settings.browser_dial_confirm
                                 || settings::CustomButton::is_uri(&target);
-                            if confirm {
-                                show(&served);
-                            }
                             commands::emit_link(&served, "ksip-dial", serde_json::json!({"target": target, "confirm": confirm}));
                         }
                         Err(e) => {
                             // What was refused goes into the dial box beside
                             // the error, so that the person sees what came.
-                            show(&served);
                             state.phone.send(Command::ShowError(e));
                             commands::emit_link(&served, "ksip-dial", serde_json::json!({"target": text, "refused": true}));
                         }
@@ -274,7 +273,6 @@ pub fn run(state: AppState) {
                     Err(e) => {
                         // Not a polling error, which the next poll would clear:
                         // it stays until the person sees it.
-                        show(&served);
                         state.phone.send(Command::ShowError(e));
                     }
                 }

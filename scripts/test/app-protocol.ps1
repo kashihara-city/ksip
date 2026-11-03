@@ -108,6 +108,21 @@ try {
     if($left){throw "The dial box still shows $left after the hang-up"}
     'PASS: 確認なしの設定では区切り文字と%20を除いてそのまま発信して番号欄に出し、リンクで切ると番号欄が空になる'
 
+    # Every link brings the window out of the tray before it acts, so that
+    # what it did can be seen: here a call dialled with no question, and then
+    # the hang-up.
+    $app.CloseMainWindow() | Out-Null
+    Wait-Visible $window $false
+    Send-Link $playback
+    Wait-Visible $window $true
+    Wait-Class 'line-1' 'call-established'
+    $app.CloseMainWindow() | Out-Null
+    Wait-Visible $window $false
+    Send-Link 'HANGUP'
+    Wait-Visible $window $true
+    Wait-Class 'line-1' 'call-idle'
+    'PASS: タスクトレイにいても、確認なしの発信と切断のリンクで窓が出てくる'
+
     # A number with letters is refused before anything is dialled, and the
     # link is recorded as it came. A hang-up with no call is only noted.
     Send-Link 'answer'
@@ -194,7 +209,7 @@ try {
     $app=$null
     'PASS: リンクから終了した'
     @{version=$version;dial=$true;answer=$true;hangup=$true;showWindow=$true;quit=$true;registers=$true;
-      showsWindowToAsk=$true} |
+      showsWindowToAsk=$true;showsWindowForEveryLink=$true} |
         ConvertTo-Json | Set-Content -Encoding utf8 "$root/temp/reports/app-protocol-v$version.json"
     'PASS: real KSIP driven through ksip: links'
 } finally {
