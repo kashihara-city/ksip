@@ -10,8 +10,8 @@ call_test.BASE = ROOT / "temp/build/software-gain-test"
 call_test.BASE.mkdir(parents=True, exist_ok=True)
 
 
-def establish(receiver, sender, port):
-    sender.command("dial", f"sip:{receiver.name}@127.0.0.1:{port}")
+def establish(receiver, sender):
+    sender.command("dial", f"sip:{receiver.name}@127.0.0.1:{receiver.sip}")
     receiver.event("CALL_INCOMING")
     receiver.command("accept")
     receiver.event("CALL_ESTABLISHED")
@@ -20,13 +20,15 @@ def establish(receiver, sender, port):
 
 def main():
     import time
+    # Every port is one the system picks (0): fixed ones can fall in a range
+    # Windows has reserved since the last boot.
     phones = []
     try:
-        receiver = call_test.Phone("receiver", 19060, 19444, 20000, False, False)
+        receiver = call_test.Phone("receiver", 0, 0, 0, False, False)
         phones.append(receiver)
-        sender = call_test.Phone("sender", 19062, 19445, 20100, False, True, True)
+        sender = call_test.Phone("sender", 0, 0, 0, False, True, True)
         phones.append(sender)
-        establish(receiver, sender, 19060)
+        establish(receiver, sender)
 
         sender.command("ksip_gain", "microphone 100")
         base = receiver.dir / "gain-100.wav"
@@ -53,14 +55,14 @@ def main():
     phones = []
     try:
         speaker_receiver = call_test.Phone(
-            "speaker_receiver", 19260, 19644, 20200, False, False
+            "speaker_receiver", 0, 0, 0, False, False
         )
         phones.append(speaker_receiver)
         speaker_sender = call_test.Phone(
-            "speaker_sender", 19262, 19645, 20300, False, True, True
+            "speaker_sender", 0, 0, 0, False, True, True
         )
         phones.append(speaker_sender)
-        establish(speaker_receiver, speaker_sender, 19260)
+        establish(speaker_receiver, speaker_sender)
         speaker_receiver.command("ksip_gain", "speaker 200")
         speaker_input = speaker_receiver.dir / "speaker-input.wav"
         speaker_receiver.command("ksip_record", str(speaker_input))

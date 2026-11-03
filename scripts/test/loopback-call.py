@@ -15,11 +15,22 @@ def source(path,tone):
     with wave.open(str(path),'wb') as f:
         f.setparams((1,2,48000,0,'NONE','not compressed')); f.writeframes(samples.tobytes())
 
+def free_udp_port():
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
+        s.bind(('127.0.0.1',0));return s.getsockname()[1]
+
 class Phone:
+    # A port given as 0 is one the system picks, so that a range Windows has
+    # reserved (they move at each boot) never stops a test: the control port is
+    # the listener's own, the SIP port a free one (self.sip, for the peer to
+    # dial), and RTP the engine's rtp_ports 0.
     def __init__(self,name,sip,ctrl,rtp,aec,tone,discard_playback=False):
         self.name=name;self.events=[];self.responses={};self.cv=threading.Condition();self.serial=0
         self.dir=BASE/name;self.dir.mkdir(exist_ok=True)
         source(self.dir/'source.wav',tone)
+        self.sip=sip=sip or free_udp_port()
+        self.secret=engine_control.new_secret()
+        control,ctrl=engine_control.listen(ctrl)
         config=f'''sip_listen 0.0.0.0:{sip}
 net_interface 127.0.0.1
 sip_transports udp
@@ -36,7 +47,7 @@ ausrc_format s16
 auplay_format s16
 auenc_format s16
 audec_format s16
-rtp_ports {rtp}-{rtp+20}
+rtp_ports {f'{rtp}-{rtp+20}' if rtp else 0}
 ksip_ctrl_connect 127.0.0.1:{ctrl}
 module g711.dll
 module aufile.dll
@@ -47,8 +58,6 @@ module ksip_ctrl.dll
 module menu.dll
 module_app account.dll
 '''
-        self.secret=engine_control.new_secret()
-        control,_=engine_control.listen(ctrl)
         (self.dir/'config').write_text(config,encoding='utf-8')
         (self.dir/'accounts').write_text(f'<sip:{name}@localhost:{sip};transport=udp>;regint=0;audio_codecs=PCMU/8000/1;answermode=manual\n',encoding='utf-8')
         self.log=open(self.dir/'engine.log','wb')
