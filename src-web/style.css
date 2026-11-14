@@ -630,9 +630,6 @@ button {
   background:linear-gradient(90deg,#2e7a5d 0 72%,#d4a33d 72% 90%,#bd4e43 90%);
   transition:width 70ms linear;
 }
-.history-row {
-  cursor:pointer;
-}
 .history-row:hover {
   background:#f1f7f4;
 }
@@ -982,56 +979,75 @@ footer {
   outline:2px solid #a9caba;
   outline-offset:-2px;
 }
+/* The buttons for a history row's call, after the numbers' column and over
+   both lines: a square each, which takes a colour of its own under the
+   pointer. */
+.history-actions {
+  grid-column:3;
+  grid-row:1/3;
+  align-self:center;
+  display:flex;
+  gap:2px;
+}
+.history-icon {
+  flex:0 0 auto;
+  width:28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  padding:0;
+  color:#7c8c84;
+  line-height:1;
+}
+.history-icon:hover:enabled {
+  background:#d5e8de;
+  color:#1d5a45;
+}
+.history-icon:active:enabled {
+  background:#c2dccf;
+}
+.history-icon svg {
+  display:block;
+  width:15px;
+  height:15px;
+}
+.history-copy svg,.history-location svg {
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.4;
+}
+/* The number's copy button is the size of the text it stands in, with the
+   same colour under the pointer; the margin keeps the line its height. */
 .history-copy {
   flex:0 0 auto;
   border:0;
+  border-radius:4px;
   background:transparent;
-  padding:0 4px;
+  padding:3px;
+  margin:-3px 0;
   color:#7c8c84;
   line-height:1;
 }
 .history-copy:hover:enabled {
-  background:transparent;
-  color:#246650;
+  background:#d5e8de;
+  color:#1d5a45;
+}
+.history-copy:active:enabled {
+  background:#c2dccf;
 }
 .history-copy svg {
   display:block;
   width:13px;
   height:13px;
 }
-.history-play,.history-location {
-  flex:0 0 auto;
-  border:0;
-  background:transparent;
-  padding:0 4px;
-  line-height:1;
-}
-.history-play svg,.history-location svg {
-  display:block;
-  width:13px;
-  height:13px;
-}
-.history-play {
+.history-play,.history-dial {
   color:#36805b;
 }
-.history-play svg {
+.history-play svg,.history-dial svg {
   fill:currentColor;
-}
-.history-play:hover:enabled {
-  background:transparent;
-  color:#246650;
-}
-.history-location {
-  color:#7c8c84;
-}
-.history-location svg {
-  fill:none;
-  stroke:currentColor;
-  stroke-width:1.4;
-}
-.history-location:hover:enabled {
-  background:transparent;
-  color:#246650;
 }
 .history-peer-cell {
   grid-column:2;
@@ -1061,15 +1077,42 @@ footer {
   font-size:11px;
   padding:18px 4px;
 }
+/* Which way, when and who (no wider than half the row: a long name is cut
+   short), the buttons for the call right after, and how it ended at the
+   right in the room that is left. */
 .history-row {
   display:grid;
-  grid-template-columns:auto 1fr auto;
+  grid-template-columns:auto fit-content(50%) auto minmax(max-content,1fr);
   gap:4px 10px;
   padding:9px 4px;
   border-bottom:1px solid #edf1ef;
   font-size:11px;
 }
+/* The rows share their columns where the browser can, so that the buttons
+   stand in the same place in every row, after the longest number; without
+   that each row lays its own out, its buttons after its own number. */
+@supports (grid-template-columns:subgrid) {
+  .history:not(.empty) {
+    display:grid;
+    grid-template-columns:auto fit-content(50%) auto minmax(max-content,1fr);
+    column-gap:10px;
+    align-content:start;
+  }
+  .history-row {
+    grid-column:1/-1;
+    grid-template-columns:subgrid;
+  }
+}
+/* Which way the call went, beside both lines. */
+.history-row > strong {
+  grid-row:1/3;
+  align-self:center;
+}
 .history-row time {
+  grid-column:2;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
   color:#718079;
 }
 .history-peer {
@@ -1079,8 +1122,10 @@ footer {
   text-overflow:ellipsis;
 }
 .history-meta {
-  grid-column:3;
+  grid-column:4;
   grid-row:1/3;
+  align-self:center;
+  min-width:36px;
   text-align:right;
   color:#718079;
 }

@@ -16,12 +16,13 @@ import {state, managed, selected, setSelected, update, run, hangup} from './sess
 import * as audio from './audio.js';
 import {applyText, useLanguage} from './i18n.js';
 import {render, checkBrowser, init as initPhone} from './phone.js';
+import {syncHistory} from './history.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0,hangupsSent=0,hangupError=null,invoked={};
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0,hangupsSent=0,hangupError=null,invoked={},lastArgs={};
 window.__invoke=async(command,args)=>{
-  invoked[command]=(invoked[command]||0)+1;
+  invoked[command]=(invoked[command]||0)+1;lastArgs[command]=args;
   if(command==='action'&&args.name==='hangup'){hangupsSent++;if(hangupError)throw hangupError;}
   if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
   if(command==='audio_levels'&&levelsHandler)return levelsHandler(args);
@@ -602,6 +603,58 @@ async function checks(){
   }
   levelsHandler=null;document.body.style.width='';useLanguage('ja');applyText();
   check(misplaced.length===0,'the software gain shown or not leaves the volume row and the meter below in place, in every language down to the narrowest window',misplaced);
+
+  // The call history: the copy button stands right after the row's number,
+  // small; the buttons for the call follow the numbers' column over both of
+  // the row's lines (the call back first, then play and show for a recorded
+  // call), in the same place from row to row whatever each row has. The
+  // call back dials the row's far end, and a double click on the row dials
+  // nothing. The word for which way the call went is level with the middle
+  // of the row. A long name takes no more than half the row, and down to
+  // the narrowest window nothing runs into the next.
+  answers.read_call_history=[
+    {ended_at:1794642540,direction:'HISTORY_OUTGOING',peer:'sip:1002@pbx.example',name:'',duration:4,recording:'2026-11-14_15-49-00_1002.mp3',outcome:''},
+    {ended_at:1794642000,direction:'HISTORY_INCOMING',peer:'sip:1003@pbx.example:5060;transport=udp',name:'窓口',duration:0,recording:'',outcome:'HISTORY_MISSED'},
+    {ended_at:1794641000,direction:'HISTORY_INCOMING',peer:'sip:0312345678901234@pbx.example',name:'市民窓口サービス課 第二受付カウンター 夜間休日の連絡先',duration:75,recording:'',outcome:''}];
+  answers.action='';answers.copy_text=null;
+  state.calls=[];state.registration='REGISTER_OK';state.history_sequence=(state.history_sequence||0)+1;render();
+  answers.snapshot={...state};
+  await syncHistory();
+  const rows=[...document.querySelectorAll('.history-row')];
+  const kindsOf=row=>[...row.querySelectorAll('.history-actions button')].map(b=>b.className.replace('history-icon ','')).join(',');
+  const rowKinds=rows.map(kindsOf);
+  const copyAfterNumber=rows.every(row=>!!row.querySelector('.history-peer-cell > .history-peer + .history-copy'));
+  const actionsBefore=invoked.action||0;
+  rows[0].dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));await settle();
+  const afterDoubleClick=(invoked.action||0)-actionsBefore;
+  rows[1].querySelector('.history-dial').click();await settle();await settle();
+  const dialled={...lastArgs.action},dialLabel=rows[1].querySelector('.history-dial').getAttribute('aria-label'),dialTitle=rows[1].querySelector('.history-dial').title;
+  rows[0].querySelector('.history-copy').click();await settle();
+  const copied=lastArgs.copy_text&&lastArgs.copy_text.text;
+  const wasShown=!$('call-history').hidden;$('call-history').hidden=false;
+  const uneven=[];
+  for(const lang of ['ja','en']){
+    useLanguage(lang);applyText();state.history_sequence++;await syncHistory();
+    for(const width of [420,520]){
+      document.body.style.width=width+'px';
+      const drawn=[...document.querySelectorAll('.history-row')].map(row=>{
+        const of=selector=>row.querySelector(selector).getBoundingClientRect();
+        const box=row.getBoundingClientRect(),word=of('strong'),cell=of('.history-peer-cell'),peer=of('.history-peer'),copy=of('.history-copy'),actions=of('.history-actions'),dial=of('.history-dial'),meta=of('.history-meta');
+        return {middle:Math.abs((word.top+word.bottom)/2-(box.top+box.bottom)/2),inRow:actions.top>=box.top&&actions.bottom<=box.bottom,
+          apart:cell.right<=actions.left+0.5&&actions.right<=meta.left+0.5&&meta.right<=box.right+0.5,
+          copyGap:copy.left-peer.right,copySize:copy.width,afterNumbers:actions.left-cell.right,half:cell.width<=box.width/2+1,dial:dial.left,button:[dial.width,dial.height],height:box.height};
+      });
+      const fine=drawn.length===3&&drawn.every(d=>d.middle<1&&d.inRow&&d.apart&&d.copyGap>=0&&d.copyGap<8&&d.copySize<=20&&d.afterNumbers>=0&&d.afterNumbers<11&&d.half&&d.button[0]>=24&&d.button[1]>=24)
+        &&drawn.every(d=>Math.abs(d.dial-drawn[0].dial)<0.5&&Math.abs(d.height-drawn[0].height)<0.5);
+      if(!fine)uneven.push({lang,width,drawn});
+    }
+  }
+  document.body.style.width='';useLanguage('ja');applyText();$('call-history').hidden=!wasShown;
+  delete answers.read_call_history;delete answers.action;delete answers.copy_text;delete answers.snapshot;$('target').value='';
+  check(rowKinds.join(' / ')==='history-dial,history-play,history-location / history-dial / history-dial'&&copyAfterNumber&&afterDoubleClick===0
+    &&dialled.name==='dial'&&dialled.value==='1003'&&dialLabel==='1003 に発信'&&dialTitle==='この番号に発信'&&copied==='1002'&&uneven.length===0,
+    "a history row has its copy button right after the number and the buttons for the call after the numbers' column, the call back first and in the same place in every row; the call back dials the row's far end, a double click nothing, and the word for the direction is level with the row's middle",
+    [rowKinds,copyAfterNumber,afterDoubleClick,dialled,dialLabel,dialTitle,copied,uneven]);
 
   // The window's browser: the page asks the app for the probe address, asks
   // for that address once (it fails either way; here it goes nowhere), and
