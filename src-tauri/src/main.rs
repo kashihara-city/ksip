@@ -16,6 +16,7 @@ mod phone_message;
 mod phone_state;
 mod protocol;
 mod recordings;
+mod refusing_proxy;
 mod settings;
 mod shortcuts;
 mod storage;

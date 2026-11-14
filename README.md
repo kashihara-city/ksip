@@ -630,7 +630,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test/app-walkthrough
 
 `app-settings.py` は、テンプレートが書くのと同じ型の値をテスト用プロファイルへ置き、`ksip.exe --export-settings` で読み戻します。全ポリシーを既定と違う値で同時に有効にした状態、各数値の最小値、各選択肢（SDES と OSRTP は TLS と組で）が、書いたとおりに読まれて設定とアカウントの検査に通ること、各数値の最小値より1小さい値が拒まれること、型の違う値（REG_BINARY、範囲外の数値、真偽として読めない文字列）が読めない値として名指しされること、手で文字列として書いた真偽と数値も読まれることを確かめます。10秒ほどで終わります。
 
-`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices`・`app-call-events`（ポーリングの間に終わった着信と、DND で断った着信が履歴に残る）・`app-engine-exit`（通話中にエンジンが死んでも履歴・録音・再接続が保たれる）があります。`-Folder` で別の場所の `ksip.exe`（公開版など）を対象にできます。そのフォルダーには `ksip.exe` と版付きの `ksip-v<版>.exe` の両方を置きます。
+`app-*.ps1` はほかに `app-auto-answer`・`app-tls`・`app-adapter`・`app-protocol`・`app-transfer`・`app-language`・`app-unregister`・`app-shortcut`・`app-single-exe`・`app-aec-calibration`・`app-buttons`・`app-devices`・`app-call-events`（ポーリングの間に終わった着信と、DND で断った着信が履歴に残る）・`app-engine-exit`（通話中にエンジンが死んでも履歴・録音・再接続が保たれる）・`app-browser-network`（ウィンドウのWebView2を、すべて断るプロキシの後ろで起動していて、それが効いていないときはフッターとログに出る）があります。`-Folder` で別の場所の `ksip.exe`（公開版など）を対象にできます。そのフォルダーには `ksip.exe` と版付きの `ksip-v<版>.exe` の両方を置きます。
 
 ### まとめて流す
 

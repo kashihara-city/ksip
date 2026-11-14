@@ -15,7 +15,7 @@
 import {invoke, logUi} from './ui.js';
 import {useLanguage} from './i18n.js';
 import {update, setError} from './session.js';
-import {render, init as initPhone} from './phone.js';
+import {render, checkBrowser, init as initPhone} from './phone.js';
 import {buildButtonSets} from './buttons.js';
 import {syncHistory} from './history.js';
 import {syncLogs, init as initLogs} from './logs.js';
@@ -57,4 +57,4 @@ function fitStartHeight(){
   const top=panel.getBoundingClientRect().top+main.scrollTop;
   invoke('fit_start_height',{height:top+tabs+row*2+6}).catch(e=>logUi('fit start height',e));
 }
-render();poll();pollAudio();
+render();poll();pollAudio();checkBrowser();

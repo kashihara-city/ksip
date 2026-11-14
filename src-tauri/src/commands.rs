@@ -8,6 +8,7 @@ use crate::logs::{LogPage, LOG_APP};
 use crate::message::message;
 use crate::phone_message::Command;
 use crate::phone_state::Snapshot;
+use crate::refusing_proxy::BrowserGuard;
 use crate::settings::Settings;
 use crate::storage::Account;
 use crate::{desktop, native, shortcuts};
@@ -459,6 +460,23 @@ pub fn open_microphone_privacy(state: State<AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+/// The address the page asks for once at its start, to show that what its
+/// browser sends ends at the refusing proxy (refusing_proxy.rs); none when
+/// there is no proxy for it to come to.
+#[tauri::command]
+pub fn browser_probe(guard: State<BrowserGuard>) -> Option<&'static str> {
+    guard.probe()
+}
+/// Whether that request came to the proxy: the window's browser is then kept
+/// from the network, and the page says so when it is not. Said in the log.
+#[tauri::command]
+pub fn browser_probed(guard: State<BrowserGuard>, state: State<AppState>) -> bool {
+    let (kept, line) = guard.probed();
+    if let Some(line) = line {
+        state.services.log_app(line);
+    }
+    kept
 }
 /// Opens the web address a button (named by its number, 1 up) was set up
 /// with, and no other, with the call's peer put where the address names it

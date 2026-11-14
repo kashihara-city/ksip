@@ -101,6 +101,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUTO_RECORD_OFF:'自動録音をOFFにしました',
       AUTO_RECORD_ON:'自動録音をONにしました',
       BROWSE:'参照',
+      BROWSER_OPEN:'WebView2通信遮断: 無効',
+      BROWSER_OPEN_TITLE:'画面の部品（WebView2）が自分で行う通信（Microsoft からの設定の取得や、更新の確認）を止められていません。電話の機能には影響しません。詳しくはログを確認してください',
       BUTTON_COUNT:'（{0}個設定中）',
       BUTTON_KIND:'機能',
       BUTTON_KIND_DIAL:'ダイヤル（BLFつき）',

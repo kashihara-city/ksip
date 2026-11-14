@@ -15,12 +15,13 @@ import {init, openSettings, openButtonSettings} from './settings.js';
 import {state, managed, selected, setSelected, update, run, hangup} from './session.js';
 import * as audio from './audio.js';
 import {applyText, useLanguage} from './i18n.js';
-import {render, init as initPhone} from './phone.js';
+import {render, checkBrowser, init as initPhone} from './phone.js';
 const $=id=>document.getElementById(id);
 const results=[];
 const check=(ok,what,detail)=>results.push({ok:!!ok,what,detail:detail===undefined?'':JSON.stringify(detail)});
-let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0,hangupsSent=0,hangupError=null;
+let answers={},saved=null,savedButtons=null,editingWindow=null,digitsSent=[],callsSent=[],volumeHandler=null,levelsHandler=null,privacyOpened=0,hangupsSent=0,hangupError=null,invoked={};
 window.__invoke=async(command,args)=>{
+  invoked[command]=(invoked[command]||0)+1;
   if(command==='action'&&args.name==='hangup'){hangupsSent++;if(hangupError)throw hangupError;}
   if(command==='audio_volume'&&volumeHandler)return volumeHandler(args);
   if(command==='audio_levels'&&levelsHandler)return levelsHandler(args);
@@ -601,6 +602,24 @@ async function checks(){
   }
   levelsHandler=null;document.body.style.width='';useLanguage('ja');applyText();
   check(misplaced.length===0,'the software gain shown or not leaves the volume row and the meter below in place, in every language down to the narrowest window',misplaced);
+
+  // The window's browser: the page asks the app for the probe address, asks
+  // for that address once (it fails either way; here it goes nowhere), and
+  // shows the note in the footer unless the app then says the request came
+  // to the refusing proxy. With no proxy there is nothing to ask for, and
+  // the note shows at once.
+  const probes=[],realFetch=window.fetch;
+  window.fetch=async(url,options)=>{probes.push([String(url),options&&options.mode]);throw new TypeError('refused');};
+  const noted=async(probe,kept)=>{answers.browser_probe=probe;answers.browser_probed=kept;invoked.browser_probed=0;await checkBrowser();return {shown:!$('browser-open').hidden,asked:invoked.browser_probed};};
+  const hiddenAtFirst=$('browser-open').hidden;
+  const whenKept=await noted('https://probe.ksip.invalid/',true);
+  const whenOpen=await noted('https://probe.ksip.invalid/',false);
+  const openText=$('browser-open').textContent,openTitle=$('browser-open').title;
+  const whenNoProxy=await noted(null,true);
+  window.fetch=realFetch;delete answers.browser_probe;delete answers.browser_probed;
+  check(hiddenAtFirst&&!whenKept.shown&&whenKept.asked===1&&whenOpen.shown&&openText==='WebView2通信遮断: 無効'&&openTitle.includes('電話の機能には影響しません')&&whenNoProxy.shown&&whenNoProxy.asked===0
+    &&probes.length===2&&probes.every(p=>p[0]==='https://probe.ksip.invalid/'&&p[1]==='no-cors'),
+    "the footer says when the window's browser is not kept from the network: by what the app found after the page's probe, and at once when there is no proxy to probe",[hiddenAtFirst,whenKept,whenOpen,openText,whenNoProxy,probes]);
 
   // What a policy fixes: its field is locked and says so, whatever else the
   // dialog turns on; a save brings it as the app has it; a file cannot bring

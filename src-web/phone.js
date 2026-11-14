@@ -174,6 +174,26 @@ function renderFooter(){
   if(!processing.aec){$('aec-core').textContent='';$('aec-delay').textContent='';}
   $('aec-agc').textContent=!processing.agc?'':Number.isFinite(metrics.agc_gain_db)?fill('AGC_REPORT',metric(metrics.agc_gain_db,' dB'),metric(metrics.agc_speech_level_dbfs,' dBFS',0),metric(metrics.agc_noise_level_dbfs,' dBFS',0),metric(metrics.agc_headroom_db,' dB',0)):t('AGC_WAITING');
 }
+// The window is a browser, and the app keeps it from requests of its own
+// with a proxy that refuses (refusing_proxy.rs). Once at the start the page
+// asks for an address that exists nowhere: the request fails either way, and
+// the app then says whether it came to the proxy. When it did not, or there
+// is no proxy, the footer says so in a few words; the phone goes on as it is.
+const PROBE_MS=10000;
+export async function checkBrowser(){
+  let kept=false;
+  try{
+    const probe=await invoke('browser_probe');
+    if(probe){
+      // Given up after a while: a name that is looked up after all can take its time to fail.
+      const limit=new AbortController(),timer=setTimeout(()=>limit.abort(),PROBE_MS);
+      try{await fetch(probe,{mode:'no-cors',cache:'no-store',signal:limit.signal});}catch{}
+      clearTimeout(timer);
+      kept=await invoke('browser_probed');
+    }
+  }catch(e){logUi('browser probe',e);}
+  $('browser-open').hidden=kept;
+}
 // Empties the number box and puts the cursor there, when it can be typed in.
 export function clearTarget(){$('target').value='';if(!$('target').disabled)$('target').focus();}
 export function init(){

@@ -4,8 +4,9 @@
 //! it commands; what happens to a call is the actor's to decide.
 use crate::app::AppState;
 use crate::phone_message::Command;
+use crate::refusing_proxy::{BrowserGuard, RefusingProxy};
 use crate::settings::Settings;
-use crate::{commands, message, phone_state, protocol, settings, shortcuts};
+use crate::{commands, message, phone_state, protocol, refusing_proxy, settings, shortcuts};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
@@ -166,6 +167,8 @@ pub fn run(state: AppState) {
             commands::open_sound_control,
             commands::open_microphone_privacy,
             commands::open_link,
+            commands::browser_probe,
+            commands::browser_probed,
             commands::quit_app,
         ])
         .setup(move |app| {
@@ -183,8 +186,22 @@ pub fn run(state: AppState) {
                 drag_drop_enabled: false,
                 ..Default::default()
             };
+            // The window's browser is kept from requests of its own: started
+            // quiet, behind a proxy that refuses (refusing_proxy.rs). The page
+            // checks that once it is up, and says so when it is not kept.
+            let proxy = match RefusingProxy::start() {
+                Ok(proxy) => Some(proxy),
+                Err(e) => {
+                    state.services.log_app(format!(
+                        "ksip: window's browser: no port for the refusing proxy ({e}); every name is made unresolvable instead, which is not checked"
+                    ));
+                    None
+                }
+            };
+            app.manage(BrowserGuard::new(proxy.clone()));
             tauri::WebviewWindowBuilder::from_config(app, &window)?
                 .data_directory(state.services.data.join("temp").join("WebView2"))
+                .additional_browser_args(&refusing_proxy::browser_arguments(proxy.as_ref().map(RefusingProxy::port)))
                 .build()?;
             let text = message::windows_text;
             let open = MenuItem::with_id(app, "open", text("TRAY_OPEN"), true, None::<&str>)?;
@@ -343,6 +360,12 @@ pub fn run(state: AppState) {
                                 state.services.log_app("ksip: window to the tray after the call".into());
                             }
                         }
+                    }
+                    // What the window's browser asked for and was refused,
+                    // by name: with it started quiet there is nothing, and a
+                    // name here says what it has begun to ask for.
+                    for (host, times) in proxy.iter().flat_map(RefusingProxy::take_refused) {
+                        state.services.log_app(format!("ksip: window's browser asked for {host} x{times}: refused"));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }

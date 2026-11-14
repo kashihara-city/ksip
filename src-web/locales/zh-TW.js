@@ -101,6 +101,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUTO_RECORD_OFF:'已關閉自動錄音',
       AUTO_RECORD_ON:'已開啟自動錄音',
       BROWSE:'瀏覽',
+      BROWSER_OPEN:'WebView2 通訊封鎖：未生效',
+      BROWSER_OPEN_TITLE:'無法封鎖視窗元件（WebView2）自行對 Microsoft 的通訊（取得設定、檢查更新）。不影響電話功能，詳情請查看記錄',
       BUTTON_COUNT:'（已設定 {0} 個）',
       BUTTON_KIND:'功能',
       BUTTON_KIND_DIAL:'撥號（含 BLF）',

@@ -1174,8 +1174,13 @@ footer.aec-status {
   margin-left:6px;
 }
 #codec-label.unencrypted,
-#capture-path .apo {
+#capture-path .apo,
+#browser-open {
   color:#a84035;
+}
+/* On a line of its own, under the processing labels. */
+#browser-open {
+  display:block;
 }
 
 /* Button editing: everything but the buttons is dimmed, and inert (buttons.js). */

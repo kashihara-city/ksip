@@ -101,6 +101,8 @@ window.KSIP_TEXTS = Object.assign(window.KSIP_TEXTS || {}, {
       AUTO_RECORD_OFF:'Automatic recording is off',
       AUTO_RECORD_ON:'Automatic recording is on',
       BROWSE:'Browse',
+      BROWSER_OPEN:'WebView2 network block: off',
+      BROWSER_OPEN_TITLE:'The requests that the browser behind this window (WebView2) makes of Microsoft on its own (its configuration, its update checks) are not being blocked. The phone itself is not affected. See the log',
       BUTTON_COUNT:'({0} set)',
       BUTTON_KIND:'Function',
       BUTTON_KIND_DIAL:'Dial (with BLF)',
